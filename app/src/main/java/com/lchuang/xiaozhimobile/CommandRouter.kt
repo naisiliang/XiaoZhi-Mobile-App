@@ -8,13 +8,13 @@ class CommandRouter(private val phone: PhoneController) {
         if (text.isBlank()) return Result(false)
 
         when {
-            containsAny(text, "暂停音乐", "暂停播放", "音乐暂停", "暂停歌曲") -> {
+            containsAny(text, "暂停音乐", "暂停播放", "音乐暂停", "暂停歌曲", "停一下音乐", "暂停一下音乐") -> {
                 phone.mediaPause(); return Result(true, "已暂停")
             }
-            containsAny(text, "停止音乐", "停止播放", "停止歌曲", "音乐停止", "关闭音乐") -> {
+            containsAny(text, "停止音乐", "停止播放", "停止歌曲", "音乐停止", "关闭音乐", "关掉音乐", "把音乐停掉", "把音乐关掉") -> {
                 phone.mediaStop(); return Result(true, "已停止播放")
             }
-            containsAny(text, "继续播放", "继续音乐", "播放音乐", "开始播放") -> {
+            containsAny(text, "继续播放", "继续音乐", "播放音乐", "开始播放", "放音乐", "播放一下音乐", "放一下音乐", "来首歌", "来一首歌") -> {
                 phone.mediaPlay(); return Result(true, "好的，继续播放")
             }
             containsAny(text, "下一首", "下一曲", "切下一首") -> {
@@ -44,11 +44,11 @@ class CommandRouter(private val phone: PhoneController) {
             }
         }
 
-        if (containsAny(text, "打开微信", "启动微信", "打开威信", "启动威信")) {
+        if (containsAny(text, "打开微信", "启动微信", "打开威信", "启动威信", "进入微信", "打开一下微信")) {
             val ok = phone.openApp("微信")
             return Result(true, if (ok) "正在打开微信" else "没有找到微信")
         }
-        if (containsAny(text, "打开qq", "启动qq", "打开q q", "启动q q", "打开扣扣", "启动扣扣")) {
+        if (containsAny(text, "打开qq", "启动qq", "打开q q", "启动q q", "打开扣扣", "启动扣扣", "进入qq", "打开一下qq")) {
             val ok = phone.openApp("qq")
             return Result(true, if (ok) "正在打开QQ" else "没有找到QQ")
         }

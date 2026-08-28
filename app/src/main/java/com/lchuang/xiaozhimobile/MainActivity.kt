@@ -5,8 +5,10 @@ import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.view.Gravity
 import android.view.View
 import android.widget.*
@@ -18,6 +20,7 @@ class MainActivity : Activity() {
     private lateinit var model: EditText
     private lateinit var testInput: EditText
     private lateinit var status: TextView
+    private lateinit var overlayPermissionButton: Button
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -25,6 +28,11 @@ class MainActivity : Activity() {
         setContentView(buildUi())
         loadSettings()
         requestNeededPermissions()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (::overlayPermissionButton.isInitialized) refreshOverlayPermissionButton()
     }
 
     private fun buildUi(): View {
@@ -52,13 +60,35 @@ class MainActivity : Activity() {
         })
 
         status = TextView(this).apply {
-            text = "v0.3.1：全离线语音 + 连续会话\n一次唤醒后可连续说多条指令，无需每句都喊“小智小智”。"
+            text = "v0.4.0：全离线语音 + 连续会话 + 桌面透明语音悬浮层"
             textSize = 15f
             setTextColor(Color.rgb(34, 95, 68))
             setPadding(dp(14), dp(12), dp(14), dp(12))
             setBackgroundColor(Color.rgb(229, 245, 236))
         }
-        root.addView(status, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(16) })
+        root.addView(status, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(12) })
+
+        root.addView(TextView(this).apply {
+            text = "透明悬浮层为可选权限：授权后，说“小智小智”会在桌面和其他 App 上方显示语音状态，不授权也不影响离线语音控制。"
+            textSize = 13f
+            setTextColor(Color.GRAY)
+            setPadding(0, 0, 0, dp(8))
+        })
+        overlayPermissionButton = Button(this).apply {
+            setOnClickListener {
+                if (Settings.canDrawOverlays(this@MainActivity)) {
+                    Toast.makeText(this@MainActivity, "桌面透明语音悬浮层已授权", Toast.LENGTH_SHORT).show()
+                } else {
+                    val intent = Intent(
+                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        Uri.parse("package:$packageName")
+                    )
+                    startActivity(intent)
+                }
+            }
+        }
+        refreshOverlayPermissionButton()
+        root.addView(overlayPermissionButton, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(12) })
 
         val start = Button(this).apply {
             text = "开启后台离线唤醒"
@@ -69,6 +99,13 @@ class MainActivity : Activity() {
                     val i = Intent(this@MainActivity, WakeService::class.java)
                     if (Build.VERSION.SDK_INT >= 26) startForegroundService(i) else startService(i)
                     status.text = "已请求启动。保持通知栏中的“小智手机助手”运行即可息屏监听。"
+                    if (!Settings.canDrawOverlays(this@MainActivity)) {
+                        Toast.makeText(
+                            this@MainActivity,
+                            "语音助手已启动；授权悬浮层后可在桌面显示语音界面",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
                 } else {
                     Toast.makeText(this@MainActivity, "请先允许麦克风权限", Toast.LENGTH_LONG).show()
                 }
@@ -127,18 +164,27 @@ class MainActivity : Activity() {
             }
         }, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(22) })
 
-        addHeader(root, "第一版说明")
+        addHeader(root, "v0.4.0 说明")
         root.addView(TextView(this).apply {
             text = "• “小智小智”由本机 KWS 模型识别，不上传持续监听音频。\n" +
-                "• 唤醒后的整句中文指令由 sherpa-onnx Paraformer 本地 ASR 转文字，不调用 Android SpeechRecognizer。\n" +
-                "• 播放/停止/暂停/切歌/音量/手电筒/打开 App/导航优先本地执行。\n• 唤醒一次后进入连续会话；说“再见/退出对话/休息吧”即可结束。\n" +
-                "• 只有普通聊天问题才调用你可选配置的 AI 接口，并用手机 TTS 播报。\n" +
+                "• 唤醒后的整句中文指令由 sherpa-onnx Paraformer 本地 ASR 转文字。\n" +
+                "• 语音结果会先做口语/错词标准化，再进入与本地测试相同的 CommandRouter → PhoneController。\n" +
+                "• 授权“显示在其他应用上层”后，唤醒会出现透明语音 HUD，并显示听取/识别/执行状态。\n" +
+                "• 唤醒一次后进入连续会话；说“再见/退出对话/休息吧”即可结束。\n" +
                 "• Android 14+ 必须从本页面主动开启麦克风前台服务；重启手机后需重新开启。"
             textSize = 14f
             setTextColor(Color.DKGRAY)
             gravity = Gravity.START
         })
         return scroll
+    }
+
+    private fun refreshOverlayPermissionButton() {
+        overlayPermissionButton.text = if (Settings.canDrawOverlays(this)) {
+            "桌面透明语音悬浮层：已授权"
+        } else {
+            "授权桌面透明语音悬浮层"
+        }
     }
 
     private fun addHeader(root: LinearLayout, textValue: String) {

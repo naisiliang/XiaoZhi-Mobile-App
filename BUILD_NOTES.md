@@ -1,9 +1,13 @@
-# XiaoZhi Mobile v0.3.1 build notes
+# XiaoZhi Mobile v0.4.0 build notes
 
-v0.3.1 removes Android `SpeechRecognizer` from the wake-to-command path because some Android ROMs return `ERROR_CLIENT` from a foreground microphone service.
+v0.4.0 builds on the fully local KWS + Paraformer ASR path from v0.3.x.
 
-The new local path is:
+New in v0.4.0:
+- deterministic `VoiceCommandNormalizer` before `CommandRouter`;
+- system transparent overlay HUD via `TYPE_APPLICATION_OVERLAY`;
+- overlay permission is optional and voice control continues without it;
+- overlay shows wake/listen/recognize/execute/think states and recognized text;
+- microphone RMS drives the overlay waveform;
+- spoken phone commands and typed local-test commands converge on the same `CommandRouter -> PhoneController` execution path.
 
-`KWS (sherpa-onnx) -> local microphone capture -> Paraformer local ASR (sherpa-onnx) -> CommandRouter -> Android control`
-
-The optional OpenAI-compatible API is used only for non-local conversational queries.
+Build target: arm64-v8a, Android minSdk 26 / targetSdk 35.
