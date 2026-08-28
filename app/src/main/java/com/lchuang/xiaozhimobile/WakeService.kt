@@ -27,6 +27,9 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         const val ACTION_STOP = "com.lchuang.xiaozhimobile.STOP"
         private const val SAMPLE_RATE = 16000
         private const val MODEL_DIR = "sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20"
+        private const val COMMAND_LISTEN_DELAY_MS = 700L
+        private const val COMMAND_RETRY_DELAY_MS = 450L
+        private const val MAX_COMMAND_RECOGNITION_ATTEMPTS = 2
     }
 
     private val running = AtomicBoolean(false)
@@ -41,6 +44,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
     private var tts: TextToSpeech? = null
     @Volatile private var ttsReady = false
     private var speechRecognizer: SpeechRecognizer? = null
+    private var commandRecognitionAttempts = 0
 
     private var spotter: KeywordSpotter? = null
     private var stream: OnlineStream? = null
@@ -186,12 +190,16 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
 
     private fun handleWakeDetected() {
         if (!running.get()) return
-        updateNotification("已唤醒 · 正在听你说话")
-        speakThen("我在") { startSpeechRecognition() }
+        commandRecognitionAttempts = 0
+        updateNotification("已唤醒 · 准备听取指令")
+        speakThen("我在") {
+            mainHandler.postDelayed({ startSpeechRecognition() }, COMMAND_LISTEN_DELAY_MS)
+        }
     }
 
     private fun startSpeechRecognition() {
         if (!running.get()) return
+        commandRecognitionAttempts += 1
         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
             speakThen("这台手机没有可用的语音识别服务") { restartWakeListening() }
             return
@@ -215,14 +223,16 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                 override fun onEndOfSpeech() { updateNotification("正在处理…") }
                 override fun onError(error: Int) {
                     speechRecognizer?.destroy(); speechRecognizer = null
-                    speakThen("没有听清，请再叫我一次") { restartWakeListening() }
+                    val reason = speechErrorName(error)
+                    updateNotification("语音识别失败：$reason")
+                    retryCommandRecognition(reason)
                 }
                 override fun onResults(results: Bundle?) {
                     val list = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                     val text = list?.firstOrNull().orEmpty().trim()
                     speechRecognizer?.destroy(); speechRecognizer = null
                     if (text.isBlank()) {
-                        speakThen("没有听清") { restartWakeListening() }
+                        retryCommandRecognition("EMPTY_RESULT")
                     } else {
                         processUtterance(text)
                     }
@@ -239,8 +249,36 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
             putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, settings.preferOfflineAsr)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1800L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1200L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 1000L)
         }
         speechRecognizer?.startListening(intent)
+    }
+
+    private fun retryCommandRecognition(reason: String) {
+        if (!running.get()) return
+        if (commandRecognitionAttempts < MAX_COMMAND_RECOGNITION_ATTEMPTS) {
+            updateNotification("没有听清($reason) · 正在重新听指令")
+            speakThen("没有听清，请直接说指令") {
+                mainHandler.postDelayed({ startSpeechRecognition() }, COMMAND_RETRY_DELAY_MS)
+            }
+        } else {
+            speakThen("还是没有听清，请再叫我一次") { restartWakeListening() }
+        }
+    }
+
+    private fun speechErrorName(error: Int): String = when (error) {
+        SpeechRecognizer.ERROR_AUDIO -> "AUDIO"
+        SpeechRecognizer.ERROR_CLIENT -> "CLIENT"
+        SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "PERMISSION"
+        SpeechRecognizer.ERROR_NETWORK -> "NETWORK"
+        SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "NETWORK_TIMEOUT"
+        SpeechRecognizer.ERROR_NO_MATCH -> "NO_MATCH"
+        SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "BUSY"
+        SpeechRecognizer.ERROR_SERVER -> "SERVER"
+        SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "SPEECH_TIMEOUT"
+        else -> "CODE_$error"
     }
 
     private fun processUtterance(text: String) {
