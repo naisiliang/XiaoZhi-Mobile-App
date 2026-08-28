@@ -1,11 +1,9 @@
-# Build verification notes
+# XiaoZhi Mobile v0.3.0 build notes
 
-The source tree and build workflow are complete. This ChatGPT execution container does not contain Android SDK / Gradle / Android build-tools and its shell network cannot resolve external artifact hosts, so an APK cannot be truthfully claimed as locally compiled inside this container.
+v0.3.0 removes Android `SpeechRecognizer` from the wake-to-command path because some Android ROMs return `ERROR_CLIENT` from a foreground microphone service.
 
-The included GitHub Actions workflow is the reproducible build path. It downloads the official KWS model and builds a signed debug APK.
+The new local path is:
 
-## v0.2.1 wake-command fix
-- Adds a 700 ms microphone handoff delay after TTS "我在" completes.
-- Keeps the same wake session alive for one automatic command-recognition retry.
-- Tunes recognizer silence windows for short commands such as "播放音乐".
-- Shows the Android SpeechRecognizer error class in the notification for device-specific debugging.
+`KWS (sherpa-onnx) -> local microphone capture -> Paraformer local ASR (sherpa-onnx) -> CommandRouter -> Android control`
+
+The optional OpenAI-compatible API is used only for non-local conversational queries.

@@ -12,7 +12,7 @@
 6. 进入最新的 `Build XiaoZhi Mobile APK`。
 7. 等工作流显示绿色 `✓`。
 8. 页面底部 **Artifacts** 下载 `XiaoZhi-Mobile-APK`。
-9. 解压后得到 `XiaoZhi-Mobile-v0.2.1-debug.apk`，发送到安卓手机安装。
+9. 解压后得到 `XiaoZhi-Mobile-v0.3.0-debug.apk`，发送到安卓手机安装。
 
 ## APK 首次安装后
 
@@ -23,7 +23,7 @@
 5. 说：`小智小智`。
 6. 听到“我在”后说：`播放音乐`、`下一首`、`打开微信`、`打开手电筒` 等。
 
-## 当前 v0.2.1 行为
+## 当前 v0.3.0 行为
 
 - “小智小智”由 sherpa-onnx KWS 在本机检测。
 - 唤醒后的整句语音识别优先使用 Android 设备侧 SpeechRecognizer；设备不支持时可能使用系统在线识别。

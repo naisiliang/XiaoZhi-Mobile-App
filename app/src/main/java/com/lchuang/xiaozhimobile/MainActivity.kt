@@ -16,7 +16,6 @@ class MainActivity : Activity() {
     private lateinit var apiUrl: EditText
     private lateinit var apiKey: EditText
     private lateinit var model: EditText
-    private lateinit var offlineAsr: CheckBox
     private lateinit var testInput: EditText
     private lateinit var status: TextView
 
@@ -53,7 +52,7 @@ class MainActivity : Activity() {
         })
 
         status = TextView(this).apply {
-            text = "第一版唤醒词：小智小智\n唤醒检测完全在手机本地运行。"
+            text = "v0.3.0：唤醒词“小智小智” + 唤醒后的语音指令识别\n都使用 sherpa-onnx 在手机本地运行。"
             textSize = 15f
             setTextColor(Color.rgb(34, 95, 68))
             setPadding(dp(14), dp(12), dp(14), dp(12))
@@ -95,10 +94,12 @@ class MainActivity : Activity() {
         apiUrl = addEdit(root, "完整接口，例如 https://example.com/v1/chat/completions")
         apiKey = addEdit(root, "API Key（本机保存）")
         model = addEdit(root, "模型名，例如 gpt-5.6 / deepseek-chat")
-        offlineAsr = CheckBox(this).apply {
-            text = "唤醒后的语音识别优先使用手机离线识别（设备支持时）"
-        }
-        root.addView(offlineAsr)
+        root.addView(TextView(this).apply {
+            text = "语音指令识别：sherpa-onnx Paraformer 本地模型（无需网络、无需手机系统 SpeechRecognizer）"
+            textSize = 13f
+            setTextColor(Color.rgb(34, 95, 68))
+            setPadding(0, dp(8), 0, dp(8))
+        })
         root.addView(Button(this).apply {
             text = "保存设置"
             setOnClickListener {
@@ -128,10 +129,10 @@ class MainActivity : Activity() {
 
         addHeader(root, "第一版说明")
         root.addView(TextView(this).apply {
-            text = "• “小智小智”只在本机 KWS 模型中识别，不上传持续监听音频。\n" +
-                "• 唤醒后使用手机系统语音识别把一句话转成文字。\n" +
+            text = "• “小智小智”由本机 KWS 模型识别，不上传持续监听音频。\n" +
+                "• 唤醒后的整句中文指令由 sherpa-onnx Paraformer 本地 ASR 转文字，不调用 Android SpeechRecognizer。\n" +
                 "• 播放/暂停/切歌/音量/手电筒/打开 App/导航优先本地执行。\n" +
-                "• 其他问题再调用你配置的 AI 接口，并用手机 TTS 播报。\n" +
+                "• 只有普通聊天问题才调用你可选配置的 AI 接口，并用手机 TTS 播报。\n" +
                 "• Android 14+ 必须从本页面主动开启麦克风前台服务；重启手机后需重新开启。"
             textSize = 14f
             setTextColor(Color.DKGRAY)
@@ -161,14 +162,12 @@ class MainActivity : Activity() {
         apiUrl.setText(settings.apiUrl)
         apiKey.setText(settings.apiKey)
         model.setText(settings.model)
-        offlineAsr.isChecked = settings.preferOfflineAsr
     }
 
     private fun saveSettings() {
         settings.apiUrl = apiUrl.text.toString()
         settings.apiKey = apiKey.text.toString()
         settings.model = model.text.toString()
-        settings.preferOfflineAsr = offlineAsr.isChecked
     }
 
     private fun requestNeededPermissions() {

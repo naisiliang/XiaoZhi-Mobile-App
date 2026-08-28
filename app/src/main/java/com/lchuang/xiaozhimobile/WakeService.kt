@@ -6,19 +6,22 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.*
 import android.os.*
-import android.speech.RecognitionListener
-import android.speech.RecognizerIntent
-import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import com.k2fsa.sherpa.onnx.KeywordSpotter
 import com.k2fsa.sherpa.onnx.KeywordSpotterConfig
+import com.k2fsa.sherpa.onnx.OfflineModelConfig
+import com.k2fsa.sherpa.onnx.OfflineParaformerModelConfig
+import com.k2fsa.sherpa.onnx.OfflineRecognizer
+import com.k2fsa.sherpa.onnx.OfflineRecognizerConfig
 import com.k2fsa.sherpa.onnx.OnlineModelConfig
 import com.k2fsa.sherpa.onnx.OnlineStream
 import com.k2fsa.sherpa.onnx.OnlineTransducerModelConfig
+import java.util.ArrayDeque
 import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.math.sqrt
 
 class WakeService : Service(), TextToSpeech.OnInitListener {
     companion object {
@@ -26,14 +29,23 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         const val NOTIFY_ID = 1001
         const val ACTION_STOP = "com.lchuang.xiaozhimobile.STOP"
         private const val SAMPLE_RATE = 16000
-        private const val MODEL_DIR = "sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20"
+        private const val KWS_MODEL_DIR = "sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20"
+        private const val ASR_MODEL_DIR = "sherpa-onnx-paraformer-zh-small-2024-03-09"
         private const val COMMAND_LISTEN_DELAY_MS = 700L
-        private const val COMMAND_RETRY_DELAY_MS = 450L
+        private const val COMMAND_RETRY_DELAY_MS = 500L
         private const val MAX_COMMAND_RECOGNITION_ATTEMPTS = 2
+        private const val COMMAND_FRAME_SAMPLES = 800 // 50 ms @ 16 kHz
+        private const val COMMAND_WAIT_SPEECH_MS = 4000
+        private const val COMMAND_MAX_AUDIO_MS = 8000
+        private const val COMMAND_END_SILENCE_MS = 900
+        private const val PRE_ROLL_FRAMES = 6 // 300 ms
+        private const val SPEECH_RMS_THRESHOLD = 0.0105f
+        private const val SILENCE_RMS_THRESHOLD = 0.0075f
     }
 
     private val running = AtomicBoolean(false)
     private val kwsListening = AtomicBoolean(false)
+    private val commandListening = AtomicBoolean(false)
     private val mainHandler = Handler(Looper.getMainLooper())
 
     private lateinit var settings: SettingsStore
@@ -43,13 +55,14 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
 
     private var tts: TextToSpeech? = null
     @Volatile private var ttsReady = false
-    private var speechRecognizer: SpeechRecognizer? = null
     private var commandRecognitionAttempts = 0
 
     private var spotter: KeywordSpotter? = null
     private var stream: OnlineStream? = null
+    private var offlineRecognizer: OfflineRecognizer? = null
     private var audioRecord: AudioRecord? = null
     private var kwsThread: Thread? = null
+    private var commandThread: Thread? = null
     private var wakeLock: PowerManager.WakeLock? = null
 
     override fun onCreate() {
@@ -72,16 +85,17 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
             return START_NOT_STICKY
         }
 
-        startForeground(NOTIFY_ID, notification("正在加载离线唤醒模型…"))
+        startForeground(NOTIFY_ID, notification("正在加载本地唤醒与语音识别模型…"))
         if (running.compareAndSet(false, true)) {
             if (wakeLock?.isHeld != true) wakeLock?.acquire()
             Thread {
                 try {
                     initKeywordSpotter()
-                    updateNotification("离线唤醒已开启 · 说“小智小智”")
+                    initOfflineAsr()
+                    updateNotification("全离线语音已开启 · 说“小智小智”")
                     startKwsCapture()
                 } catch (e: Throwable) {
-                    updateNotification("离线唤醒启动失败：${e.message ?: e.javaClass.simpleName}")
+                    updateNotification("本地语音启动失败：${e.message ?: e.javaClass.simpleName}")
                 }
             }.start()
         }
@@ -92,11 +106,11 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         if (spotter != null) return
         val model = OnlineModelConfig(
             transducer = OnlineTransducerModelConfig(
-                encoder = "$MODEL_DIR/encoder-epoch-13-avg-2-chunk-16-left-64.onnx",
-                decoder = "$MODEL_DIR/decoder-epoch-13-avg-2-chunk-16-left-64.onnx",
-                joiner = "$MODEL_DIR/joiner-epoch-13-avg-2-chunk-16-left-64.onnx"
+                encoder = "$KWS_MODEL_DIR/encoder-epoch-13-avg-2-chunk-16-left-64.onnx",
+                decoder = "$KWS_MODEL_DIR/decoder-epoch-13-avg-2-chunk-16-left-64.onnx",
+                joiner = "$KWS_MODEL_DIR/joiner-epoch-13-avg-2-chunk-16-left-64.onnx"
             ),
-            tokens = "$MODEL_DIR/tokens.txt",
+            tokens = "$KWS_MODEL_DIR/tokens.txt",
             numThreads = 1,
             debug = false,
             provider = "cpu",
@@ -113,6 +127,25 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         )
         spotter = KeywordSpotter(assets, config)
         stream = spotter!!.createStream()
+    }
+
+    private fun initOfflineAsr() {
+        if (offlineRecognizer != null) return
+        val model = OfflineModelConfig(
+            paraformer = OfflineParaformerModelConfig(
+                model = "$ASR_MODEL_DIR/model.int8.onnx"
+            ),
+            tokens = "$ASR_MODEL_DIR/tokens.txt",
+            numThreads = 2,
+            debug = false,
+            provider = "cpu",
+            modelType = "paraformer"
+        )
+        val config = OfflineRecognizerConfig(
+            modelConfig = model,
+            decodingMethod = "greedy_search"
+        )
+        offlineRecognizer = OfflineRecognizer(assets, config)
     }
 
     private fun newAudioRecord(): AudioRecord {
@@ -132,7 +165,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun startKwsCapture() {
-        if (!running.get() || kwsListening.get()) return
+        if (!running.get() || kwsListening.get() || commandListening.get()) return
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             updateNotification("缺少麦克风权限，请打开 App 授权")
             return
@@ -166,7 +199,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                     }
                 }
             } catch (e: Throwable) {
-                if (running.get()) updateNotification("监听异常：${e.message ?: e.javaClass.simpleName}")
+                if (running.get()) updateNotification("唤醒监听异常：${e.message ?: e.javaClass.simpleName}")
             } finally {
                 releaseAudioRecord()
                 if (running.get() && !kwsListening.get()) {
@@ -191,94 +224,139 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
     private fun handleWakeDetected() {
         if (!running.get()) return
         commandRecognitionAttempts = 0
-        updateNotification("已唤醒 · 准备听取指令")
+        updateNotification("已唤醒 · 准备本地识别指令")
         speakThen("我在") {
-            mainHandler.postDelayed({ startSpeechRecognition() }, COMMAND_LISTEN_DELAY_MS)
+            mainHandler.postDelayed({ startLocalCommandRecognition() }, COMMAND_LISTEN_DELAY_MS)
         }
     }
 
-    private fun startSpeechRecognition() {
-        if (!running.get()) return
+    private fun startLocalCommandRecognition() {
+        if (!running.get() || commandListening.get()) return
         commandRecognitionAttempts += 1
-        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
-            speakThen("这台手机没有可用的语音识别服务") { restartWakeListening() }
-            return
-        }
-        speechRecognizer?.destroy()
-        speechRecognizer = if (
-            Build.VERSION.SDK_INT >= 31 &&
-            settings.preferOfflineAsr &&
-            SpeechRecognizer.isOnDeviceRecognitionAvailable(this)
-        ) {
-            SpeechRecognizer.createOnDeviceSpeechRecognizer(this)
-        } else {
-            SpeechRecognizer.createSpeechRecognizer(this)
-        }
-        speechRecognizer = speechRecognizer?.also { recognizer ->
-            recognizer.setRecognitionListener(object : RecognitionListener {
-                override fun onReadyForSpeech(params: Bundle?) { updateNotification("请说指令或问题…") }
-                override fun onBeginningOfSpeech() {}
-                override fun onRmsChanged(rmsdB: Float) {}
-                override fun onBufferReceived(buffer: ByteArray?) {}
-                override fun onEndOfSpeech() { updateNotification("正在处理…") }
-                override fun onError(error: Int) {
-                    speechRecognizer?.destroy(); speechRecognizer = null
-                    val reason = speechErrorName(error)
-                    updateNotification("语音识别失败：$reason")
-                    retryCommandRecognition(reason)
+        commandListening.set(true)
+        updateNotification("本地语音识别 · 请说指令或问题…")
+        commandThread = Thread({
+            try {
+                val samples = captureCommandAudio()
+                if (samples.isEmpty()) {
+                    mainHandler.post { retryLocalCommandRecognition("NO_SPEECH") }
+                    return@Thread
                 }
-                override fun onResults(results: Bundle?) {
-                    val list = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                    val text = list?.firstOrNull().orEmpty().trim()
-                    speechRecognizer?.destroy(); speechRecognizer = null
-                    if (text.isBlank()) {
-                        retryCommandRecognition("EMPTY_RESULT")
-                    } else {
-                        processUtterance(text)
-                    }
+                mainHandler.post { updateNotification("本地语音识别 · 正在转文字…") }
+                val text = decodeLocalCommand(samples)
+                mainHandler.post {
+                    if (text.isBlank()) retryLocalCommandRecognition("NO_MATCH")
+                    else processUtterance(text)
                 }
-                override fun onPartialResults(partialResults: Bundle?) {}
-                override fun onEvent(eventType: Int, params: Bundle?) {}
-            })
-        }
-
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "zh-CN")
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "zh-CN")
-            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
-            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
-            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, settings.preferOfflineAsr)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1800L)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1200L)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 1000L)
-        }
-        speechRecognizer?.startListening(intent)
+            } catch (e: Throwable) {
+                val reason = e.message ?: e.javaClass.simpleName
+                mainHandler.post {
+                    updateNotification("本地语音识别失败：$reason")
+                    retryLocalCommandRecognition("LOCAL_ASR_ERROR")
+                }
+            } finally {
+                commandListening.set(false)
+                releaseAudioRecord()
+            }
+        }, "xiaozhi-local-asr")
+        commandThread?.start()
     }
 
-    private fun retryCommandRecognition(reason: String) {
+    private fun captureCommandAudio(): FloatArray {
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            throw IllegalStateException("PERMISSION")
+        }
+        val record = newAudioRecord()
+        audioRecord = record
+        if (record.state != AudioRecord.STATE_INITIALIZED) {
+            throw IllegalStateException("AUDIO_INIT")
+        }
+        record.startRecording()
+
+        val maxSamples = SAMPLE_RATE * COMMAND_MAX_AUDIO_MS / 1000
+        val output = ShortArray(maxSamples)
+        var outputSize = 0
+        val frame = ShortArray(COMMAND_FRAME_SAMPLES)
+        val preRoll = ArrayDeque<ShortArray>()
+        var speechStarted = false
+        var speechFrames = 0
+        var silenceMs = 0
+        var waitedMs = 0
+
+        while (running.get() && commandListening.get() && outputSize < maxSamples) {
+            val n = record.read(frame, 0, frame.size)
+            if (n <= 0) continue
+            val rms = frameRms(frame, n)
+            val frameMs = n * 1000 / SAMPLE_RATE
+
+            if (!speechStarted) {
+                preRoll.addLast(frame.copyOf(n))
+                while (preRoll.size > PRE_ROLL_FRAMES) preRoll.removeFirst()
+                waitedMs += frameMs
+                if (rms >= SPEECH_RMS_THRESHOLD) {
+                    speechFrames += 1
+                    if (speechFrames >= 2) {
+                        speechStarted = true
+                        for (chunk in preRoll) {
+                            val count = minOf(chunk.size, maxSamples - outputSize)
+                            chunk.copyInto(output, outputSize, 0, count)
+                            outputSize += count
+                            if (outputSize >= maxSamples) break
+                        }
+                        preRoll.clear()
+                    }
+                } else {
+                    speechFrames = 0
+                }
+                if (!speechStarted && waitedMs >= COMMAND_WAIT_SPEECH_MS) break
+                continue
+            }
+
+            val count = minOf(n, maxSamples - outputSize)
+            frame.copyInto(output, outputSize, 0, count)
+            outputSize += count
+
+            if (rms < SILENCE_RMS_THRESHOLD) silenceMs += frameMs else silenceMs = 0
+            if (silenceMs >= COMMAND_END_SILENCE_MS && outputSize >= SAMPLE_RATE / 2) break
+        }
+
+        try { record.stop() } catch (_: Throwable) {}
+        if (!speechStarted || outputSize == 0) return FloatArray(0)
+        return FloatArray(outputSize) { i -> output[i] / 32768.0f }
+    }
+
+    private fun frameRms(samples: ShortArray, n: Int): Float {
+        if (n <= 0) return 0f
+        var sum = 0.0
+        for (i in 0 until n) {
+            val v = samples[i] / 32768.0
+            sum += v * v
+        }
+        return sqrt(sum / n).toFloat()
+    }
+
+    private fun decodeLocalCommand(samples: FloatArray): String {
+        val recognizer = offlineRecognizer ?: throw IllegalStateException("ASR_NOT_READY")
+        val localStream = recognizer.createStream()
+        return try {
+            localStream.acceptWaveform(samples, SAMPLE_RATE)
+            recognizer.decode(localStream)
+            recognizer.getResult(localStream).text.trim()
+        } finally {
+            localStream.release()
+        }
+    }
+
+    private fun retryLocalCommandRecognition(reason: String) {
         if (!running.get()) return
         if (commandRecognitionAttempts < MAX_COMMAND_RECOGNITION_ATTEMPTS) {
-            updateNotification("没有听清($reason) · 正在重新听指令")
+            updateNotification("没有听清($reason) · 将再次本地听取指令")
             speakThen("没有听清，请直接说指令") {
-                mainHandler.postDelayed({ startSpeechRecognition() }, COMMAND_RETRY_DELAY_MS)
+                mainHandler.postDelayed({ startLocalCommandRecognition() }, COMMAND_RETRY_DELAY_MS)
             }
         } else {
             speakThen("还是没有听清，请再叫我一次") { restartWakeListening() }
         }
-    }
-
-    private fun speechErrorName(error: Int): String = when (error) {
-        SpeechRecognizer.ERROR_AUDIO -> "AUDIO"
-        SpeechRecognizer.ERROR_CLIENT -> "CLIENT"
-        SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "PERMISSION"
-        SpeechRecognizer.ERROR_NETWORK -> "NETWORK"
-        SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "NETWORK_TIMEOUT"
-        SpeechRecognizer.ERROR_NO_MATCH -> "NO_MATCH"
-        SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "BUSY"
-        SpeechRecognizer.ERROR_SERVER -> "SERVER"
-        SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "SPEECH_TIMEOUT"
-        else -> "CODE_$error"
     }
 
     private fun processUtterance(text: String) {
@@ -309,7 +387,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
 
     private fun restartWakeListening() {
         if (!running.get()) return
-        updateNotification("离线唤醒已开启 · 说“小智小智”")
+        updateNotification("全离线语音已开启 · 说“小智小智”")
         mainHandler.postDelayed({ startKwsCapture() }, 500)
     }
 
@@ -348,10 +426,10 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "小智离线唤醒",
+                "小智全离线语音",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "小智手机助手在本机持续检测唤醒词"
+                description = "本地唤醒与本地语音指令识别"
                 setSound(null, null)
             }
             getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
@@ -383,13 +461,16 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
 
     override fun onDestroy() {
         running.set(false)
+        kwsListening.set(false)
+        commandListening.set(false)
         stopKwsCapture()
         try { kwsThread?.join(500) } catch (_: Throwable) {}
-        speechRecognizer?.destroy(); speechRecognizer = null
+        try { commandThread?.join(500) } catch (_: Throwable) {}
         tts?.stop(); tts?.shutdown(); tts = null
         try { stream?.release() } catch (_: Throwable) {}
         try { spotter?.release() } catch (_: Throwable) {}
-        stream = null; spotter = null
+        try { offlineRecognizer?.release() } catch (_: Throwable) {}
+        stream = null; spotter = null; offlineRecognizer = null
         if (wakeLock?.isHeld == true) wakeLock?.release()
         super.onDestroy()
     }
