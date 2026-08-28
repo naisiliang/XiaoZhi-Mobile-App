@@ -30,7 +30,7 @@ jobs:
         run: python3 tools/validate_project.py
 
       - name: Fetch offline wake model
-        run: ./scripts/fetch-kws-model.sh
+        run: bash scripts/fetch-kws-model.sh
 
       - name: Build debug APK
         run: gradle :app:assembleDebug --stacktrace
