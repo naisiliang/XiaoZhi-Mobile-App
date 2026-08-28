@@ -33,6 +33,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         private const val ASR_MODEL_DIR = "sherpa-onnx-paraformer-zh-small-2024-03-09"
         private const val COMMAND_LISTEN_DELAY_MS = 700L
         private const val COMMAND_RETRY_DELAY_MS = 500L
+        private const val CONTINUOUS_LISTEN_DELAY_MS = 550L
         private const val MAX_COMMAND_RECOGNITION_ATTEMPTS = 2
         private const val COMMAND_FRAME_SAMPLES = 800 // 50 ms @ 16 kHz
         private const val COMMAND_WAIT_SPEECH_MS = 4000
@@ -56,6 +57,8 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
     private var tts: TextToSpeech? = null
     @Volatile private var ttsReady = false
     private var commandRecognitionAttempts = 0
+    private var conversationActive = false
+    private var conversationTurns = 0
 
     private var spotter: KeywordSpotter? = null
     private var stream: OnlineStream? = null
@@ -224,7 +227,9 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
     private fun handleWakeDetected() {
         if (!running.get()) return
         commandRecognitionAttempts = 0
-        updateNotification("已唤醒 · 准备本地识别指令")
+        conversationActive = true
+        conversationTurns = 0
+        updateNotification("已唤醒 · 连续会话已开启")
         speakThen("我在") {
             mainHandler.postDelayed({ startLocalCommandRecognition() }, COMMAND_LISTEN_DELAY_MS)
         }
@@ -349,27 +354,44 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
 
     private fun retryLocalCommandRecognition(reason: String) {
         if (!running.get()) return
+
+        // After at least one successful turn, silence means the user is done.
+        if (conversationActive && conversationTurns > 0 && reason == "NO_SPEECH") {
+            endConversationSession()
+            return
+        }
+
         if (commandRecognitionAttempts < MAX_COMMAND_RECOGNITION_ATTEMPTS) {
             updateNotification("没有听清($reason) · 将再次本地听取指令")
             speakThen("没有听清，请直接说指令") {
                 mainHandler.postDelayed({ startLocalCommandRecognition() }, COMMAND_RETRY_DELAY_MS)
             }
         } else {
-            speakThen("还是没有听清，请再叫我一次") { restartWakeListening() }
+            speakThen("还是没有听清，有需要再叫我") { endConversationSession() }
         }
     }
 
     private fun processUtterance(text: String) {
         updateNotification("你说：$text")
+
+        if (containsConversationExit(text)) {
+            speakThen("好的，有需要再叫我") { endConversationSession() }
+            return
+        }
+
         val local = router.handle(text)
         if (local.handled) {
-            speakThen(local.reply.ifBlank { "好的" }) { restartWakeListening() }
+            conversationTurns += 1
+            commandRecognitionAttempts = 0
+            speakThen(local.reply.ifBlank { "好的" }) { continueConversationSession() }
             return
         }
 
         if (settings.apiUrl.isBlank()) {
-            speakThen("我听到你说$text。手机控制已经可以使用，聊天功能还需要在 App 里配置 AI 接口。") {
-                restartWakeListening()
+            conversationTurns += 1
+            commandRecognitionAttempts = 0
+            speakThen("我听到你说$text。聊天功能还需要配置 AI 接口。") {
+                continueConversationSession()
             }
             return
         }
@@ -380,13 +402,38 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                 val answer = result.getOrElse { "AI 请求失败：${it.message ?: "未知错误"}" }
                     .replace(Regex("[\\r\\n]+"), " ")
                     .take(800)
-                speakThen(answer) { restartWakeListening() }
+                conversationTurns += 1
+                commandRecognitionAttempts = 0
+                speakThen(answer) { continueConversationSession() }
             }
         }
     }
 
+    private fun containsConversationExit(text: String): Boolean {
+        val normalized = text.trim().lowercase()
+        return listOf("退出对话", "结束对话", "休息吧", "你休息吧", "再见", "拜拜", "不用了").any(normalized::contains)
+    }
+
+    private fun continueConversationSession() {
+        if (!running.get()) return
+        if (!conversationActive) {
+            restartWakeListening()
+            return
+        }
+        updateNotification("连续会话中 · 请继续说，或说“再见”结束")
+        mainHandler.postDelayed({ startLocalCommandRecognition() }, CONTINUOUS_LISTEN_DELAY_MS)
+    }
+
+    private fun endConversationSession() {
+        conversationActive = false
+        conversationTurns = 0
+        commandRecognitionAttempts = 0
+        restartWakeListening()
+    }
+
     private fun restartWakeListening() {
         if (!running.get()) return
+        conversationActive = false
         updateNotification("全离线语音已开启 · 说“小智小智”")
         mainHandler.postDelayed({ startKwsCapture() }, 500)
     }

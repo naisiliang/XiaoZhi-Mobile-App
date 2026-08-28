@@ -52,7 +52,7 @@ class MainActivity : Activity() {
         })
 
         status = TextView(this).apply {
-            text = "v0.3.0：唤醒词“小智小智” + 唤醒后的语音指令识别\n都使用 sherpa-onnx 在手机本地运行。"
+            text = "v0.3.1：全离线语音 + 连续会话\n一次唤醒后可连续说多条指令，无需每句都喊“小智小智”。"
             textSize = 15f
             setTextColor(Color.rgb(34, 95, 68))
             setPadding(dp(14), dp(12), dp(14), dp(12))
@@ -110,7 +110,7 @@ class MainActivity : Activity() {
 
         addHeader(root, "本地手机控制测试")
         root.addView(TextView(this).apply {
-            text = "可输入：播放音乐、暂停音乐、下一首、打开微信、音量大一点、打开手电筒、导航到广州南站"
+            text = "可输入：播放音乐、停止音乐、暂停音乐、下一首、打开微信、打开QQ、音量大一点、打开手电筒"
             textSize = 13f
             setTextColor(Color.GRAY)
         })
@@ -131,7 +131,7 @@ class MainActivity : Activity() {
         root.addView(TextView(this).apply {
             text = "• “小智小智”由本机 KWS 模型识别，不上传持续监听音频。\n" +
                 "• 唤醒后的整句中文指令由 sherpa-onnx Paraformer 本地 ASR 转文字，不调用 Android SpeechRecognizer。\n" +
-                "• 播放/暂停/切歌/音量/手电筒/打开 App/导航优先本地执行。\n" +
+                "• 播放/停止/暂停/切歌/音量/手电筒/打开 App/导航优先本地执行。\n• 唤醒一次后进入连续会话；说“再见/退出对话/休息吧”即可结束。\n" +
                 "• 只有普通聊天问题才调用你可选配置的 AI 接口，并用手机 TTS 播报。\n" +
                 "• Android 14+ 必须从本页面主动开启麦克风前台服务；重启手机后需重新开启。"
             textSize = 14f

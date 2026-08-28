@@ -36,6 +36,11 @@ class PhoneController(private val context: Context) {
     fun mediaNext() = dispatchMedia(KeyEvent.KEYCODE_MEDIA_NEXT)
     fun mediaPrevious() = dispatchMedia(KeyEvent.KEYCODE_MEDIA_PREVIOUS)
     fun mediaPlayPause() = dispatchMedia(KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE)
+    fun mediaStop() {
+        dispatchMedia(KeyEvent.KEYCODE_MEDIA_STOP)
+        // Many Android music apps ignore STOP but honor PAUSE. PAUSE is idempotent.
+        dispatchMedia(KeyEvent.KEYCODE_MEDIA_PAUSE)
+    }
 
     private fun dispatchMedia(code: Int) {
         audioManager.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, code))
@@ -69,6 +74,19 @@ class PhoneController(private val context: Context) {
                 launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 context.startActivity(launch)
                 return true
+            }
+
+            // Fallback for Android 11+ / vendor ROM package visibility quirks.
+            try {
+                val explicitLauncher = Intent(Intent.ACTION_MAIN).apply {
+                    addCategory(Intent.CATEGORY_LAUNCHER)
+                    setPackage(entry.value)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(explicitLauncher)
+                return true
+            } catch (_: Exception) {
+                // Continue to label-based fallback below.
             }
         }
 

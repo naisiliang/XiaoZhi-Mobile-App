@@ -1,4 +1,4 @@
-# XiaoZhi Mobile App v0.3.0
+# XiaoZhi Mobile App v0.3.1
 
 Android voice assistant prototype with fully local wake word and local command speech recognition.
 
@@ -10,10 +10,10 @@ Android voice assistant prototype with fully local wake word and local command s
 - Optional AI chat: OpenAI-compatible `/v1/chat/completions`
 - Android TTS for voice replies
 
-## Why v0.3.0
+## Why v0.3.1
 
-v0.2.x used Android `SpeechRecognizer` after wake-up. Some phones returned `ERROR_CLIENT`. v0.3.0 no longer uses Android `SpeechRecognizer` in the wake-to-command path.
+v0.2.x used Android `SpeechRecognizer` after wake-up. Some phones returned `ERROR_CLIENT`. v0.3.1 no longer uses Android `SpeechRecognizer` in the wake-to-command path.
 
 ## Build
 
-Push to GitHub. The included workflow downloads the KWS and local ASR models, then builds `XiaoZhi-Mobile-v0.3.0-debug.apk`.
+Push to GitHub. The included workflow downloads the KWS and local ASR models, then builds `XiaoZhi-Mobile-v0.3.1-debug.apk`.

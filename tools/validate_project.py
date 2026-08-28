@@ -14,7 +14,7 @@ workflow = (ROOT/'.github/workflows/build-apk.yml').read_text(encoding='utf-8')
 fetch = (ROOT/'scripts/fetch-kws-model.sh').read_text(encoding='utf-8')
 keywords = (ROOT/'app/src/main/assets/keywords.txt').read_text(encoding='utf-8').strip()
 
-check('version 0.3.0', 'versionName = "0.3.0"' in build)
+check('version 0.3.1', 'versionName = "0.3.1"' in build)
 check('arm64 target', 'arm64-v8a' in build)
 check('KWS modeling unit cjkchar', 'modelingUnit = "cjkchar"' in wake)
 check('local paraformer ASR', 'OfflineParaformerModelConfig' in wake and 'ASR_MODEL_DIR' in wake)
@@ -23,8 +23,12 @@ check('local command capture', 'captureCommandAudio' in wake and 'decodeLocalCom
 check('microphone foreground service permission', 'FOREGROUND_SERVICE_MICROPHONE' in manifest)
 check('microphone service type', 'android:foregroundServiceType="microphone"' in manifest)
 check('wake phrase metadata', '@小智小智' in keywords)
-check('workflow produces v0.3.0 apk', 'XiaoZhi-Mobile-v0.3.0-debug.apk' in workflow)
+check('workflow produces v0.3.1 apk', 'XiaoZhi-Mobile-v0.3.1-debug.apk' in workflow)
 check('workflow fetches KWS and ASR models', 'sherpa-onnx-paraformer-zh-small-2024-03-09' in fetch and 'kws-models' in fetch)
+
+check('stop music synonyms', '停止音乐' in (ROOT/'app/src/main/java/com/lchuang/xiaozhimobile/CommandRouter.kt').read_text(encoding='utf-8'))
+check('explicit WeChat visibility', 'com.tencent.mm' in manifest)
+check('continuous conversation', 'continueConversationSession' in wake)
 
 failed = [x for x in checks if not x[1]]
 for name, ok, detail in checks:

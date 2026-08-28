@@ -8,8 +8,11 @@ class CommandRouter(private val phone: PhoneController) {
         if (text.isBlank()) return Result(false)
 
         when {
-            containsAny(text, "暂停音乐", "暂停播放", "音乐暂停") -> {
+            containsAny(text, "暂停音乐", "暂停播放", "音乐暂停", "暂停歌曲") -> {
                 phone.mediaPause(); return Result(true, "已暂停")
+            }
+            containsAny(text, "停止音乐", "停止播放", "停止歌曲", "音乐停止", "关闭音乐") -> {
+                phone.mediaStop(); return Result(true, "已停止播放")
             }
             containsAny(text, "继续播放", "继续音乐", "播放音乐", "开始播放") -> {
                 phone.mediaPlay(); return Result(true, "好的，继续播放")
@@ -39,6 +42,15 @@ class CommandRouter(private val phone: PhoneController) {
                 val ok = phone.setFlashlight(false)
                 return Result(true, if (ok) "手电筒已关闭" else "没有成功关闭手电筒")
             }
+        }
+
+        if (containsAny(text, "打开微信", "启动微信", "打开威信", "启动威信")) {
+            val ok = phone.openApp("微信")
+            return Result(true, if (ok) "正在打开微信" else "没有找到微信")
+        }
+        if (containsAny(text, "打开qq", "启动qq", "打开q q", "启动q q", "打开扣扣", "启动扣扣")) {
+            val ok = phone.openApp("qq")
+            return Result(true, if (ok) "正在打开QQ" else "没有找到QQ")
         }
 
         val navigation = Regex("(?:导航到|导航去|带我去|去)(.+)").find(text)

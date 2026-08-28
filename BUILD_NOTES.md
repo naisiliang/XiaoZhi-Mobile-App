@@ -1,6 +1,6 @@
-# XiaoZhi Mobile v0.3.0 build notes
+# XiaoZhi Mobile v0.3.1 build notes
 
-v0.3.0 removes Android `SpeechRecognizer` from the wake-to-command path because some Android ROMs return `ERROR_CLIENT` from a foreground microphone service.
+v0.3.1 removes Android `SpeechRecognizer` from the wake-to-command path because some Android ROMs return `ERROR_CLIENT` from a foreground microphone service.
 
 The new local path is:
 
