@@ -195,7 +195,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         }, LinearLayout.LayoutParams(-1, -2))
         root.addView(Button(this).apply {
             text = "打开系统语音合成设置"
-            setOnClickListener { runCatching { startActivity(Intent(Settings.ACTION_TTS_SETTINGS)) } }
+            setOnClickListener { openSystemTtsSettings() }
         }, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(22) })
 
         addHeader(root, "手机控制与导航")
@@ -334,6 +334,17 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         voiceSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, labels)
         val index = voiceOptions.indexOfFirst { it.name == settings.ttsVoiceName }.coerceAtLeast(0)
         if (voiceOptions.isNotEmpty()) voiceSpinner.setSelection(index)
+    }
+
+    private fun openSystemTtsSettings() {
+        val opened = runCatching {
+            startActivity(Intent("com.android.settings.TTS_SETTINGS"))
+            true
+        }.getOrDefault(false)
+        if (!opened) {
+            runCatching { startActivity(Intent(Settings.ACTION_SETTINGS)) }
+                .onFailure { Toast.makeText(this, "无法打开系统语音设置", Toast.LENGTH_SHORT).show() }
+        }
     }
 
     private fun saveTtsSettings() {
