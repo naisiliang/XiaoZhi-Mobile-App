@@ -1,22 +1,15 @@
-# XiaoZhi Mobile v0.6.2 build notes
+# XiaoZhi Mobile v0.6.3 build notes
 
-New in v0.6.2:
-- Fix the real-device mismatch where the text fields could contain “小白 / 小白小白” while the running KWS service still listened for “小智小智”.
-- Starting offline wake now always synchronizes the saved wake phrase with an already-running WakeService.
-- “Save all settings” also synchronizes the wake phrase when the service is running.
-- The UI now shows the actual runtime KWS wake phrase (`activeWakePhrase`) instead of only echoing the edit field.
-- Successful local phone commands now speak a short completion confirmation, then resume listening 120 ms after TTS finishes.
-- Successful AI safe-tool actions use the same completion-confirmation flow.
-- App launch confirmations now say “已打开…”; media/volume/map confirmations use completed-action wording.
+New in v0.6.3:
+- Fix custom Chinese wake phrases such as `小白小白` when pinyin4j emits non-standard third-tone Unicode (e.g. `ă` instead of `ǎ`).
+- Normalize pinyin tone marks before KWS compilation.
+- Generate sherpa-onnx compatible ppinyin tokens using initial + tone-marked final, matching the official text2token strategy for Chinese keywords.
+- Validate dynamic KWS stream creation and keep the previous active wake stream on failure.
+- Show the concrete custom-wake failure reason in the foreground notification for device diagnostics.
+- Retain v0.6.2 spoken command confirmations and fast relisten after TTS completion.
 
-Preserved:
-- v0.6.1 stable bundled `createStream()` startup for the default “小智小智”; custom phrases still use sherpa-onnx runtime KWS.
-- installed-app discovery and launch diagnostics;
-- Amap/Baidu/system navigation and one-shot foreground location;
-- TTS voice selection/preview/rate/pitch;
-- AI Base URL auto mode, 8-turn session memory, safe tool allowlist;
-- 20-second configurable continuous session and transparent overlay.
-
-Security constraints remain unchanged: no AccessibilityService, no background location, and no AI payment/delete/message/install/shell capabilities.
-
-Build target: arm64-v8a, Android minSdk 26 / targetSdk 35, Java 17.
+Build target:
+- Android arm64-v8a
+- versionCode 10
+- versionName 0.6.3
+- APK output: `XiaoZhi-Mobile-v0.6.3-debug.apk`

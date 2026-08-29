@@ -4,7 +4,7 @@ $ProbeUrl = 'https://github.com/git/git.git'
 $TempDir = Join-Path $env:TEMP 'XiaoZhi-Mobile-App-upload'
 $GitProxy = $env:XIAOZHI_GIT_PROXY
 
-Write-Host '=== XiaoZhi Mobile v0.6.2 -> GitHub ===' -ForegroundColor Cyan
+Write-Host '=== XiaoZhi Mobile v0.6.3 -> GitHub ===' -ForegroundColor Cyan
 
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
     throw 'Git was not found. Install Git for Windows and run this script again.'
@@ -195,7 +195,7 @@ try {
         Write-Host 'Repository already contains the latest project files.' -ForegroundColor Yellow
     }
     else {
-        git commit -m 'fix: XiaoZhi Mobile v0.6.2 wake apply and command confirmations'
+        git commit -m 'fix: XiaoZhi Mobile v0.6.3 custom wake ppinyin'
         if ($LASTEXITCODE -ne 0) {
             throw 'git commit failed.'
         }

@@ -30,7 +30,7 @@ class WakePhraseCompiler {
             val candidates = provider.syllables(ch)
             var chosen: List<String>? = null
             for (syllable in candidates) {
-                val segmented = segment(syllable.trim().lowercase(), tokenInventory)
+                val segmented = toOfficialPpinyinTokens(syllable, tokenInventory)
                 if (segmented != null) {
                     chosen = segmented
                     break
@@ -43,28 +43,47 @@ class WakePhraseCompiler {
         return CompileResult.Success(clean, output.joinToString(" ") + " @" + clean, warning)
     }
 
-    private fun segment(syllable: String, tokens: Set<String>): List<String>? {
+    private fun toOfficialPpinyinTokens(rawSyllable: String, tokens: Set<String>): List<String>? {
+        val syllable = normalizePinyinToneMarks(rawSyllable.trim().lowercase())
         if (syllable.isBlank()) return null
-        val candidates = tokens.filter { it.isNotBlank() && !it.startsWith("<") }
-            .sortedWith(compareByDescending<String> { it.length }.thenBy { it })
-        val memo = HashMap<Int, List<String>?>()
-        fun solve(index: Int): List<String>? {
-            if (index == syllable.length) return emptyList()
-            if (memo.containsKey(index)) return memo[index]
-            var best: List<String>? = null
-            for (token in candidates) {
-                if (!syllable.startsWith(token, index)) continue
-                val tail = solve(index + token.length) ?: continue
-                val option = listOf(token) + tail
-                val previous = best
-                if (previous == null || option.size < previous.size ||
-                    (option.size == previous.size && option.first().length > previous.first().length)) {
-                    best = option
-                }
-            }
-            memo[index] = best
-            return best
-        }
-        return solve(0)
+
+        // Match sherpa-onnx text2token(..., tokens_type="ppinyin"):
+        // split one pinyin syllable into initial + tone-marked final.
+        // Long initials must be checked first.
+        val initials = listOf(
+            "zh", "ch", "sh",
+            "b", "p", "m", "f", "d", "t", "n", "l",
+            "g", "k", "h", "j", "q", "x", "r", "z", "c", "s",
+            "y", "w"
+        )
+        val initial = initials.firstOrNull { syllable.startsWith(it) }.orEmpty()
+        val final = syllable.substring(initial.length)
+        if (final.isBlank()) return null
+
+        val result = if (initial.isBlank()) listOf(final) else listOf(initial, final)
+        return result.takeIf { parts -> parts.all(tokens::contains) }
     }
+
+    internal fun normalizePinyinToneMarks(value: String): String = buildString(value.length) {
+        value.forEach { ch ->
+            append(
+                when (ch) {
+                    // pinyin4j 2.5.x has an upstream Unicode bug where some
+                    // third-tone vowels use BREVE instead of standard CARON.
+                    'ă' -> 'ǎ'
+                    'ĕ' -> 'ě'
+                    'ĭ' -> 'ǐ'
+                    'ŏ' -> 'ǒ'
+                    'ŭ' -> 'ǔ'
+                    'Ă' -> 'Ǎ'
+                    'Ĕ' -> 'Ě'
+                    'Ĭ' -> 'Ǐ'
+                    'Ŏ' -> 'Ǒ'
+                    'Ŭ' -> 'Ǔ'
+                    else -> ch
+                }
+            )
+        }
+    }
+
 }

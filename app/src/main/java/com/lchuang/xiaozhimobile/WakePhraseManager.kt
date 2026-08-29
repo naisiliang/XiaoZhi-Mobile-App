@@ -46,6 +46,9 @@ class WakePhraseManager(
         compiled as CompileResult.Success
         return try {
             val newStream = kws.createStream(compiled.runtimeKeyword)
+            if (newStream.ptr == 0L) {
+                return Result.failure(IllegalStateException("KWS_STREAM_CREATE_FAILED"))
+            }
             swapStream(compiled.phrase, newStream)
             Result.success(AppliedWakePhrase(compiled.phrase, compiled.warning))
         } catch (e: Throwable) {

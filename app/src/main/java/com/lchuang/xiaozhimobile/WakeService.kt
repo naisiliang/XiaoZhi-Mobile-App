@@ -125,7 +125,15 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                 stream = wakePhraseManager.currentStream()
                 val active = wakePhraseManager.activePhrase()
                 settings.activeWakePhrase = active
-                updateNotification(if (applied.isSuccess) "全离线语音已开启 · 说“$active”" else "唤醒词应用失败，继续监听“$active”")
+                val applyMessage = if (applied.isSuccess) {
+                    "全离线语音已开启 · 说“$active”"
+                } else {
+                    val reason = applied.exceptionOrNull()?.message
+                        ?: applied.exceptionOrNull()?.javaClass?.simpleName
+                        ?: "UNKNOWN"
+                    "唤醒词应用失败：$reason · 继续监听“$active”"
+                }
+                updateNotification(applyMessage)
                 mainHandler.postDelayed({ startKwsCapture() }, 250L)
             }.start()
             return START_STICKY
@@ -146,7 +154,10 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                         updateNotification("正在应用自定义唤醒词（3/3）· “$requested”")
                         val applied = wakePhraseManager.applyPhrase(requested)
                         if (applied.isFailure) {
-                            updateNotification("自定义唤醒词应用失败，已回退“小智小智”")
+                            val reason = applied.exceptionOrNull()?.message
+                                ?: applied.exceptionOrNull()?.javaClass?.simpleName
+                                ?: "UNKNOWN"
+                            updateNotification("自定义唤醒词应用失败：$reason · 已回退“小智小智”")
                         }
                         stream = wakePhraseManager.currentStream()
                     }

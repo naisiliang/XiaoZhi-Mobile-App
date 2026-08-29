@@ -39,7 +39,7 @@ ai_orchestrator = text('app/src/main/java/com/lchuang/xiaozhimobile/AiOrchestrat
 safe_tools = text('app/src/main/java/com/lchuang/xiaozhimobile/SafeToolExecutor.kt')
 icon_manager = text('app/src/main/java/com/lchuang/xiaozhimobile/DesktopIconManager.kt')
 
-check('version 0.6.2', 'versionCode = 9' in build and 'versionName = "0.6.2"' in build)
+check('version 0.6.3', 'versionCode = 10' in build and 'versionName = "0.6.3"' in build)
 check('arm64 target', 'arm64-v8a' in build)
 check('compile target 35', 'compileSdk = 35' in build and 'targetSdk = 35' in build)
 check('KWS modeling unit cjkchar', 'modelingUnit = "cjkchar"' in wake)
@@ -49,7 +49,7 @@ check('local command capture', 'captureCommandAudio' in wake and 'decodeLocalCom
 check('microphone foreground service', 'FOREGROUND_SERVICE_MICROPHONE' in manifest and 'android:foregroundServiceType="microphone"' in manifest)
 check('bundled wake phrase metadata', '@小智小智' in keywords)
 check('workflow fetches KWS and ASR models', 'sherpa-onnx-paraformer-zh-small-2024-03-09' in fetch and 'kws-models' in fetch)
-check('workflow produces v0.6.2 apk', 'XiaoZhi-Mobile-v0.6.2-debug.apk' in workflow)
+check('workflow produces v0.6.3 apk', 'XiaoZhi-Mobile-v0.6.3-debug.apk' in workflow)
 
 check('voice normalizer', 'fun normalize(raw: String)' in normalizer and 'router.handle(normalized)' in wake)
 check('overlay subsystem', 'TYPE_APPLICATION_OVERLAY' in overlay_controller and 'postInvalidateDelayed' in overlay_view)

@@ -122,7 +122,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             setPadding(0, dp(4), 0, dp(20))
         })
         status = TextView(this).apply {
-            text = "v0.6.2：自定义唤醒自动生效 + 指令完成语音确认 + 快速连续监听"
+            text = "v0.6.3：修复自定义唤醒拼音声调 + 指令完成语音确认 + 快速连续监听"
             textSize = 15f
             setTextColor(Color.rgb(34, 95, 68))
             setPadding(dp(14), dp(12), dp(14), dp(12))
