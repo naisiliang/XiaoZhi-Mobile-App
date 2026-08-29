@@ -78,14 +78,14 @@ class DeviceActionExecutor(
             else -> "媒体音量已经调整到${actual}%"
         }
         return if (result.success) {
-            ok(code, text, "媒体音量${actual}%")
+            ok(code, text, "媒体音量${actual}%", actual)
         } else {
-            DeviceExecutionResult(false, "${code}_PARTIAL", text, "媒体音量${actual}%", CommandFailureKind.EXECUTION_FAILED)
+            DeviceExecutionResult(false, "${code}_PARTIAL", text, "媒体音量${actual}%", CommandFailureKind.EXECUTION_FAILED, actual)
         }
     }
 
-    private fun ok(code: String, spoken: String, summary: String) =
-        DeviceExecutionResult(true, code, spoken, summary)
+    private fun ok(code: String, spoken: String, summary: String, actualPercent: Int? = null) =
+        DeviceExecutionResult(true, code, spoken, summary, actualPercent = actualPercent)
 
     private fun failed(code: String, spoken: String, summary: String) =
         DeviceExecutionResult(false, code, spoken, summary, CommandFailureKind.EXECUTION_FAILED)

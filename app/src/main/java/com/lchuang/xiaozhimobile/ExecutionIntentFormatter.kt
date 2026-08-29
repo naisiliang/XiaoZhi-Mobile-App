@@ -16,7 +16,12 @@ class ExecutionIntentFormatter {
     fun finalCopy(action: DeviceAction, result: DeviceExecutionResult, continuation: String): ExecutionCopy {
         val announcement = announcement(action)
         return if (result.success) {
-            ExecutionCopy(announcement, announcement, "✅ 已成功执行：${result.notificationSummary}", null, "${result.spokenResult}。$continuation")
+            val summary = if (action is DeviceAction.SetMediaVolume ||
+                action == DeviceAction.MediaVolumeUp || action == DeviceAction.MediaVolumeDown) {
+                val actual = result.actualPercent
+                if (actual != null) "媒体音量${actual}%" else result.notificationSummary
+            } else result.notificationSummary
+            ExecutionCopy(announcement, announcement, "✅ 已成功执行：$summary", null, result.spokenResult)
         } else {
             ExecutionCopy(announcement, announcement, null, "❌ 执行失败：${label(action)}", "${result.spokenResult}。请再试一次。")
         }

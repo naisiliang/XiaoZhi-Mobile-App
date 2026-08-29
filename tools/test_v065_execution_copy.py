@@ -34,12 +34,13 @@ with tempfile.TemporaryDirectory() as td:
 
             val success = formatter.finalCopy(
                 DeviceAction.SetMediaVolume(70),
-                DeviceExecutionResult(true, "SET_VOLUME", "媒体音量已经调整到69%", "媒体音量69%"),
+                DeviceExecutionResult(true, "SET_VOLUME", "媒体音量已经调整到69%", "媒体音量70%", actualPercent = 69),
                 "你有什么需求请说？"
             )
             check(success.successNotification == "✅ 已成功执行：媒体音量69%")
             check(success.finalSpoken == "媒体音量已经调整到69%")
             check(!success.successNotification!!.contains("70"))
+            check(success.finalSpoken == "媒体音量已经调整到69%")
 
             val failure = formatter.finalCopy(
                 DeviceAction.OpenApp("微信"),

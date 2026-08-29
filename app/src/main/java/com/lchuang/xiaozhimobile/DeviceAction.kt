@@ -33,5 +33,6 @@ data class DeviceExecutionResult(
     val code: String,
     val spokenResult: String,
     val notificationSummary: String,
-    val failureKind: CommandFailureKind? = null
+    val failureKind: CommandFailureKind? = null,
+    val actualPercent: Int? = null
 )
