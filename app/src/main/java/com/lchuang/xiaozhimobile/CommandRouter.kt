@@ -1,7 +1,7 @@
 package com.lchuang.xiaozhimobile
 
 class CommandRouter(private val phone: PhoneController) {
-    data class Result(val handled: Boolean, val reply: String = "")
+    data class Result(val handled: Boolean, val reply: String = "", val success: Boolean = true)
 
     fun handle(raw: String): Result {
         val text = raw.trim().lowercase()
@@ -36,39 +36,42 @@ class CommandRouter(private val phone: PhoneController) {
             }
             containsAny(text, "打开手电筒", "开启手电筒", "开手电筒") -> {
                 val ok = phone.setFlashlight(true)
-                return Result(true, if (ok) "手电筒已打开" else "没有成功打开手电筒")
+                return Result(true, if (ok) "手电筒已打开" else "没有成功打开手电筒", ok)
             }
             containsAny(text, "关闭手电筒", "关掉手电筒", "关手电筒") -> {
                 val ok = phone.setFlashlight(false)
-                return Result(true, if (ok) "手电筒已关闭" else "没有成功关闭手电筒")
+                return Result(true, if (ok) "手电筒已关闭" else "没有成功关闭手电筒", ok)
             }
         }
 
         if (containsAny(text, "打开微信", "启动微信", "打开威信", "启动威信", "进入微信", "打开一下微信")) {
             val ok = phone.openApp("微信")
-            return Result(true, if (ok) "正在打开微信" else "没有找到微信")
+            return Result(true, if (ok) "正在打开微信" else "没有找到微信", ok)
         }
         if (containsAny(text, "打开qq", "启动qq", "打开q q", "启动q q", "打开扣扣", "启动扣扣", "进入qq", "打开一下qq")) {
             val ok = phone.openApp("qq")
-            return Result(true, if (ok) "正在打开QQ" else "没有找到QQ")
+            return Result(true, if (ok) "正在打开QQ" else "没有找到QQ", ok)
         }
 
         val navigation = Regex("(?:导航到|导航去|带我去|去)(.+)").find(text)
         if (navigation != null) {
             val dest = navigation.groupValues[1].trim().removeSuffix("。")
-            if (dest.length >= 2 && phone.navigate(dest)) return Result(true, "正在打开导航")
+            if (dest.length >= 2) {
+                val ok = phone.navigate(dest)
+                return Result(true, if (ok) "正在打开导航" else "导航没有成功打开", ok)
+            }
         }
 
         val browser = Regex("(?:浏览器打开|打开网页|访问)(.+)").find(text)
         if (browser != null) {
             val target = browser.groupValues[1].trim()
             if (target.isNotBlank()) {
-                phone.openBrowser(target)
-                return Result(true, "正在打开")
+                val ok = phone.openBrowser(target)
+                return Result(true, if (ok) "正在打开" else "没有成功打开浏览器", ok)
             }
         }
 
-        val appMatch = Regex("(?:打开|启动)(.+?)(?:app|应用|软件)?$").find(text)
+        val appMatch = Regex("(?:打开|启动|进入|运行)(.+?)(?:app|应用|软件)?$").find(text)
         if (appMatch != null) {
             val name = appMatch.groupValues[1].trim()
                 .removeSuffix("app")
@@ -77,11 +80,23 @@ class CommandRouter(private val phone: PhoneController) {
                 .trim()
             if (name.isNotBlank()) {
                 val ok = phone.openApp(name)
-                return Result(true, if (ok) "正在打开$name" else "没有找到$name")
+                return Result(true, if (ok) "正在打开$name" else "没有找到$name", ok)
             }
         }
 
         return Result(false)
+    }
+
+    fun looksLikeDeviceCommand(raw: String): Boolean {
+        val text = VoiceCommandNormalizer.normalize(raw)
+        if (text.isBlank()) return false
+        val commandWords = listOf(
+            "打开", "启动", "进入", "运行", "关闭", "退出",
+            "播放", "暂停", "停止", "下一首", "上一首",
+            "音量", "声音", "手电筒", "导航", "带我去",
+            "浏览器", "访问", "设置", "调大", "调小", "切换"
+        )
+        return commandWords.any(text::contains)
     }
 
     private fun containsAny(text: String, vararg words: String): Boolean = words.any(text::contains)

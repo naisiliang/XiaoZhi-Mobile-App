@@ -7,9 +7,10 @@ import android.hardware.camera2.CameraManager
 import android.media.AudioManager
 import android.net.Uri
 import android.view.KeyEvent
-import java.util.Locale
 
 class PhoneController(private val context: Context) {
+    private val settings = SettingsStore(context)
+    private val appRegistry = InstalledAppRegistry(context)
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
     private val knownPackages = linkedMapOf(
@@ -62,52 +63,48 @@ class PhoneController(private val context: Context) {
     }
 
     fun openApp(appName: String): Boolean {
-        val normalized = appName.lowercase(Locale.getDefault()).replace(" ", "")
         val pm = context.packageManager
 
-        knownPackages.entries.firstOrNull {
-            normalized.contains(it.key.lowercase(Locale.getDefault())) ||
-                it.key.lowercase(Locale.getDefault()).contains(normalized)
-        }?.let { entry ->
-            val launch = pm.getLaunchIntentForPackage(entry.value)
+        fun launchPackage(packageName: String): Boolean {
+            val launch = pm.getLaunchIntentForPackage(packageName)
             if (launch != null) {
                 launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                context.startActivity(launch)
-                return true
+                return try {
+                    context.startActivity(launch)
+                    true
+                } catch (_: Exception) {
+                    false
+                }
             }
-
-            // Fallback for Android 11+ / vendor ROM package visibility quirks.
-            try {
+            return try {
                 val explicitLauncher = Intent(Intent.ACTION_MAIN).apply {
                     addCategory(Intent.CATEGORY_LAUNCHER)
-                    setPackage(entry.value)
+                    setPackage(packageName)
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
                 context.startActivity(explicitLauncher)
-                return true
+                true
             } catch (_: Exception) {
-                // Continue to label-based fallback below.
+                false
             }
         }
 
-        val launcherIntent = Intent(Intent.ACTION_MAIN).apply {
-            addCategory(Intent.CATEGORY_LAUNCHER)
+        appRegistry.resolve(appName, settings.appAliases)?.let { resolved ->
+            if (launchPackage(resolved.packageName)) return true
         }
-        val matches = pm.queryIntentActivities(launcherIntent, 0)
-        val match = matches.firstOrNull { info ->
-            val label = info.loadLabel(pm)?.toString()?.lowercase(Locale.getDefault()) ?: ""
-            label.contains(normalized) || normalized.contains(label)
+
+        val normalized = AppNameMatcher.extractRequestedAppName(appName)
+        knownPackages.entries.firstOrNull {
+            normalized.contains(AppNameMatcher.normalize(it.key)) ||
+                AppNameMatcher.normalize(it.key).contains(normalized)
+        }?.let { entry ->
+            if (launchPackage(entry.value)) return true
         }
-        if (match != null) {
-            val launch = pm.getLaunchIntentForPackage(match.activityInfo.packageName)
-            if (launch != null) {
-                launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                context.startActivity(launch)
-                return true
-            }
-        }
+
         return false
     }
+
+    fun installedAppCount(): Int = appRegistry.count()
 
     fun openBrowser(urlOrQuery: String): Boolean {
         return try {

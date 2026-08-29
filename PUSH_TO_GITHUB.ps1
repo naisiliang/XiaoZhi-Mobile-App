@@ -2,9 +2,9 @@ $ErrorActionPreference = 'Stop'
 $RepoUrl = 'https://github.com/naisiliang/XiaoZhi-Mobile-App.git'
 $ProbeUrl = 'https://github.com/git/git.git'
 $TempDir = Join-Path $env:TEMP 'XiaoZhi-Mobile-App-upload'
-$GitProxy = $null
+$GitProxy = $env:XIAOZHI_GIT_PROXY
 
-Write-Host '=== XiaoZhi Mobile v0.4.0 -> GitHub ===' -ForegroundColor Cyan
+Write-Host '=== XiaoZhi Mobile v0.5.0 -> GitHub ===' -ForegroundColor Cyan
 
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
     throw 'Git was not found. Install Git for Windows and run this script again.'
@@ -126,7 +126,13 @@ function Test-GitHubAccess {
 }
 
 Write-Host 'Checking GitHub connectivity...'
-if (Test-GitHubAccess -Proxy $null) {
+if (-not [string]::IsNullOrWhiteSpace($GitProxy)) {
+    Write-Host ("Manual proxy override is active: {0}" -f $GitProxy) -ForegroundColor Green
+    if (-not (Test-GitHubAccess -Proxy $GitProxy)) {
+        throw 'The manually selected proxy cannot reach GitHub. Check the proxy app and port.'
+    }
+}
+elseif (Test-GitHubAccess -Proxy $null) {
     Write-Host 'Direct GitHub connection is available.' -ForegroundColor Green
 }
 else {
@@ -189,7 +195,7 @@ try {
         Write-Host 'Repository already contains the latest project files.' -ForegroundColor Yellow
     }
     else {
-        git commit -m 'feat: XiaoZhi Mobile v0.4.0 Android assistant'
+        git commit -m 'feat: XiaoZhi Mobile v0.5.0 Android assistant'
         if ($LASTEXITCODE -ne 0) {
             throw 'git commit failed.'
         }

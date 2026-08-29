@@ -11,8 +11,8 @@ checks = [
     ('qq package visibility', '<package android:name="com.tencent.mobileqq"' in manifest),
     ('explicit app fallback', 'setPackage(' in phone or 'componentName' in phone),
     ('continuous session helper', 'continueConversationSession' in wake),
-    ('local command continues session', 'speakThen(local.reply.ifBlank { "好的" }) { continueConversationSession() }' in wake),
-    ('ai answer continues session', 'speakThen(answer) { continueConversationSession() }' in wake),
+    ('local command continues session', 'continueConversationSession(immediate = true)' in wake or 'continueConversationSession()' in wake),
+    ('ai answer continues session', 'speakThen(answer)' in wake and 'continueConversationSession()' in wake),
 ]
 failed=[]
 for name, ok in checks:

@@ -1,18 +1,30 @@
-# XiaoZhi Mobile App v0.4.0
+# XiaoZhi Mobile App v0.5.0
 
-Android 小智手机助手：本地离线唤醒、本地中文语音指令识别、连续会话、手机控制和可选 AI 对话。
+Android 小智手机助手：本地离线唤醒、本地中文语音识别、透明桌面语音悬浮层、连续会话、手机控制和可选 AI 对话。
 
-## v0.4.0 重点
+## v0.5.0 重点
 
-- sherpa-onnx KWS：离线识别“小智小智”。
-- sherpa-onnx Paraformer：唤醒后的中文指令也在手机本地识别。
-- `VoiceCommandNormalizer`：把“请打开微信 / 打开 q q / 来首歌 / 把音乐停掉”等口语或常见 ASR 结果标准化后，再进入现有 `CommandRouter -> PhoneController`。
-- 透明语音悬浮层：授权“显示在其他应用上层”后，唤醒会在桌面/其他 App 上方显示发光圆环、监听/识别/执行状态、识别文字和动态波形。
-- 连续会话：第一次喊“小智小智”后可连续说多条命令，说“再见 / 退出对话 / 休息吧”退出。
-- 手机控制不需要 AI API；普通聊天才使用可选 OpenAI-compatible `/v1/chat/completions`。
+- 连续会话超时可配置，默认 20 秒；超时后自动播报用户自定义退出话术并返回“小智小智”待唤醒。
+- 唤醒后的第一句回复可由用户在 App 内自定义。
+- 本地控制执行后不再等待长 TTS 确认，直接重新进入监听。
+- `InstalledAppRegistry` 扫描手机真实可启动应用，支持名称、包含关系、模糊匹配和用户别名。
+- 无法执行的手机指令统一回复：`抱歉，我还不会这个指令，你可以换一个指令继续服务你`，并保持当前会话。
+- 默认应用图标使用蓝粉渐变 Logo；用户可从相册选择图片创建/更新自定义桌面快捷图标，并恢复默认 Logo。
+- sherpa-onnx KWS + Paraformer ASR 继续完全在手机本地运行。
+- 手机控制仍统一走 `VoiceCommandNormalizer -> CommandRouter -> PhoneController`。
+
+## App 别名
+
+设置页每行一个，例如：
+
+```text
+B站=哔哩哔哩
+小破站=哔哩哔哩
+夸克浏览器=夸克
+```
 
 ## 构建
 
 推送到 GitHub 后，Actions 会下载 KWS + Paraformer 本地模型并生成：
 
-`XiaoZhi-Mobile-v0.4.0-debug.apk`
+`XiaoZhi-Mobile-v0.5.0-debug.apk`

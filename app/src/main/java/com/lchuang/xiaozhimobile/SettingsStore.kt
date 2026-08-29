@@ -24,6 +24,22 @@ class SettingsStore(context: Context) {
         ) ?: "你是小智语音助手。"
         set(value) = prefs.edit().putString("system_prompt", value).apply()
 
+    var wakeReply: String
+        get() = prefs.getString("wake_reply", "我在") ?: "我在"
+        set(value) = prefs.edit().putString("wake_reply", value.trim()).apply()
+
+    var timeoutReply: String
+        get() = prefs.getString("timeout_reply", "我先退下了，有问题再唤醒我") ?: "我先退下了，有问题再唤醒我"
+        set(value) = prefs.edit().putString("timeout_reply", value.trim()).apply()
+
+    var sessionTimeoutSeconds: Int
+        get() = prefs.getInt("session_timeout_seconds", 20).coerceIn(5, 300)
+        set(value) = prefs.edit().putInt("session_timeout_seconds", value.coerceIn(5, 300)).apply()
+
+    var appAliases: String
+        get() = prefs.getString("app_aliases", "") ?: ""
+        set(value) = prefs.edit().putString("app_aliases", value.trim()).apply()
+
     var preferOfflineAsr: Boolean
         get() = prefs.getBoolean("prefer_offline_asr", false)
         set(value) = prefs.edit().putBoolean("prefer_offline_asr", value).apply()

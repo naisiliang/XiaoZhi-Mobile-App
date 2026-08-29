@@ -34,6 +34,9 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         private const val COMMAND_LISTEN_DELAY_MS = 700L
         private const val COMMAND_RETRY_DELAY_MS = 500L
         private const val CONTINUOUS_LISTEN_DELAY_MS = 550L
+        private const val IMMEDIATE_LISTEN_DELAY_MS = 120L
+        private const val IDLE_RELISTEN_DELAY_MS = 120L
+        private const val UNKNOWN_COMMAND_REPLY = "抱歉，我还不会这个指令，你可以换一个指令继续服务你"
         private const val MAX_COMMAND_RECOGNITION_ATTEMPTS = 2
         private const val COMMAND_FRAME_SAMPLES = 800 // 50 ms @ 16 kHz
         private const val COMMAND_WAIT_SPEECH_MS = 4000
@@ -48,6 +51,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
     private val kwsListening = AtomicBoolean(false)
     private val commandListening = AtomicBoolean(false)
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val session = SessionController()
 
     private lateinit var settings: SettingsStore
     private lateinit var phone: PhoneController
@@ -231,16 +235,23 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         commandRecognitionAttempts = 0
         conversationActive = true
         conversationTurns = 0
+        session.start(settings.sessionTimeoutSeconds)
         updateNotification("已唤醒 · 连续会话已开启")
         overlay.show()
         overlay.update("你好，有什么可以帮你？", "我在听…")
-        speakThen("我在") {
+        val wakeReply = settings.wakeReply.ifBlank { "我在" }
+        speakThen(wakeReply) {
+            session.touch(settings.sessionTimeoutSeconds)
             mainHandler.postDelayed({ startLocalCommandRecognition() }, COMMAND_LISTEN_DELAY_MS)
         }
     }
 
     private fun startLocalCommandRecognition() {
         if (!running.get() || commandListening.get()) return
+        if (!conversationActive || session.isExpired()) {
+            finishSessionForTimeout()
+            return
+        }
         commandRecognitionAttempts += 1
         commandListening.set(true)
         updateNotification("本地语音识别 · 请说指令或问题…")
@@ -249,7 +260,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
             try {
                 val samples = captureCommandAudio()
                 if (samples.isEmpty()) {
-                    mainHandler.post { retryLocalCommandRecognition("NO_SPEECH") }
+                    mainHandler.post { continueIdleListening() }
                     return@Thread
                 }
                 mainHandler.post {
@@ -286,6 +297,12 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         }
         record.startRecording()
 
+        val remainingAtStart = session.remainingMs()
+        if (remainingAtStart <= 0L) {
+            try { record.stop() } catch (_: Throwable) {}
+            return FloatArray(0)
+        }
+        val waitSpeechBudgetMs = minOf(COMMAND_WAIT_SPEECH_MS.toLong(), remainingAtStart).toInt()
         val maxSamples = SAMPLE_RATE * COMMAND_MAX_AUDIO_MS / 1000
         val output = ShortArray(maxSamples)
         var outputSize = 0
@@ -311,6 +328,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                     speechFrames += 1
                     if (speechFrames >= 2) {
                         speechStarted = true
+                        session.touch(settings.sessionTimeoutSeconds)
                         for (chunk in preRoll) {
                             val count = minOf(chunk.size, maxSamples - outputSize)
                             chunk.copyInto(output, outputSize, 0, count)
@@ -322,7 +340,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                 } else {
                     speechFrames = 0
                 }
-                if (!speechStarted && waitedMs >= COMMAND_WAIT_SPEECH_MS) break
+                if (!speechStarted && waitedMs >= waitSpeechBudgetMs) break
                 continue
             }
 
@@ -366,12 +384,22 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
+    private fun continueIdleListening() {
+        if (!running.get() || !conversationActive) return
+        commandRecognitionAttempts = 0
+        if (session.isExpired()) {
+            finishSessionForTimeout()
+            return
+        }
+        updateNotification("连续会话中 · 等待下一条指令")
+        overlay.update("你好，有什么可以帮你？", "我在听…", "等待下一条指令")
+        mainHandler.postDelayed({ startLocalCommandRecognition() }, IDLE_RELISTEN_DELAY_MS)
+    }
+
     private fun retryLocalCommandRecognition(reason: String) {
         if (!running.get()) return
-
-        // After at least one successful turn, silence means the user is done.
-        if (conversationActive && conversationTurns > 0 && reason == "NO_SPEECH") {
-            endConversationSession()
+        if (session.isExpired()) {
+            finishSessionForTimeout()
             return
         }
 
@@ -379,16 +407,22 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
             updateNotification("没有听清($reason) · 将再次本地听取指令")
             overlay.update("你好，有什么可以帮你？", "没有听清，请再说一次…")
             speakThen("没有听清，请直接说指令") {
+                session.touch(settings.sessionTimeoutSeconds)
                 mainHandler.postDelayed({ startLocalCommandRecognition() }, COMMAND_RETRY_DELAY_MS)
             }
         } else {
-            speakThen("还是没有听清，有需要再叫我") { endConversationSession() }
+            commandRecognitionAttempts = 0
+            speakThen(UNKNOWN_COMMAND_REPLY) {
+                session.touch(settings.sessionTimeoutSeconds)
+                continueConversationSession()
+            }
         }
     }
 
     private fun processUtterance(rawText: String) {
         val normalized = VoiceCommandNormalizer.normalize(rawText)
         updateNotification("你说：$rawText")
+        session.touch(settings.sessionTimeoutSeconds)
 
         if (normalized.isBlank()) {
             retryLocalCommandRecognition("NO_MATCH")
@@ -409,23 +443,31 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
             return
         }
 
-        // Spoken commands now converge on exactly the same CommandRouter -> PhoneController
-        // execution path used by the typed local-control test.
         overlay.update("你好，有什么可以帮你？", "正在执行：$normalized", heard)
         val local = router.handle(normalized)
         if (local.handled) {
             conversationTurns += 1
             commandRecognitionAttempts = 0
+            if (!local.success) {
+                overlay.update("你好，有什么可以帮你？", UNKNOWN_COMMAND_REPLY, heard)
+                speakThen(UNKNOWN_COMMAND_REPLY) {
+                    session.touch(settings.sessionTimeoutSeconds)
+                    continueConversationSession()
+                }
+                return
+            }
             overlay.update("你好，有什么可以帮你？", local.reply.ifBlank { "已执行" }, heard)
-            speakThen(local.reply.ifBlank { "好的" }) { continueConversationSession() }
+            session.touch(settings.sessionTimeoutSeconds)
+            continueConversationSession(immediate = true)
             return
         }
 
-        if (settings.apiUrl.isBlank()) {
+        if (router.looksLikeDeviceCommand(normalized) || settings.apiUrl.isBlank()) {
             conversationTurns += 1
             commandRecognitionAttempts = 0
-            overlay.update("你好，有什么可以帮你？", "未匹配本地指令 · AI 未配置", heard)
-            speakThen("我听到你说$rawText。聊天功能还需要配置 AI 接口。") {
+            overlay.update("你好，有什么可以帮你？", UNKNOWN_COMMAND_REPLY, heard)
+            speakThen(UNKNOWN_COMMAND_REPLY) {
+                session.touch(settings.sessionTimeoutSeconds)
                 continueConversationSession()
             }
             return
@@ -436,12 +478,15 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         ai.ask(rawText) { result ->
             mainHandler.post {
                 val answer = result.getOrElse { "AI 请求失败：${it.message ?: "未知错误"}" }
-                    .replace(Regex("[\\r\\n]+"), " ")
+                    .replace(Regex("[\r\n]+"), " ")
                     .take(800)
                 conversationTurns += 1
                 commandRecognitionAttempts = 0
                 overlay.update("你好，有什么可以帮你？", "正在回答…", heard)
-                speakThen(answer) { continueConversationSession() }
+                speakThen(answer) {
+                    session.touch(settings.sessionTimeoutSeconds)
+                    continueConversationSession()
+                }
             }
         }
     }
@@ -451,21 +496,36 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         return listOf("退出对话", "结束对话", "休息吧", "你休息吧", "再见", "拜拜", "不用了").any(normalized::contains)
     }
 
-    private fun continueConversationSession() {
+    private fun continueConversationSession(immediate: Boolean = false) {
         if (!running.get()) return
         if (!conversationActive) {
             restartWakeListening()
             return
         }
+        if (session.isExpired()) {
+            finishSessionForTimeout()
+            return
+        }
         updateNotification("连续会话中 · 请继续说，或说“再见”结束")
         overlay.update("你好，有什么可以帮你？", "我在听…", "可以继续说，或说“再见”结束")
-        mainHandler.postDelayed({ startLocalCommandRecognition() }, CONTINUOUS_LISTEN_DELAY_MS)
+        val delay = if (immediate) IMMEDIATE_LISTEN_DELAY_MS else CONTINUOUS_LISTEN_DELAY_MS
+        mainHandler.postDelayed({ startLocalCommandRecognition() }, delay)
+    }
+
+    private fun finishSessionForTimeout() {
+        if (!running.get() || !conversationActive) return
+        conversationActive = false
+        val timeoutReply = settings.timeoutReply.ifBlank { "我先退下了，有问题再唤醒我" }
+        updateNotification("连续会话超时 · 即将返回唤醒待机")
+        overlay.update(timeoutReply, "会话超时")
+        speakThen(timeoutReply) { endConversationSession() }
     }
 
     private fun endConversationSession() {
         conversationActive = false
         conversationTurns = 0
         commandRecognitionAttempts = 0
+        session.stop()
         overlay.hide()
         restartWakeListening()
     }
@@ -473,12 +533,17 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
     private fun restartWakeListening() {
         if (!running.get()) return
         conversationActive = false
+        session.stop()
         overlay.hide()
         updateNotification("全离线语音已开启 · 说“小智小智”")
         mainHandler.postDelayed({ startKwsCapture() }, 500)
     }
 
     private fun speakThen(text: String, done: () -> Unit) {
+        if (text.isBlank()) {
+            mainHandler.post(done)
+            return
+        }
         val engine = tts
         if (!ttsReady || engine == null) {
             mainHandler.postDelayed(done, 150)
@@ -550,6 +615,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         running.set(false)
         kwsListening.set(false)
         commandListening.set(false)
+        session.stop()
         stopKwsCapture()
         try { kwsThread?.join(500) } catch (_: Throwable) {}
         try { commandThread?.join(500) } catch (_: Throwable) {}

@@ -1,13 +1,17 @@
-# XiaoZhi Mobile v0.4.0 build notes
+# XiaoZhi Mobile v0.5.0 build notes
 
-v0.4.0 builds on the fully local KWS + Paraformer ASR path from v0.3.x.
+New in v0.5.0:
+- configurable wake reply, session timeout (default 20 seconds), and timeout-exit reply;
+- `SessionController` deadline-driven continuous conversation;
+- local commands immediately resume listening without spoken acknowledgement delay;
+- exact unsupported-command fallback while keeping the session active;
+- `InstalledAppRegistry` + `AppNameMatcher` for launcher-app discovery, fuzzy matching, and user aliases;
+- default APK icon from the approved blue/pink logo;
+- user-selected image -> pinned/dynamic custom desktop shortcut icon, with restore-default action.
 
-New in v0.4.0:
-- deterministic `VoiceCommandNormalizer` before `CommandRouter`;
-- system transparent overlay HUD via `TYPE_APPLICATION_OVERLAY`;
-- overlay permission is optional and voice control continues without it;
-- overlay shows wake/listen/recognize/execute/think states and recognized text;
-- microphone RMS drives the overlay waveform;
-- spoken phone commands and typed local-test commands converge on the same `CommandRouter -> PhoneController` execution path.
+Existing v0.4.0 behavior is preserved:
+- sherpa-onnx KWS + local Paraformer ASR;
+- transparent `TYPE_APPLICATION_OVERLAY` voice HUD;
+- local `VoiceCommandNormalizer -> CommandRouter -> PhoneController` execution path.
 
 Build target: arm64-v8a, Android minSdk 26 / targetSdk 35.
