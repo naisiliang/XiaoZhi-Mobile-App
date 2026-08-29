@@ -25,7 +25,7 @@ class MapController(
                 MapAppPreference.SYSTEM -> Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=地图"))
                 MapAppPreference.AUTO -> null
             } ?: continue
-            if (start(intent)) return MapActionResult(true, p, "正在打开地图")
+            if (start(intent)) return MapActionResult(true, p, "地图已经打开")
         }
         return MapActionResult(false, preference, "没有找到可用地图应用", "NO_MAP_APP")
     }
@@ -40,7 +40,7 @@ class MapController(
                 MapAppPreference.SYSTEM -> Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=$encoded"))
                 MapAppPreference.AUTO -> null
             } ?: continue
-            if (start(intent)) return MapActionResult(true, p, "正在打开导航")
+            if (start(intent)) return MapActionResult(true, p, "导航已经打开")
         }
         return MapActionResult(false, preference, "导航没有成功打开", "NAVIGATION_FAILED")
     }
@@ -84,7 +84,7 @@ class MapController(
             } ?: continue
             if (start(intent)) {
                 val suffix = if (location == null) "（由地图应用确定当前位置）" else ""
-                return MapActionResult(true, p, "正在搜索附近的$keyword$suffix")
+                return MapActionResult(true, p, "已打开地图搜索附近的$keyword$suffix")
             }
         }
         return MapActionResult(false, preference, "没有成功打开附近搜索", "NEARBY_SEARCH_FAILED")

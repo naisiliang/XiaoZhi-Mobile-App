@@ -124,6 +124,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                 }
                 stream = wakePhraseManager.currentStream()
                 val active = wakePhraseManager.activePhrase()
+                settings.activeWakePhrase = active
                 updateNotification(if (applied.isSuccess) "全离线语音已开启 · 说“$active”" else "唤醒词应用失败，继续监听“$active”")
                 mainHandler.postDelayed({ startKwsCapture() }, 250L)
             }.start()
@@ -150,6 +151,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                         stream = wakePhraseManager.currentStream()
                     }
 
+                    settings.activeWakePhrase = wakePhraseManager.activePhrase()
                     updateNotification("全离线语音已开启 · 说“${wakePhraseManager.activePhrase()}”")
                     startKwsCapture()
                 } catch (e: Throwable) {
@@ -187,6 +189,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         wakePhraseManager.attachSpotter(spotter!!)
         val bundledStream = spotter!!.createStream()
         wakePhraseManager.adoptBundledStream(DEFAULT_WAKE_PHRASE, bundledStream)
+        settings.activeWakePhrase = DEFAULT_WAKE_PHRASE
         stream = bundledStream
     }
 
@@ -502,9 +505,8 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         if (local.handled && local.success) {
             conversationTurns += 1
             commandRecognitionAttempts = 0
-            overlay.update("你好，有什么可以帮你？", local.reply.ifBlank { "已执行" }, heard)
-            session.touch(settings.sessionTimeoutSeconds)
-            continueConversationSession(immediate = true)
+            overlay.update("你好，有什么可以帮你？", local.reply.ifBlank { "指令已经执行完成" }, heard)
+            speakCommandConfirmation(local.reply)
             return
         }
 
@@ -556,8 +558,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                                 memory.addTurn(rawText, if (executed.success) "已执行：${executed.spokenText}" else "执行失败：${executed.debugCode}")
                                 if (executed.success) {
                                     overlay.update("你好，有什么可以帮你？", executed.spokenText, heard)
-                                    session.touch(settings.sessionTimeoutSeconds)
-                                    continueConversationSession(immediate = true)
+                                    speakCommandConfirmation(executed.spokenText)
                                 } else {
                                     overlay.update("你好，有什么可以帮你？", UNKNOWN_COMMAND_REPLY, heard)
                                     speakThen(UNKNOWN_COMMAND_REPLY) {
@@ -570,6 +571,15 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                     }
                 }
             }
+        }
+    }
+
+    private fun speakCommandConfirmation(text: String) {
+        val confirmation = text.trim().ifBlank { "指令已经执行完成" }
+        updateNotification("$confirmation · 正在准备继续监听")
+        speakThen(confirmation) {
+            session.touch(settings.sessionTimeoutSeconds)
+            continueConversationSession(immediate = true)
         }
     }
 

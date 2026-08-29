@@ -1,33 +1,22 @@
-# XiaoZhi Mobile v0.6.1 build notes
+# XiaoZhi Mobile v0.6.2 build notes
 
-New in v0.6.1:
-- Fix startup hang caused by re-adding the bundled default wake phrase through the runtime KWS stream path.
-- Restore the proven bundled `createStream()` startup path for “小智小智”; custom phrases still use runtime KWS.
-- Add staged startup diagnostics and prevent manual KWS stop from dispatching a false wake.
+New in v0.6.2:
+- Fix the real-device mismatch where the text fields could contain “小白 / 小白小白” while the running KWS service still listened for “小智小智”.
+- Starting offline wake now always synchronizes the saved wake phrase with an already-running WakeService.
+- “Save all settings” also synchronizes the wake phrase when the service is running.
+- The UI now shows the actual runtime KWS wake phrase (`activeWakePhrase`) instead of only echoing the edit field.
+- Successful local phone commands now speak a short completion confirmation, then resume listening 120 ms after TTS finishes.
+- Successful AI safe-tool actions use the same completion-confirmation flow.
+- App launch confirmations now say “已打开…”; media/volume/map confirmations use completed-action wording.
 
-- complete installed-app discovery and structured launch diagnostics;
-- direct-install `QUERY_ALL_PACKAGES` visibility for broader launcher coverage;
-- one-shot foreground location only, Amap/Baidu/system navigation and nearby search;
-- runtime custom assistant name and sherpa-onnx wake phrase compilation via pinyin4j;
-- Android system TTS voice selection, preview, speech rate and pitch;
-- AI Base URL normalization, AUTO / Chat Completions / Responses modes and endpoint test;
-- session-scoped 8-turn AI conversation memory;
-- native tool calling plus strict JSON fallback planning;
-- strict `SafeToolExecutor` allowlist before any AI-planned phone action;
-- local-first routing: deterministic device commands stay AI-free, ambiguous commands may use AI planning;
-- settings/diagnostics UI for app visibility, KWS phrase, location, TTS and AI endpoint status.
+Preserved:
+- v0.6.1 stable bundled `createStream()` startup for the default “小智小智”; custom phrases still use sherpa-onnx runtime KWS.
+- installed-app discovery and launch diagnostics;
+- Amap/Baidu/system navigation and one-shot foreground location;
+- TTS voice selection/preview/rate/pitch;
+- AI Base URL auto mode, 8-turn session memory, safe tool allowlist;
+- 20-second configurable continuous session and transparent overlay.
 
-Preserved from v0.5.0:
-- configurable session timeout (default 20 seconds), wake reply and timeout exit phrase;
-- immediate re-listen after local device commands;
-- transparent overlay HUD;
-- default blue/pink launcher logo and custom desktop shortcut icon;
-- sherpa-onnx KWS + local Paraformer ASR.
-
-Security constraints:
-- no AccessibilityService;
-- no background location;
-- AI cannot delete data, send messages, pay/transfer, install/uninstall, read private data, run shell, or submit arbitrary Android intents/URIs/packages;
-- API keys are local settings only and must never be committed/logged.
+Security constraints remain unchanged: no AccessibilityService, no background location, and no AI payment/delete/message/install/shell capabilities.
 
 Build target: arm64-v8a, Android minSdk 26 / targetSdk 35, Java 17.

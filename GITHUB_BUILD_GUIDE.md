@@ -1,23 +1,15 @@
-# GitHub Actions 构建 v0.6.1 APK
+# GitHub Actions 构建 v0.6.2 APK
 
 1. 解压本工程。
-2. 双击 `PUSH_TO_GITHUB_MANUAL_PROXY.bat`；如果需要代理，输入已验证的 HTTP/Mixed Port（此前验证可用的是 7897）。
-3. 手动代理模式必须先看到 `Manual proxy override is active`，再继续 clone/push。
+2. 双击 `PUSH_TO_GITHUB_MANUAL_PROXY.bat`；需要代理时输入已验证的 HTTP/Mixed Port（此前可用 7897）。
+3. 确认出现 `Manual proxy override is active`。
 4. 推送成功后打开仓库 Actions。
 5. 进入最新 `Build XiaoZhi Mobile APK`。
-6. 等待 `Validate source tree`、`Fetch offline wake + ASR models`、`Build debug APK`、`Rename APK`、`Upload artifact` 全部变绿。
+6. 等待 Validate / model fetch / Build debug APK / Rename / Upload artifact 全部变绿。
 7. 下载 `XiaoZhi-Mobile-APK` Artifact。
-8. 解压得到 `XiaoZhi-Mobile-v0.6.1-debug.apk`。
+8. 解压得到 `XiaoZhi-Mobile-v0.6.2-debug.apk`。
 
-## 手机上首次设置
-
-- 安装 APK；
-- 允许麦克风/通知/相机；
-- 授权“显示在其他应用上层”；
-- 如果要用“附近”搜索，再单独允许前台位置；
-- 设置助手名字/唤醒短语并点击“保存并应用唤醒词”；
-- 选择并试听 TTS 声音；
-- 填 Base URL / API Key / 模型 / API 模式，然后点“测试 AI 接口”；
-- 开启后台离线唤醒。
-
-说明：v0.6.1 直接安装版使用 `QUERY_ALL_PACKAGES` 来改善“打开任意已安装 App”的覆盖率；未来 Google Play 版本需单独做权限合规审查。
+手机验收重点：
+- 运行中把“小智小智”改为“小白小白”后，点击“保存并应用唤醒词”、再次点“开启后台离线唤醒”或“保存全部设置”都应自动同步。
+- 页面“当前实际 KWS 唤醒短语”应显示真正正在监听的词。
+- 执行“打开微信/高德/音量调大/下一首”等成功指令后，应先语音确认完成，再快速进入下一轮监听。

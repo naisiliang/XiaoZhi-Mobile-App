@@ -9,7 +9,7 @@ class SafeToolExecutor(private val phone: PhoneController) {
                 val name = stringArg(call, "name")
                 if (name == null || looksLikePackageName(name)) return callback(invalidArgs("open_app"))
                 when (val result = phone.openApp(name)) {
-                    is AppLauncher.AppLaunchResult.Success -> callback(ToolExecutionResult(true, "正在打开${result.label}", "OPEN_APP_OK"))
+                    is AppLauncher.AppLaunchResult.Success -> callback(ToolExecutionResult(true, "已打开${result.label}", "OPEN_APP_OK"))
                     is AppLauncher.AppLaunchResult.Failure -> callback(ToolExecutionResult(false, "没有成功打开$name", "OPEN_APP_${result.error.name}"))
                 }
             }
@@ -34,14 +34,14 @@ class SafeToolExecutor(private val phone: PhoneController) {
                     return callback(ToolExecutionResult(false, "不支持该链接类型", "REJECTED_SCHEME"))
                 }
                 val ok = phone.openBrowser(value)
-                callback(ToolExecutionResult(ok, if (ok) "正在打开" else "没有成功打开", if (ok) "OPEN_WEB_OK" else "OPEN_WEB_FAILED"))
+                callback(ToolExecutionResult(ok, if (ok) "浏览器已打开" else "没有成功打开", if (ok) "OPEN_WEB_OK" else "OPEN_WEB_FAILED"))
             }
             "media_play" -> { phone.mediaPlay(); callback(ok("已播放", "MEDIA_PLAY")) }
             "media_pause" -> { phone.mediaPause(); callback(ok("已暂停", "MEDIA_PAUSE")) }
-            "media_next" -> { phone.mediaNext(); callback(ok("下一首", "MEDIA_NEXT")) }
-            "media_previous" -> { phone.mediaPrevious(); callback(ok("上一首", "MEDIA_PREVIOUS")) }
-            "volume_up" -> { phone.volumeUp(); callback(ok("已调大", "VOLUME_UP")) }
-            "volume_down" -> { phone.volumeDown(); callback(ok("已调小", "VOLUME_DOWN")) }
+            "media_next" -> { phone.mediaNext(); callback(ok("已切换到下一首", "MEDIA_NEXT")) }
+            "media_previous" -> { phone.mediaPrevious(); callback(ok("已切换到上一首", "MEDIA_PREVIOUS")) }
+            "volume_up" -> { phone.volumeUp(); callback(ok("音量已调大", "VOLUME_UP")) }
+            "volume_down" -> { phone.volumeDown(); callback(ok("音量已调小", "VOLUME_DOWN")) }
             "set_volume" -> {
                 val percent = intArg(call, "percent")
                 if (percent == null || percent !in 0..100) return callback(invalidArgs("set_volume"))

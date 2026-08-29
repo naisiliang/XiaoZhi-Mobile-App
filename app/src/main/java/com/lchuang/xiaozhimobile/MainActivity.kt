@@ -69,6 +69,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         super.onResume()
         if (::overlayPermissionButton.isInitialized) refreshOverlayPermissionButton()
         if (::locationStatus.isInitialized) refreshLocationStatus()
+        if (::currentWakePhrase.isInitialized) refreshActiveWakePhraseLabel()
     }
 
     override fun onDestroy() {
@@ -121,7 +122,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             setPadding(0, dp(4), 0, dp(20))
         })
         status = TextView(this).apply {
-            text = "v0.6.1：修复离线唤醒启动卡住 + 动态唤醒名字 + App/导航/AI 安全工具"
+            text = "v0.6.2：自定义唤醒自动生效 + 指令完成语音确认 + 快速连续监听"
             textSize = 15f
             setTextColor(Color.rgb(34, 95, 68))
             setPadding(dp(14), dp(12), dp(14), dp(12))
@@ -136,7 +137,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         timeoutReply = addEdit(root, "超时退出话术")
         timeoutSeconds = addEdit(root, "连续会话超时秒数，默认 20").apply { inputType = InputType.TYPE_CLASS_NUMBER }
         currentWakePhrase = TextView(this).apply {
-            text = "当前 KWS 唤醒短语：${settings.wakePhrase}"
+            text = "当前实际 KWS 唤醒短语：${settings.activeWakePhrase}"
             textSize = 13f
             setTextColor(Color.rgb(34, 95, 68))
             setPadding(0, dp(6), 0, dp(6))
@@ -165,8 +166,11 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 requestNeededPermissions()
                 if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
                     val i = Intent(this@MainActivity, WakeService::class.java)
+                        .setAction(WakeService.ACTION_APPLY_WAKE_SETTINGS)
+                    currentWakePhrase.text = "当前实际 KWS 唤醒短语：正在应用“${settings.wakePhrase}”…"
                     if (Build.VERSION.SDK_INT >= 26) startForegroundService(i) else startService(i)
-                    status.text = "离线助手已启动。说“${settings.wakePhrase}”即可唤醒。"
+                    status.text = "离线助手正在启动/应用唤醒词。目标：“${settings.wakePhrase}”"
+                    currentWakePhrase.postDelayed({ refreshActiveWakePhraseLabel() }, 700L)
                 } else Toast.makeText(this@MainActivity, "请先允许麦克风权限", Toast.LENGTH_LONG).show()
             }
         }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
@@ -266,7 +270,8 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             text = "保存全部设置"
             setOnClickListener {
                 saveSettings()
-                Toast.makeText(this@MainActivity, "设置已保存", Toast.LENGTH_SHORT).show()
+                applyWakeSettingsIfRunning()
+                Toast.makeText(this@MainActivity, "设置已保存${if (isWakeServiceRunning()) "，唤醒词正在同步" else ""}", Toast.LENGTH_SHORT).show()
             }
         }, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(22) })
 
@@ -318,13 +323,27 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             wakePhrase.setText(typedName + typedName)
         }
         saveSettings()
-        currentWakePhrase.text = "当前 KWS 唤醒短语：${settings.wakePhrase}"
         if (isWakeServiceRunning()) {
-            startService(Intent(this, WakeService::class.java).setAction(WakeService.ACTION_APPLY_WAKE_SETTINGS))
+            applyWakeSettingsIfRunning()
             Toast.makeText(this, "设置已保存，正在运行时应用新的唤醒短语", Toast.LENGTH_LONG).show()
         } else {
+            currentWakePhrase.text = "当前实际 KWS 唤醒短语：${settings.activeWakePhrase}（新词将在启动时应用）"
             Toast.makeText(this, "设置已保存，下次开启离线唤醒时生效", Toast.LENGTH_LONG).show()
         }
+    }
+
+    private fun applyWakeSettingsIfRunning() {
+        if (!isWakeServiceRunning()) {
+            refreshActiveWakePhraseLabel()
+            return
+        }
+        currentWakePhrase.text = "当前实际 KWS 唤醒短语：正在应用“${settings.wakePhrase}”…"
+        startService(Intent(this, WakeService::class.java).setAction(WakeService.ACTION_APPLY_WAKE_SETTINGS))
+        currentWakePhrase.postDelayed({ refreshActiveWakePhraseLabel() }, 700L)
+    }
+
+    private fun refreshActiveWakePhraseLabel() {
+        currentWakePhrase.text = "当前实际 KWS 唤醒短语：${settings.activeWakePhrase}"
     }
 
     private fun refreshVoiceSpinner() {
@@ -448,7 +467,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         apiKey.setText(settings.apiKey)
         model.setText(settings.model)
         apiModeSpinner.setSelection(settings.apiMode.ordinal)
-        currentWakePhrase.text = "当前 KWS 唤醒短语：${settings.wakePhrase}"
+        refreshActiveWakePhraseLabel()
     }
 
     private fun saveSettings() {

@@ -17,6 +17,10 @@ class SettingsStore(context: Context) {
         get() = prefs.getString("wake_phrase", "小智小智") ?: "小智小智"
         set(value) = prefs.edit().putString("wake_phrase", value.trim().ifBlank { "小智小智" }).apply()
 
+    var activeWakePhrase: String
+        get() = prefs.getString("active_wake_phrase", "小智小智") ?: "小智小智"
+        set(value) = prefs.edit().putString("active_wake_phrase", value.trim().ifBlank { "小智小智" }).apply()
+
     var defaultMapApp: MapAppPreference
         get() = enumValueOrDefault(prefs.getString("default_map_app", null), MapAppPreference.AUTO)
         set(value) = prefs.edit().putString("default_map_app", value.name).apply()

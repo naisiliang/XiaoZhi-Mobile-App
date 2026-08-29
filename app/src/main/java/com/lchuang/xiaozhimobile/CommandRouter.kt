@@ -15,19 +15,19 @@ class CommandRouter(private val phone: PhoneController) {
                 phone.mediaStop(); return Result(true, "已停止播放")
             }
             containsAny(text, "继续播放", "继续音乐", "播放音乐", "开始播放", "放音乐", "播放一下音乐", "放一下音乐", "来首歌", "来一首歌") -> {
-                phone.mediaPlay(); return Result(true, "好的，继续播放")
+                phone.mediaPlay(); return Result(true, "音乐已开始播放")
             }
             containsAny(text, "下一首", "下一曲", "切下一首") -> {
-                phone.mediaNext(); return Result(true, "下一首")
+                phone.mediaNext(); return Result(true, "已切换到下一首")
             }
             containsAny(text, "上一首", "上一曲", "切上一首") -> {
-                phone.mediaPrevious(); return Result(true, "上一首")
+                phone.mediaPrevious(); return Result(true, "已切换到上一首")
             }
             containsAny(text, "音量大一点", "声音大一点", "加大音量", "调大音量") -> {
-                phone.volumeUp(); return Result(true, "已调大")
+                phone.volumeUp(); return Result(true, "音量已调大")
             }
             containsAny(text, "音量小一点", "声音小一点", "降低音量", "调小音量") -> {
-                phone.volumeDown(); return Result(true, "已调小")
+                phone.volumeDown(); return Result(true, "音量已调小")
             }
             Regex("音量.*?(\\d{1,3})").containsMatchIn(text) -> {
                 val p = Regex("音量.*?(\\d{1,3})").find(text)?.groupValues?.get(1)?.toIntOrNull() ?: 50
@@ -71,7 +71,7 @@ class CommandRouter(private val phone: PhoneController) {
                     else -> MapAppPreference.AUTO
                 }
                 phone.searchNearby(keyword, pref) { }
-                return Result(true, "正在打开地图搜索附近的$keyword", true)
+                return Result(true, "已打开地图搜索附近的$keyword", true)
             }
         }
 
@@ -97,7 +97,7 @@ class CommandRouter(private val phone: PhoneController) {
             val target = browser.groupValues[1].trim()
             if (target.isNotBlank()) {
                 val ok = phone.openBrowser(target)
-                return Result(true, if (ok) "正在打开" else "没有成功打开浏览器", ok)
+                return Result(true, if (ok) "浏览器已打开" else "没有成功打开浏览器", ok)
             }
         }
 
@@ -118,7 +118,7 @@ class CommandRouter(private val phone: PhoneController) {
 
 
     private fun appResult(requested: String, result: AppLauncher.AppLaunchResult): Result = when (result) {
-        is AppLauncher.AppLaunchResult.Success -> Result(true, "正在打开${result.label}", true)
+        is AppLauncher.AppLaunchResult.Success -> Result(true, "已打开${result.label}", true)
         is AppLauncher.AppLaunchResult.Failure -> when (result.error) {
             AppLauncher.AppLaunchError.PACKAGE_NOT_VISIBLE,
             AppLauncher.AppLaunchError.PACKAGE_NOT_INSTALLED -> Result(true, "没有找到可启动的“$requested”", false)
