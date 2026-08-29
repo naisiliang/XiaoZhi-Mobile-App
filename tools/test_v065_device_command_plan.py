@@ -40,6 +40,7 @@ with tempfile.TemporaryDirectory() as td:
         class PhoneController {
             data class MediaVolumeResult(val success: Boolean = true, val actualPercent: Int = 50)
             var sideEffects = 0
+            val flashlightValues = mutableListOf<Boolean>()
             fun setMediaVolumePercent(percent: Int): MediaVolumeResult { sideEffects++; return MediaVolumeResult(actualPercent = percent) }
             fun volumeUpVerified(): MediaVolumeResult { sideEffects++; return MediaVolumeResult() }
             fun volumeDownVerified(): MediaVolumeResult { sideEffects++; return MediaVolumeResult() }
@@ -48,7 +49,7 @@ with tempfile.TemporaryDirectory() as td:
             fun mediaStop() { sideEffects++ }
             fun mediaNext() { sideEffects++ }
             fun mediaPrevious() { sideEffects++ }
-            fun setFlashlight(enabled: Boolean): Boolean { sideEffects++; return true }
+            fun setFlashlight(enabled: Boolean): Boolean { sideEffects++; flashlightValues += enabled; return true }
             fun openApp(name: String): AppLauncher.AppLaunchResult { sideEffects++; return AppLauncher.AppLaunchResult.Success(name) }
             fun openMap(preference: MapAppPreference): MapResult { sideEffects++; return MapResult() }
             fun searchNearby(keyword: String, preference: MapAppPreference, onComplete: () -> Unit) { sideEffects++; onComplete() }
@@ -76,6 +77,7 @@ with tempfile.TemporaryDirectory() as td:
                 "音量70" to DeviceAction.SetMediaVolume(70),
                 "音量大一点" to DeviceAction.MediaVolumeUp,
                 "打开手电筒" to DeviceAction.SetFlashlight(true),
+                "关闭手电筒" to DeviceAction.SetFlashlight(false),
                 "导航到广州南站" to DeviceAction.Navigate("广州南站", MapAppPreference.AUTO),
             )
             cases.forEach { (raw, expected) ->
@@ -88,6 +90,8 @@ with tempfile.TemporaryDirectory() as td:
             check(router.plan("退出登录") == DeviceCommandPlan.Unhandled)
             check(router.plan("关闭这个页面") == DeviceCommandPlan.Unhandled)
             check(phone.sideEffects == 0) { "plan must not execute device commands" }
+            check(router.handle("关闭手电筒") == CommandRouter.Result(true, "手电筒已关闭", true))
+            check(phone.flashlightValues == listOf(false)) { "handle must turn the flashlight off" }
             check(DeviceExecutionResult(true, "ok", "已完成", "已完成").failureKind == null)
             check(DeviceExecutionResult(false, "no_speech", "", "", CommandFailureKind.NO_SPEECH).failureKind == CommandFailureKind.NO_SPEECH)
             println("PASS: structured local device command plan")

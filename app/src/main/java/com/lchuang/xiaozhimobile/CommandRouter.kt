@@ -18,21 +18,6 @@ class CommandRouter(private val phone: PhoneController) {
         fun planned(action: DeviceAction) = DeviceCommandPlan.Planned(action, text)
 
         if (goHomeOnly.matches(text)) return planned(DeviceAction.GoHome(null))
-        val prefixExitMatch = appExitPrefix.matchEntire(text)
-        if (prefixExitMatch != null) {
-            val target = exitTarget(prefixExitMatch.groupValues[1])
-            if (target != null) return planned(DeviceAction.GoHome(target))
-        }
-        val shortPrefixExitMatch = appExitShortPrefix.matchEntire(text)
-        if (shortPrefixExitMatch != null) {
-            val target = exitTarget(shortPrefixExitMatch.groupValues[1])
-            if (target != null) return planned(DeviceAction.GoHome(target))
-        }
-        val naturalExitMatch = appExitNatural.matchEntire(text)
-        if (naturalExitMatch != null) {
-            val target = exitTarget(naturalExitMatch.groupValues[1])
-            if (target != null) return planned(DeviceAction.GoHome(target))
-        }
 
         when (val volume = volumeParser.parse(text)) {
             is VolumeAction.SetPercent -> return planned(DeviceAction.SetMediaVolume(volume.percent))
@@ -49,6 +34,22 @@ class CommandRouter(private val phone: PhoneController) {
             containsAny(text, "上一首", "上一曲", "切上一首") -> return planned(DeviceAction.MediaPrevious)
             containsAny(text, "打开手电筒", "开启手电筒", "开手电筒") -> return planned(DeviceAction.SetFlashlight(true))
             containsAny(text, "关闭手电筒", "关掉手电筒", "关手电筒") -> return planned(DeviceAction.SetFlashlight(false))
+        }
+
+        val prefixExitMatch = appExitPrefix.matchEntire(text)
+        if (prefixExitMatch != null) {
+            val target = exitTarget(prefixExitMatch.groupValues[1])
+            if (target != null) return planned(DeviceAction.GoHome(target))
+        }
+        val shortPrefixExitMatch = appExitShortPrefix.matchEntire(text)
+        if (shortPrefixExitMatch != null) {
+            val target = exitTarget(shortPrefixExitMatch.groupValues[1])
+            if (target != null) return planned(DeviceAction.GoHome(target))
+        }
+        val naturalExitMatch = appExitNatural.matchEntire(text)
+        if (naturalExitMatch != null) {
+            val target = exitTarget(naturalExitMatch.groupValues[1])
+            if (target != null) return planned(DeviceAction.GoHome(target))
         }
 
         if (containsAny(text, "打开微信", "启动微信", "打开威信", "启动威信", "进入微信", "打开一下微信")) {
