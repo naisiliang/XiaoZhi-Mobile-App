@@ -28,6 +28,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         const val CHANNEL_ID = "xiaozhi_wake"
         const val NOTIFY_ID = 1001
         const val ACTION_STOP = "com.lchuang.xiaozhimobile.STOP"
+        const val ACTION_APPLY_WAKE_SETTINGS = "com.lchuang.xiaozhimobile.APPLY_WAKE_SETTINGS"
         private const val SAMPLE_RATE = 16000
         private const val KWS_MODEL_DIR = "sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20"
         private const val ASR_MODEL_DIR = "sherpa-onnx-paraformer-zh-small-2024-03-09"
@@ -54,12 +55,21 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
     private val session = SessionController()
 
     private lateinit var settings: SettingsStore
+    private lateinit var installedAppRegistry: InstalledAppRegistry
+    private lateinit var appLauncher: AppLauncher
+    private lateinit var locationProvider: LocationProvider
+    private lateinit var mapController: MapController
     private lateinit var phone: PhoneController
     private lateinit var router: CommandRouter
     private lateinit var ai: AiClient
+    private lateinit var aiOrchestrator: AiOrchestrator
+    private lateinit var safeToolExecutor: SafeToolExecutor
+    private lateinit var memory: AiConversationMemory
     private lateinit var overlay: AssistantOverlayController
+    private lateinit var wakePhraseManager: WakePhraseManager
 
     private var tts: TextToSpeech? = null
+    private var ttsVoiceManager: TtsVoiceManager? = null
     @Volatile private var ttsReady = false
     private var commandRecognitionAttempts = 0
     private var conversationActive = false
@@ -76,10 +86,18 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
     override fun onCreate() {
         super.onCreate()
         settings = SettingsStore(this)
-        phone = PhoneController(this)
+        installedAppRegistry = InstalledAppRegistry(this)
+        appLauncher = AppLauncher(this)
+        locationProvider = LocationProvider(this)
+        mapController = MapController(this, locationProvider)
+        phone = PhoneController(this, installedAppRegistry, appLauncher, mapController)
         router = CommandRouter(phone)
         ai = AiClient(settings)
+        aiOrchestrator = AiOrchestrator(settings, ai)
+        safeToolExecutor = SafeToolExecutor(phone)
+        memory = AiConversationMemory(maxTurns = 8)
         overlay = AssistantOverlayController(this)
+        wakePhraseManager = WakePhraseManager(this, KWS_MODEL_DIR)
         tts = TextToSpeech(this, this)
         createNotificationChannel()
 
@@ -93,6 +111,17 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
             stopSelf()
             return START_NOT_STICKY
         }
+        if (intent?.action == ACTION_APPLY_WAKE_SETTINGS && running.get()) {
+            Thread {
+                stopKwsCapture()
+                val applied = wakePhraseManager.applyPhrase(settings.wakePhrase)
+                stream = wakePhraseManager.currentStream()
+                val active = wakePhraseManager.activePhrase()
+                updateNotification(if (applied.isSuccess) "全离线语音已开启 · 说“$active”" else "唤醒词应用失败，继续监听“$active”")
+                mainHandler.postDelayed({ startKwsCapture() }, 250L)
+            }.start()
+            return START_STICKY
+        }
 
         startForeground(NOTIFY_ID, notification("正在加载本地唤醒与语音识别模型…"))
         if (running.compareAndSet(false, true)) {
@@ -101,7 +130,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                 try {
                     initKeywordSpotter()
                     initOfflineAsr()
-                    updateNotification("全离线语音已开启 · 说“小智小智”")
+                    updateNotification("全离线语音已开启 · 说“${wakePhraseManager.activePhrase()}”")
                     startKwsCapture()
                 } catch (e: Throwable) {
                     updateNotification("本地语音启动失败：${e.message ?: e.javaClass.simpleName}")
@@ -135,7 +164,12 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
             numTrailingBlanks = 1
         )
         spotter = KeywordSpotter(assets, config)
-        stream = spotter!!.createStream()
+        wakePhraseManager.attachSpotter(spotter!!)
+        val applied = wakePhraseManager.applyPhrase(settings.wakePhrase)
+        if (applied.isFailure) {
+            wakePhraseManager.applyPhrase("小智小智").getOrThrow()
+        }
+        stream = wakePhraseManager.currentStream()
     }
 
     private fun initOfflineAsr() {
@@ -202,8 +236,10 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                         val result = k.getResult(s)
                         if (result.keyword.isNotBlank()) {
                             k.reset(s)
-                            kwsListening.set(false)
-                            break
+                            if (result.keyword == wakePhraseManager.activePhrase()) {
+                                kwsListening.set(false)
+                                break
+                            }
                         }
                     }
                 }
@@ -235,6 +271,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         commandRecognitionAttempts = 0
         conversationActive = true
         conversationTurns = 0
+        memory.startSession()
         session.start(settings.sessionTimeoutSeconds)
         updateNotification("已唤醒 · 连续会话已开启")
         overlay.show()
@@ -430,11 +467,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         }
 
         val heard = "我听到：$rawText"
-        val normalizedHint = if (normalized != rawText.trim().lowercase()) {
-            "标准化：$normalized"
-        } else {
-            "已识别"
-        }
+        val normalizedHint = if (normalized != rawText.trim().lowercase()) "标准化：$normalized" else "已识别"
         overlay.update("你好，有什么可以帮你？", normalizedHint, heard)
 
         if (containsConversationExit(normalized)) {
@@ -444,25 +477,19 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         }
 
         overlay.update("你好，有什么可以帮你？", "正在执行：$normalized", heard)
+        val deviceLike = router.looksLikeDeviceCommand(normalized)
         val local = router.handle(normalized)
-        if (local.handled) {
+        if (local.handled && local.success) {
             conversationTurns += 1
             commandRecognitionAttempts = 0
-            if (!local.success) {
-                overlay.update("你好，有什么可以帮你？", UNKNOWN_COMMAND_REPLY, heard)
-                speakThen(UNKNOWN_COMMAND_REPLY) {
-                    session.touch(settings.sessionTimeoutSeconds)
-                    continueConversationSession()
-                }
-                return
-            }
             overlay.update("你好，有什么可以帮你？", local.reply.ifBlank { "已执行" }, heard)
             session.touch(settings.sessionTimeoutSeconds)
             continueConversationSession(immediate = true)
             return
         }
 
-        if (router.looksLikeDeviceCommand(normalized) || settings.apiUrl.isBlank()) {
+        val aiConfigured = settings.apiBaseUrl.isNotBlank() && settings.model.isNotBlank()
+        if (!aiConfigured) {
             conversationTurns += 1
             commandRecognitionAttempts = 0
             overlay.update("你好，有什么可以帮你？", UNKNOWN_COMMAND_REPLY, heard)
@@ -474,18 +501,53 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         }
 
         updateNotification("正在询问 AI…")
-        overlay.update("你好，有什么可以帮你？", "正在思考…", heard)
-        ai.ask(rawText) { result ->
+        overlay.update("你好，有什么可以帮你？", if (deviceLike) "正在理解手机指令…" else "正在思考…", heard)
+        aiOrchestrator.respond(rawText, memory) { result ->
             mainHandler.post {
-                val answer = result.getOrElse { "AI 请求失败：${it.message ?: "未知错误"}" }
-                    .replace(Regex("[\r\n]+"), " ")
-                    .take(800)
-                conversationTurns += 1
-                commandRecognitionAttempts = 0
-                overlay.update("你好，有什么可以帮你？", "正在回答…", heard)
-                speakThen(answer) {
-                    session.touch(settings.sessionTimeoutSeconds)
-                    continueConversationSession()
+                if (result.isFailure) {
+                    conversationTurns += 1
+                    commandRecognitionAttempts = 0
+                    val message = "AI 服务暂时不可用，请稍后再试"
+                    overlay.update("你好，有什么可以帮你？", message, heard)
+                    speakThen(message) {
+                        session.touch(settings.sessionTimeoutSeconds)
+                        continueConversationSession()
+                    }
+                    return@post
+                }
+                when (val outcome = result.getOrThrow()) {
+                    is AiOutcome.Reply -> {
+                        val answer = outcome.text.replace(Regex("[\r\n]+"), " ").take(800)
+                        conversationTurns += 1
+                        commandRecognitionAttempts = 0
+                        overlay.update("你好，有什么可以帮你？", "正在回答…", heard)
+                        speakThen(answer) {
+                            memory.addTurn(rawText, answer)
+                            session.touch(settings.sessionTimeoutSeconds)
+                            continueConversationSession()
+                        }
+                    }
+                    is AiOutcome.Tool -> {
+                        overlay.update("你好，有什么可以帮你？", "正在执行安全手机操作…", heard)
+                        safeToolExecutor.execute(outcome.call) { executed ->
+                            mainHandler.post {
+                                conversationTurns += 1
+                                commandRecognitionAttempts = 0
+                                memory.addTurn(rawText, if (executed.success) "已执行：${executed.spokenText}" else "执行失败：${executed.debugCode}")
+                                if (executed.success) {
+                                    overlay.update("你好，有什么可以帮你？", executed.spokenText, heard)
+                                    session.touch(settings.sessionTimeoutSeconds)
+                                    continueConversationSession(immediate = true)
+                                } else {
+                                    overlay.update("你好，有什么可以帮你？", UNKNOWN_COMMAND_REPLY, heard)
+                                    speakThen(UNKNOWN_COMMAND_REPLY) {
+                                        session.touch(settings.sessionTimeoutSeconds)
+                                        continueConversationSession()
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -522,6 +584,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun endConversationSession() {
+        memory.clear()
         conversationActive = false
         conversationTurns = 0
         commandRecognitionAttempts = 0
@@ -532,10 +595,11 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
 
     private fun restartWakeListening() {
         if (!running.get()) return
+        if (conversationActive) memory.clear()
         conversationActive = false
         session.stop()
         overlay.hide()
-        updateNotification("全离线语音已开启 · 说“小智小智”")
+        updateNotification("全离线语音已开启 · 说“${wakePhraseManager.activePhrase()}”")
         mainHandler.postDelayed({ startKwsCapture() }, 500)
     }
 
@@ -568,9 +632,12 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
 
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
-            tts?.language = Locale.SIMPLIFIED_CHINESE
-            tts?.setSpeechRate(1.05f)
-            ttsReady = true
+            val engine = tts ?: return
+            engine.language = Locale.SIMPLIFIED_CHINESE
+            val manager = TtsVoiceManager(engine, settings)
+            ttsVoiceManager = manager
+            val applied = manager.applySavedSettings()
+            ttsReady = applied.success || engine.voice != null
         }
     }
 
@@ -578,7 +645,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "小智全离线语音",
+                "${settings.assistantName}全离线语音",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
                 description = "本地唤醒与本地语音指令识别"
@@ -598,7 +665,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         return Notification.Builder(this, CHANNEL_ID)
-            .setContentTitle("小智手机助手")
+            .setContentTitle("${settings.assistantName}手机助手")
             .setContentText(text)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setOngoing(true)
@@ -612,6 +679,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
     }
 
     override fun onDestroy() {
+        if (::memory.isInitialized) memory.clear()
         running.set(false)
         kwsListening.set(false)
         commandListening.set(false)

@@ -11,8 +11,8 @@ android {
         applicationId = "com.lchuang.xiaozhimobile"
         minSdk = 26
         targetSdk = 35
-        versionCode = 6
-        versionName = "0.5.0"
+        versionCode = 7
+        versionName = "0.6.0"
 
         ndk {
             abiFilters += listOf("arm64-v8a")
@@ -40,4 +40,5 @@ android {
 
 dependencies {
     implementation("com.github.k2-fsa:sherpa-onnx:v1.13.4")
+    implementation("com.belerweb:pinyin4j:2.5.1")
 }

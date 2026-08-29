@@ -7,6 +7,14 @@ object AppNameMatcher {
     private val punctuation = Regex("[\\s，。！？,.!?、；;：:“”‘’'\\\"（）()【】\\[\\]…·_-]+")
     private val removableSuffixes = listOf("app", "应用", "软件", "客户端", "手机版", "office", "浏览器")
     private val requestPrefixes = listOf("帮我打开", "请打开", "打开一下", "打开", "启动", "进入", "运行", "帮我启动", "请启动")
+    private val knownAliases = mapOf(
+        "高德导航" to "高德地图",
+        "高德" to "高德地图",
+        "b站" to "哔哩哔哩",
+        "扣扣" to "qq",
+        "网易云" to "网易云音乐",
+        "wps" to "wps"
+    )
 
     fun normalize(value: String): String {
         var text = value.trim().lowercase(Locale.getDefault()).replace(punctuation, "")
@@ -33,6 +41,11 @@ object AppNameMatcher {
             }
         }
         return normalize(text)
+    }
+
+    fun knownAliasTarget(request: String): String? {
+        val normalizedRequest = extractRequestedAppName(request)
+        return knownAliases[normalizedRequest]
     }
 
     fun parseAliases(raw: String): Map<String, String> {

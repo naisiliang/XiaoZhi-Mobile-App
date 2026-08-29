@@ -45,20 +45,50 @@ class CommandRouter(private val phone: PhoneController) {
         }
 
         if (containsAny(text, "打开微信", "启动微信", "打开威信", "启动威信", "进入微信", "打开一下微信")) {
-            val ok = phone.openApp("微信")
-            return Result(true, if (ok) "正在打开微信" else "没有找到微信", ok)
+            return appResult("微信", phone.openApp("微信"))
         }
         if (containsAny(text, "打开qq", "启动qq", "打开q q", "启动q q", "打开扣扣", "启动扣扣", "进入qq", "打开一下qq")) {
-            val ok = phone.openApp("qq")
-            return Result(true, if (ok) "正在打开QQ" else "没有找到QQ", ok)
+            return appResult("QQ", phone.openApp("qq"))
         }
 
-        val navigation = Regex("(?:导航到|导航去|带我去|去)(.+)").find(text)
+        if (containsAny(text, "打开高德导航", "打开高德地图")) {
+            val result = phone.openMap(MapAppPreference.AMAP)
+            return Result(true, result.message, result.success)
+        }
+        if (containsAny(text, "打开百度地图")) {
+            val result = phone.openMap(MapAppPreference.BAIDU)
+            return Result(true, result.message, result.success)
+        }
+
+        val nearby = Regex("(?:用(高德|百度)(?:地图)?(?:帮我)?|帮我)?(?:找|搜索)?(?:一下)?附近(?:的)?(.+)|附近(?:帮我)?(?:找|搜索)?(.+)").find(text)
+        if (nearby != null) {
+            val keyword = (nearby.groupValues.getOrNull(2).orEmpty() + nearby.groupValues.getOrNull(3).orEmpty())
+                .trim().removeSuffix("。")
+            if (keyword.isNotBlank()) {
+                val pref = when (nearby.groupValues.getOrNull(1).orEmpty()) {
+                    "高德" -> MapAppPreference.AMAP
+                    "百度" -> MapAppPreference.BAIDU
+                    else -> MapAppPreference.AUTO
+                }
+                phone.searchNearby(keyword, pref) { }
+                return Result(true, "正在打开地图搜索附近的$keyword", true)
+            }
+        }
+
+        val explicitNavigation = Regex("用(高德|百度)(?:地图)?导航(?:到|去)?(.+)").find(text)
+        if (explicitNavigation != null) {
+            val pref = if (explicitNavigation.groupValues[1] == "高德") MapAppPreference.AMAP else MapAppPreference.BAIDU
+            val dest = explicitNavigation.groupValues[2].trim().removeSuffix("。")
+            val result = phone.navigate(dest, pref)
+            return Result(true, result.message, result.success)
+        }
+
+        val navigation = Regex("(?:导航到|导航去|带我去)(.+)").find(text)
         if (navigation != null) {
             val dest = navigation.groupValues[1].trim().removeSuffix("。")
             if (dest.length >= 2) {
-                val ok = phone.navigate(dest)
-                return Result(true, if (ok) "正在打开导航" else "导航没有成功打开", ok)
+                val result = phone.navigate(dest, MapAppPreference.AUTO)
+                return Result(true, result.message, result.success)
             }
         }
 
@@ -79,12 +109,22 @@ class CommandRouter(private val phone: PhoneController) {
                 .removeSuffix("软件")
                 .trim()
             if (name.isNotBlank()) {
-                val ok = phone.openApp(name)
-                return Result(true, if (ok) "正在打开$name" else "没有找到$name", ok)
+                return appResult(name, phone.openApp(name))
             }
         }
 
         return Result(false)
+    }
+
+
+    private fun appResult(requested: String, result: AppLauncher.AppLaunchResult): Result = when (result) {
+        is AppLauncher.AppLaunchResult.Success -> Result(true, "正在打开${result.label}", true)
+        is AppLauncher.AppLaunchResult.Failure -> when (result.error) {
+            AppLauncher.AppLaunchError.PACKAGE_NOT_VISIBLE,
+            AppLauncher.AppLaunchError.PACKAGE_NOT_INSTALLED -> Result(true, "没有找到可启动的“$requested”", false)
+            AppLauncher.AppLaunchError.NO_LAUNCH_ACTIVITY,
+            AppLauncher.AppLaunchError.START_ACTIVITY_FAILED -> Result(true, "找到了“$requested”，但没有成功启动", false)
+        }
     }
 
     fun looksLikeDeviceCommand(raw: String): Boolean {
@@ -94,7 +134,7 @@ class CommandRouter(private val phone: PhoneController) {
             "打开", "启动", "进入", "运行", "关闭", "退出",
             "播放", "暂停", "停止", "下一首", "上一首",
             "音量", "声音", "手电筒", "导航", "带我去",
-            "浏览器", "访问", "设置", "调大", "调小", "切换"
+            "浏览器", "访问", "附近", "高德导航", "百度地图", "设置", "调大", "调小", "切换"
         )
         return commandWords.any(text::contains)
     }

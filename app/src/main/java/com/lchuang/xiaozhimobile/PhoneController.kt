@@ -8,9 +8,13 @@ import android.media.AudioManager
 import android.net.Uri
 import android.view.KeyEvent
 
-class PhoneController(private val context: Context) {
+class PhoneController(
+    private val context: Context,
+    val appRegistry: InstalledAppRegistry = InstalledAppRegistry(context),
+    private val appLauncher: AppLauncher = AppLauncher(context),
+    val mapController: MapController = MapController(context)
+) {
     private val settings = SettingsStore(context)
-    private val appRegistry = InstalledAppRegistry(context)
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
     private val knownPackages = linkedMapOf(
@@ -62,46 +66,30 @@ class PhoneController(private val context: Context) {
         audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, value, 0)
     }
 
-    fun openApp(appName: String): Boolean {
-        val pm = context.packageManager
-
-        fun launchPackage(packageName: String): Boolean {
-            val launch = pm.getLaunchIntentForPackage(packageName)
-            if (launch != null) {
-                launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                return try {
-                    context.startActivity(launch)
-                    true
-                } catch (_: Exception) {
-                    false
-                }
-            }
-            return try {
-                val explicitLauncher = Intent(Intent.ACTION_MAIN).apply {
-                    addCategory(Intent.CATEGORY_LAUNCHER)
-                    setPackage(packageName)
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                }
-                context.startActivity(explicitLauncher)
-                true
-            } catch (_: Exception) {
-                false
-            }
-        }
-
-        appRegistry.resolve(appName, settings.appAliases)?.let { resolved ->
-            if (launchPackage(resolved.packageName)) return true
-        }
+    fun openApp(appName: String): AppLauncher.AppLaunchResult {
+        val resolution = appRegistry.resolveDetailed(appName, settings.appAliases)
+        val entry = resolution.entry
+        if (entry != null) return appLauncher.launch(entry)
 
         val normalized = AppNameMatcher.extractRequestedAppName(appName)
-        knownPackages.entries.firstOrNull {
+        val known = knownPackages.entries.firstOrNull {
             normalized.contains(AppNameMatcher.normalize(it.key)) ||
                 AppNameMatcher.normalize(it.key).contains(normalized)
-        }?.let { entry ->
-            if (launchPackage(entry.value)) return true
         }
-
-        return false
+        if (known != null) {
+            val fallback = InstalledAppRegistry.AppEntry(
+                label = known.key,
+                packageName = known.value,
+                normalizedLabel = AppNameMatcher.normalize(known.key),
+                launchActivities = emptyList(),
+                source = InstalledAppRegistry.AppDiscoverySource.KNOWN_FALLBACK
+            )
+            return appLauncher.launch(fallback)
+        }
+        return AppLauncher.AppLaunchResult.Failure(
+            AppLauncher.AppLaunchError.PACKAGE_NOT_INSTALLED,
+            resolution.explanation
+        )
     }
 
     fun installedAppCount(): Int = appRegistry.count()
@@ -123,17 +111,14 @@ class PhoneController(private val context: Context) {
         }
     }
 
-    fun navigate(destination: String): Boolean {
-        return try {
-            val uri = Uri.parse("geo:0,0?q=${Uri.encode(destination)}")
-            context.startActivity(Intent(Intent.ACTION_VIEW, uri).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            })
-            true
-        } catch (_: Exception) {
-            false
-        }
-    }
+    fun openMap(preference: MapAppPreference = settings.defaultMapApp): MapController.MapActionResult =
+        mapController.openMap(preference)
+
+    fun navigate(destination: String, preference: MapAppPreference = settings.defaultMapApp): MapController.MapActionResult =
+        mapController.navigate(destination, preference)
+
+    fun searchNearby(keyword: String, preference: MapAppPreference = settings.defaultMapApp, callback: (MapController.MapActionResult) -> Unit) =
+        mapController.searchNearby(keyword, preference, callback)
 
     fun setFlashlight(enabled: Boolean): Boolean {
         return try {

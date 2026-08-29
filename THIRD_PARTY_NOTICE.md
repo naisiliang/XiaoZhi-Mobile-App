@@ -5,3 +5,5 @@
 
 The sherpa-onnx software license and the pretrained model license are not necessarily the same thing.
 Before public/commercial redistribution of an APK containing the model weights, verify the model's current redistribution terms with the upstream publisher.
+
+- pinyin4j 2.5.1: BSD-style license, used only for on-device wake phrase pronunciation conversion.
