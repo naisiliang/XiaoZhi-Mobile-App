@@ -72,7 +72,7 @@ class AiOrchestrator(
         }
         val identity = settings.assistantName.ifBlank { "小智" }
         val instruction = """
-            你只判断用户是否明确想结束与$identity当前这一次对话。
+            你只判断用户是否明确想结束与${identity}当前这一次对话。
             如果是，只回复 EXIT。
             如果不是或不确定，只回复 CONTINUE。
             “退出微信/退出登录/关闭某个应用”不是退出助手，必须回复 CONTINUE。
