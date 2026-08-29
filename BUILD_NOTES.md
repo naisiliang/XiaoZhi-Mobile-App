@@ -1,15 +1,16 @@
-# XiaoZhi Mobile v0.6.3 build notes
+# XiaoZhi Mobile v0.6.4 build notes
 
-New in v0.6.3:
-- Fix custom Chinese wake phrases such as `小白小白` when pinyin4j emits non-standard third-tone Unicode (e.g. `ă` instead of `ǎ`).
-- Normalize pinyin tone marks before KWS compilation.
-- Generate sherpa-onnx compatible ppinyin tokens using initial + tone-marked final, matching the official text2token strategy for Chinese keywords.
-- Validate dynamic KWS stream creation and keep the previous active wake stream on failure.
-- Show the concrete custom-wake failure reason in the foreground notification for device diagnostics.
-- Retain v0.6.2 spoken command confirmations and fast relisten after TTS completion.
+New in v0.6.4:
+- Preserve/freeze the working v0.6.3 custom wake phrase stack.
+- Add explicit post-wake conversation states and truthful overlay status.
+- Speak command-completion + continuation prompts, then reopen ASR only after TTS completion and a 120–180 ms guard.
+- Add panel close button and double-tap exit while keeping outside-panel touch-through.
+- Add local intelligent exit detection plus no-tools AI semantic exit fallback.
+- Add natural Chinese media-volume parsing and verified Android `STREAM_MUSIC` read-back with `FLAG_SHOW_UI`.
+- Add short duplicate-device-command suppression.
 
 Build target:
 - Android arm64-v8a
-- versionCode 10
-- versionName 0.6.3
-- APK output: `XiaoZhi-Mobile-v0.6.3-debug.apk`
+- versionCode 11
+- versionName 0.6.4
+- APK output: `XiaoZhi-Mobile-v0.6.4-debug.apk`

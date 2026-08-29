@@ -40,13 +40,12 @@ class SafeToolExecutor(private val phone: PhoneController) {
             "media_pause" -> { phone.mediaPause(); callback(ok("已暂停", "MEDIA_PAUSE")) }
             "media_next" -> { phone.mediaNext(); callback(ok("已切换到下一首", "MEDIA_NEXT")) }
             "media_previous" -> { phone.mediaPrevious(); callback(ok("已切换到上一首", "MEDIA_PREVIOUS")) }
-            "volume_up" -> { phone.volumeUp(); callback(ok("音量已调大", "VOLUME_UP")) }
-            "volume_down" -> { phone.volumeDown(); callback(ok("音量已调小", "VOLUME_DOWN")) }
+            "volume_up" -> callback(volumeToolResult(phone.volumeUpVerified(), "VOLUME_UP"))
+            "volume_down" -> callback(volumeToolResult(phone.volumeDownVerified(), "VOLUME_DOWN"))
             "set_volume" -> {
                 val percent = intArg(call, "percent")
                 if (percent == null || percent !in 0..100) return callback(invalidArgs("set_volume"))
-                phone.setMediaVolume(percent)
-                callback(ok("音量已设置为$percent%", "SET_VOLUME"))
+                callback(volumeToolResult(phone.setMediaVolumePercent(percent), "SET_VOLUME"))
             }
             "flashlight_on" -> {
                 val success = phone.setFlashlight(true)
@@ -58,6 +57,16 @@ class SafeToolExecutor(private val phone: PhoneController) {
             }
             else -> callback(ToolExecutionResult(false, "该操作不在安全工具白名单中", "REJECTED_NOT_ALLOWED"))
         }
+    }
+
+    private fun volumeToolResult(result: PhoneController.MediaVolumeResult, code: String): ToolExecutionResult {
+        val actual = result.actualPercent.coerceIn(0, 100)
+        val text = when (actual) {
+            0 -> "媒体音量已经静音"
+            100 -> "媒体音量已经调整到最大"
+            else -> "媒体音量已经调整到${actual}%"
+        }
+        return ToolExecutionResult(result.success, text, if (result.success) code else "${code}_PARTIAL")
     }
 
     private fun stringArg(call: AiToolCall, name: String): String? = (call.args[name] as? String)?.trim()?.takeIf { it.isNotBlank() }

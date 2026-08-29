@@ -1,11 +1,19 @@
 package com.lchuang.xiaozhimobile
 
 class CommandRouter(private val phone: PhoneController) {
+    private val volumeParser = VolumeCommandParser()
     data class Result(val handled: Boolean, val reply: String = "", val success: Boolean = true)
 
     fun handle(raw: String): Result {
         val text = raw.trim().lowercase()
         if (text.isBlank()) return Result(false)
+
+        when (val volume = volumeParser.parse(text)) {
+            is VolumeAction.SetPercent -> return volumeResult(phone.setMediaVolumePercent(volume.percent))
+            VolumeAction.StepUp -> return volumeResult(phone.volumeUpVerified(), step = "up")
+            VolumeAction.StepDown -> return volumeResult(phone.volumeDownVerified(), step = "down")
+            VolumeAction.Unhandled -> Unit
+        }
 
         when {
             containsAny(text, "暂停音乐", "暂停播放", "音乐暂停", "暂停歌曲", "停一下音乐", "暂停一下音乐") -> {
@@ -22,17 +30,6 @@ class CommandRouter(private val phone: PhoneController) {
             }
             containsAny(text, "上一首", "上一曲", "切上一首") -> {
                 phone.mediaPrevious(); return Result(true, "已切换到上一首")
-            }
-            containsAny(text, "音量大一点", "声音大一点", "加大音量", "调大音量") -> {
-                phone.volumeUp(); return Result(true, "音量已调大")
-            }
-            containsAny(text, "音量小一点", "声音小一点", "降低音量", "调小音量") -> {
-                phone.volumeDown(); return Result(true, "音量已调小")
-            }
-            Regex("音量.*?(\\d{1,3})").containsMatchIn(text) -> {
-                val p = Regex("音量.*?(\\d{1,3})").find(text)?.groupValues?.get(1)?.toIntOrNull() ?: 50
-                phone.setMediaVolume(p)
-                return Result(true, "音量已设置为${p.coerceIn(0, 100)}%")
             }
             containsAny(text, "打开手电筒", "开启手电筒", "开手电筒") -> {
                 val ok = phone.setFlashlight(true)
@@ -116,6 +113,20 @@ class CommandRouter(private val phone: PhoneController) {
         return Result(false)
     }
 
+    private fun volumeResult(result: PhoneController.MediaVolumeResult, step: String? = null): Result {
+        val actual = result.actualPercent.coerceIn(0, 100)
+        if (!result.success) {
+            return Result(true, "媒体音量当前是${actual}%，没有完全调整到目标值", false)
+        }
+        val reply = when {
+            actual == 0 -> "媒体音量已经静音"
+            actual == 100 -> "媒体音量已经调整到最大"
+            step == "up" -> "媒体音量已调大，现在是${actual}%"
+            step == "down" -> "媒体音量已调小，现在是${actual}%"
+            else -> "媒体音量已经调整到${actual}%"
+        }
+        return Result(true, reply, true)
+    }
 
     private fun appResult(requested: String, result: AppLauncher.AppLaunchResult): Result = when (result) {
         is AppLauncher.AppLaunchResult.Success -> Result(true, "已打开${result.label}", true)

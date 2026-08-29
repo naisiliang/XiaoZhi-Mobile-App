@@ -39,7 +39,11 @@ ai_orchestrator = text('app/src/main/java/com/lchuang/xiaozhimobile/AiOrchestrat
 safe_tools = text('app/src/main/java/com/lchuang/xiaozhimobile/SafeToolExecutor.kt')
 icon_manager = text('app/src/main/java/com/lchuang/xiaozhimobile/DesktopIconManager.kt')
 
-check('version 0.6.3', 'versionCode = 10' in build and 'versionName = "0.6.3"' in build)
+conversation_state = text('app/src/main/java/com/lchuang/xiaozhimobile/ConversationState.kt')
+exit_detector = text('app/src/main/java/com/lchuang/xiaozhimobile/ConversationExitDetector.kt')
+volume_parser = text('app/src/main/java/com/lchuang/xiaozhimobile/VolumeCommandParser.kt')
+
+check('version 0.6.4', 'versionCode = 11' in build and 'versionName = "0.6.4"' in build)
 check('arm64 target', 'arm64-v8a' in build)
 check('compile target 35', 'compileSdk = 35' in build and 'targetSdk = 35' in build)
 check('KWS modeling unit cjkchar', 'modelingUnit = "cjkchar"' in wake)
@@ -49,7 +53,7 @@ check('local command capture', 'captureCommandAudio' in wake and 'decodeLocalCom
 check('microphone foreground service', 'FOREGROUND_SERVICE_MICROPHONE' in manifest and 'android:foregroundServiceType="microphone"' in manifest)
 check('bundled wake phrase metadata', '@小智小智' in keywords)
 check('workflow fetches KWS and ASR models', 'sherpa-onnx-paraformer-zh-small-2024-03-09' in fetch and 'kws-models' in fetch)
-check('workflow produces v0.6.3 apk', 'XiaoZhi-Mobile-v0.6.3-debug.apk' in workflow)
+check('workflow produces v0.6.4 apk', 'XiaoZhi-Mobile-v0.6.4-debug.apk' in workflow)
 
 check('voice normalizer', 'fun normalize(raw: String)' in normalizer and 'router.handle(normalized)' in wake)
 check('overlay subsystem', 'TYPE_APPLICATION_OVERLAY' in overlay_controller and 'postInvalidateDelayed' in overlay_view)
@@ -79,6 +83,21 @@ check('AI orchestrator', 'AiOrchestrator' in ai_orchestrator and 'tool_calls' in
 check('safe tool executor', 'SafeToolExecutor' in safe_tools and all(f'"{x}"' in safe_tools for x in ['open_app','navigate','search_nearby','open_web','set_volume','flashlight_on','flashlight_off']))
 check('manual proxy forced behavior retained', exists('tools/test_manual_proxy_forced.py') and 'XIAOZHI_GIT_PROXY' in read('PUSH_TO_GITHUB.ps1'))
 check('no accessibility service', 'AccessibilityService' not in manifest and 'BIND_ACCESSIBILITY_SERVICE' not in manifest)
+
+check('v0.6.4 conversation state model', 'enum class ConversationState' in conversation_state and 'READY_TO_LISTEN' in conversation_state and 'EXITING' in conversation_state)
+check('v0.6.4 intelligent exit detector', 'class ConversationExitDetector' in exit_detector and 'AMBIGUOUS' in exit_detector)
+check('v0.6.4 natural media volume parser', 'class VolumeCommandParser' in volume_parser and 'SetPercent' in volume_parser)
+check('v0.6.4 panel manual exit', 'setOnExitRequested' in overlay_controller and 'GestureDetector' in overlay_view and 'onDoubleTap' in overlay_view)
+check('v0.6.4 verified media volume', 'setMediaVolumePercent' in phone and 'FLAG_SHOW_UI' in phone and 'currentMediaVolumePercent' in phone)
+check('v0.6.4 state driven relisten', 'scheduleListeningAfterSpeech' in wake and 'ConversationState.READY_TO_LISTEN' in wake)
+check('v0.6.4 duplicate guard', 'DEVICE_DUPLICATE_WINDOW_MS = 1500L' in wake and 'isDuplicateDeviceCommand' in wake)
+check('v0.6.4 AI exit classifier', 'classifyExitIntent' in ai_orchestrator and 'emptyList()' in ai_orchestrator)
+for test_name in [
+    'test_v064_conversation_state.py','test_v064_overlay_exit.py','test_v064_exit_intent.py',
+    'test_v064_volume_parser.py','test_v064_volume_execution.py','test_v064_command_prompt_flow.py',
+    'test_v064_duplicate_guard.py','test_v064_wake_regression.py'
+]:
+    check('v0.6.4 test ' + test_name, exists('tools/' + test_name))
 
 secret_re = re.compile(r'\bsk-[A-Za-z0-9_-]{20,}\b')
 secret_found = False

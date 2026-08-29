@@ -64,6 +64,37 @@ class AiOrchestrator(
         }
     }
 
+    fun classifyExitIntent(userText: String, callback: (Result<ExitDecision>) -> Unit) {
+        val clean = userText.trim()
+        if (clean.isBlank()) {
+            callback(Result.success(ExitDecision.CONTINUE))
+            return
+        }
+        val identity = settings.assistantName.ifBlank { "小智" }
+        val instruction = """
+            你只判断用户是否明确想结束与$identity当前这一次对话。
+            如果是，只回复 EXIT。
+            如果不是或不确定，只回复 CONTINUE。
+            “退出微信/退出登录/关闭某个应用”不是退出助手，必须回复 CONTINUE。
+            禁止输出解释、JSON、Markdown或工具调用。
+        """.trimIndent()
+        val messages = listOf(
+            ConversationMessage("system", instruction),
+            ConversationMessage("user", clean)
+        )
+        client.complete(messages, emptyList()) { result ->
+            if (result.isFailure) {
+                callback(Result.failure(result.exceptionOrNull() ?: IllegalStateException("AI退出判断失败")))
+                return@complete
+            }
+            when (result.getOrThrow().text.trim().uppercase()) {
+                "EXIT" -> callback(Result.success(ExitDecision.EXIT))
+                "CONTINUE" -> callback(Result.success(ExitDecision.CONTINUE))
+                else -> callback(Result.failure(IllegalStateException("AI退出判断格式错误")))
+            }
+        }
+    }
+
     private fun normalizeNativeResult(raw: RawAiResponse): Result<AiOutcome> {
         // Native OpenAI Chat Completions exposes tool_calls; Responses is normalized by AiClient.
         raw.toolCalls.firstOrNull()?.let { call ->

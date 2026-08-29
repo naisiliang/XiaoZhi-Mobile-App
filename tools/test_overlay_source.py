@@ -19,7 +19,7 @@ if controller_path.exists():
     checks += [
         ('application overlay window type', 'TYPE_APPLICATION_OVERLAY' in controller),
         ('overlay does not steal focus', 'FLAG_NOT_FOCUSABLE' in controller),
-        ('overlay does not block touch', 'FLAG_NOT_TOUCHABLE' in controller),
+        ('overlay panel is touchable', 'FLAG_NOT_TOUCHABLE' not in controller and 'FLAG_NOT_TOUCH_MODAL' in controller),
         ('overlay permission checked', 'Settings.canDrawOverlays' in controller),
     ]
 if view_path.exists():
@@ -29,6 +29,7 @@ if view_path.exists():
         ('waveform drawing', 'drawLine' in view and 'audioLevel' in view),
         ('assistant prompt copy', '你好，有什么可以帮你？' in view),
         ('overlay animation loop', 'postInvalidateDelayed' in view),
+        ('overlay close/double tap', 'GestureDetector' in view and 'onDoubleTap' in view and '"×"' in view),
     ]
 
 failed = []

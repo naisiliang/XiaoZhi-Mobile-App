@@ -7,8 +7,8 @@ wake = (root/'app/src/main/java/com/lchuang/xiaozhimobile/WakeService.kt').read_
 checks = [
     ('overlay controller field', 'AssistantOverlayController' in wake and 'overlay' in wake),
     ('overlay shown on wake', 'overlay.show()' in wake),
-    ('overlay listening state', '我在听' in wake and 'overlay.update' in wake),
-    ('overlay recognizing state', '正在识别' in wake),
+    ('overlay listening state', ('正在听你说' in wake or 'ConversationState.LISTENING' in wake) and 'overlay.update' in wake),
+    ('overlay recognizing state', 'ConversationState.RECOGNIZING' in wake),
     ('overlay heard raw text', '我听到：$rawText' in wake or '我听到：$text' in wake),
     ('overlay executing state', '正在执行' in wake),
     ('overlay thinking state', '正在思考' in wake),

@@ -14,7 +14,7 @@ checks = [
     ('explicit app fallback', 'setPackage(' in phone or 'componentName' in phone or 'setPackage(' in launcher or 'ComponentName' in launcher),
     ('continuous session helper', 'continueConversationSession' in wake),
     ('local command continues session', 'continueConversationSession(immediate = true)' in wake or 'continueConversationSession()' in wake),
-    ('ai answer continues session', 'speakThen(answer)' in wake and 'continueConversationSession()' in wake),
+    ('ai answer continues session', ('speakThen(answer)' in wake or 'speakThen(spoken)' in wake) and 'continueConversationSession' in wake),
 ]
 failed=[]
 for name, ok in checks:
