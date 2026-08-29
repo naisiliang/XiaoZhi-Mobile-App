@@ -121,7 +121,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             setPadding(0, dp(4), 0, dp(20))
         })
         status = TextView(this).apply {
-            text = "v0.6.0：动态唤醒名字 + 任意 App 诊断 + 地图导航 + 智能安全工具"
+            text = "v0.6.1：修复离线唤醒启动卡住 + 动态唤醒名字 + App/导航/AI 安全工具"
             textSize = 15f
             setTextColor(Color.rgb(34, 95, 68))
             setPadding(dp(14), dp(12), dp(14), dp(12))

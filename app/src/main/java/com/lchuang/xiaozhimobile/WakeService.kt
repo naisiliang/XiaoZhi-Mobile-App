@@ -32,6 +32,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         private const val SAMPLE_RATE = 16000
         private const val KWS_MODEL_DIR = "sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20"
         private const val ASR_MODEL_DIR = "sherpa-onnx-paraformer-zh-small-2024-03-09"
+        private const val DEFAULT_WAKE_PHRASE = "小智小智"
         private const val COMMAND_LISTEN_DELAY_MS = 700L
         private const val COMMAND_RETRY_DELAY_MS = 500L
         private const val CONTINUOUS_LISTEN_DELAY_MS = 550L
@@ -113,8 +114,14 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         }
         if (intent?.action == ACTION_APPLY_WAKE_SETTINGS && running.get()) {
             Thread {
+                val requested = settings.wakePhrase.trim().ifBlank { DEFAULT_WAKE_PHRASE }
                 stopKwsCapture()
-                val applied = wakePhraseManager.applyPhrase(settings.wakePhrase)
+                val applied = if (requested == DEFAULT_WAKE_PHRASE) {
+                    wakePhraseManager.applyBundledPhrase(DEFAULT_WAKE_PHRASE)
+                } else {
+                    updateNotification("正在应用自定义唤醒词（3/3）· “$requested”")
+                    wakePhraseManager.applyPhrase(requested)
+                }
                 stream = wakePhraseManager.currentStream()
                 val active = wakePhraseManager.activePhrase()
                 updateNotification(if (applied.isSuccess) "全离线语音已开启 · 说“$active”" else "唤醒词应用失败，继续监听“$active”")
@@ -123,13 +130,26 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
             return START_STICKY
         }
 
-        startForeground(NOTIFY_ID, notification("正在加载本地唤醒与语音识别模型…"))
+        startForeground(NOTIFY_ID, notification("准备启动本地语音…"))
         if (running.compareAndSet(false, true)) {
             if (wakeLock?.isHeld != true) wakeLock?.acquire()
             Thread {
                 try {
+                    updateNotification("正在加载离线唤醒模型（1/3）")
                     initKeywordSpotter()
+                    updateNotification("正在加载离线语音识别模型（2/3）")
                     initOfflineAsr()
+
+                    val requested = settings.wakePhrase.trim().ifBlank { DEFAULT_WAKE_PHRASE }
+                    if (settings.wakePhrase != DEFAULT_WAKE_PHRASE && requested != DEFAULT_WAKE_PHRASE) {
+                        updateNotification("正在应用自定义唤醒词（3/3）· “$requested”")
+                        val applied = wakePhraseManager.applyPhrase(requested)
+                        if (applied.isFailure) {
+                            updateNotification("自定义唤醒词应用失败，已回退“小智小智”")
+                        }
+                        stream = wakePhraseManager.currentStream()
+                    }
+
                     updateNotification("全离线语音已开启 · 说“${wakePhraseManager.activePhrase()}”")
                     startKwsCapture()
                 } catch (e: Throwable) {
@@ -165,11 +185,9 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         )
         spotter = KeywordSpotter(assets, config)
         wakePhraseManager.attachSpotter(spotter!!)
-        val applied = wakePhraseManager.applyPhrase(settings.wakePhrase)
-        if (applied.isFailure) {
-            wakePhraseManager.applyPhrase("小智小智").getOrThrow()
-        }
-        stream = wakePhraseManager.currentStream()
+        val bundledStream = spotter!!.createStream()
+        wakePhraseManager.adoptBundledStream(DEFAULT_WAKE_PHRASE, bundledStream)
+        stream = bundledStream
     }
 
     private fun initOfflineAsr() {
@@ -215,6 +233,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         }
         kwsListening.set(true)
         kwsThread = Thread({
+            var wakeDetected = false
             try {
                 val record = newAudioRecord()
                 audioRecord = record
@@ -237,6 +256,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                         if (result.keyword.isNotBlank()) {
                             k.reset(s)
                             if (result.keyword == wakePhraseManager.activePhrase()) {
+                                wakeDetected = true
                                 kwsListening.set(false)
                                 break
                             }
@@ -247,7 +267,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                 if (running.get()) updateNotification("唤醒监听异常：${e.message ?: e.javaClass.simpleName}")
             } finally {
                 releaseAudioRecord()
-                if (running.get() && !kwsListening.get()) {
+                if (running.get() && wakeDetected) {
                     mainHandler.post { handleWakeDetected() }
                 }
             }

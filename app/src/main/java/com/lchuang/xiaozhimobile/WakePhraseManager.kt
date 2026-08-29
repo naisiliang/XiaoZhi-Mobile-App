@@ -22,6 +22,23 @@ class WakePhraseManager(
     }
 
     @Synchronized
+    fun adoptBundledStream(phrase: String, value: OnlineStream) {
+        swapStream(phrase, value)
+    }
+
+    @Synchronized
+    fun applyBundledPhrase(phrase: String): Result<AppliedWakePhrase> {
+        val kws = spotter ?: return Result.failure(IllegalStateException("KWS_NOT_READY"))
+        return try {
+            val newStream = kws.createStream()
+            swapStream(phrase, newStream)
+            Result.success(AppliedWakePhrase(phrase, ""))
+        } catch (e: Throwable) {
+            Result.failure(e)
+        }
+    }
+
+    @Synchronized
     fun applyPhrase(phrase: String): Result<AppliedWakePhrase> {
         val kws = spotter ?: return Result.failure(IllegalStateException("KWS_NOT_READY"))
         val compiled = compiler.compile(phrase, tokenInventory, provider)
@@ -29,13 +46,19 @@ class WakePhraseManager(
         compiled as CompileResult.Success
         return try {
             val newStream = kws.createStream(compiled.runtimeKeyword)
-            val old = stream
-            stream = newStream
-            appliedPhrase = compiled.phrase
-            try { old?.release() } catch (_: Throwable) {}
+            swapStream(compiled.phrase, newStream)
             Result.success(AppliedWakePhrase(compiled.phrase, compiled.warning))
         } catch (e: Throwable) {
             Result.failure(e)
+        }
+    }
+
+    private fun swapStream(phrase: String, value: OnlineStream) {
+        val old = stream
+        stream = value
+        appliedPhrase = phrase
+        if (old !== value) {
+            try { old?.release() } catch (_: Throwable) {}
         }
     }
 

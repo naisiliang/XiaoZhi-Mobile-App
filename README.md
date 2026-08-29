@@ -1,8 +1,8 @@
-# XiaoZhi Mobile App v0.6.0
+# XiaoZhi Mobile App v0.6.1
 
 Android 小智手机助手：本地离线唤醒、本地中文语音识别、透明桌面语音悬浮层、连续会话、任意已安装 App 发现/启动诊断、地图导航/附近搜索，以及受严格白名单约束的 AI 安全工具调用。
 
-## v0.6.0 重点
+## v0.6.1 重点
 
 - **任意 App 控制**：`QUERY_ALL_PACKAGES + Launcher Query + Installed Applications` 合并建立本机应用索引，支持用户别名、已知别名、精确/包含/模糊匹配，并返回可诊断的启动失败原因。
 - **地图与位置**：支持高德、百度和系统地图；可说“用高德导航到广州南站”“附近帮我找商场”。只在用户主动使用附近搜索时读取一次前台位置，不申请后台定位。
@@ -34,10 +34,10 @@ Android 小智手机助手：本地离线唤醒、本地中文语音识别、透
 - 当前 KWS 唤醒短语；
 - AI 接口 HTTP / 模式 / 模型 / 延迟 / 错误摘要。
 
-本仓库 v0.6.0 是**直接安装版**，为了实现尽可能完整的 App 发现使用 `QUERY_ALL_PACKAGES`。未来如果发布 Google Play，需要单独做商店合规版本并重新评估该权限。
+本仓库 v0.6.1 是**直接安装版**，为了实现尽可能完整的 App 发现使用 `QUERY_ALL_PACKAGES`。未来如果发布 Google Play，需要单独做商店合规版本并重新评估该权限。
 
 ## 构建
 
 推送到 GitHub 后，Actions 会下载 KWS + Paraformer 本地模型并生成：
 
-`XiaoZhi-Mobile-v0.6.0-debug.apk`
+`XiaoZhi-Mobile-v0.6.1-debug.apk`

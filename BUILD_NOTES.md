@@ -1,6 +1,10 @@
-# XiaoZhi Mobile v0.6.0 build notes
+# XiaoZhi Mobile v0.6.1 build notes
 
-New in v0.6.0:
+New in v0.6.1:
+- Fix startup hang caused by re-adding the bundled default wake phrase through the runtime KWS stream path.
+- Restore the proven bundled `createStream()` startup path for “小智小智”; custom phrases still use runtime KWS.
+- Add staged startup diagnostics and prevent manual KWS stop from dispatching a false wake.
+
 - complete installed-app discovery and structured launch diagnostics;
 - direct-install `QUERY_ALL_PACKAGES` visibility for broader launcher coverage;
 - one-shot foreground location only, Amap/Baidu/system navigation and nearby search;
