@@ -352,8 +352,6 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
             if (!running.get() || !conversationActive || exitInProgress) return@Runnable
             if (generation != sessionGeneration) return@Runnable
             if (conversationState == ConversationState.EXITING) return@Runnable
-            setConversationState(ConversationState.LISTENING)
-            session.touch(settings.sessionTimeoutSeconds)
             startLocalCommandRecognition()
         }
         pendingListenRunnable = runnable
@@ -362,18 +360,25 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
 
     private fun startLocalCommandRecognition() {
         if (!running.get() || commandListening.get()) return
-        if (conversationState != ConversationState.LISTENING) return
+        if (conversationState != ConversationState.READY_TO_LISTEN) return
         if (!conversationActive || session.isExpired()) {
             finishSessionForTimeout()
             return
         }
+        val generation = sessionGeneration
         commandRecognitionAttempts += 1
         commandListening.set(true)
-        updateNotification("本地语音识别 · 正在听你说…")
-        setConversationState(ConversationState.LISTENING)
         commandThread = Thread({
             try {
-                val samples = captureCommandAudio()
+                val samples = captureCommandAudio {
+                    mainHandler.post {
+                        if (!running.get() || !conversationActive || exitInProgress) return@post
+                        if (generation != sessionGeneration || conversationState == ConversationState.EXITING) return@post
+                        updateNotification("本地语音识别 · 正在听你说…")
+                        setConversationState(ConversationState.LISTENING)
+                        session.touch(settings.sessionTimeoutSeconds)
+                    }
+                }
                 if (samples.isEmpty()) {
                     mainHandler.post { continueIdleListening() }
                     return@Thread
@@ -391,7 +396,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                 val reason = e.message ?: e.javaClass.simpleName
                 mainHandler.post {
                     updateNotification("本地语音识别失败：$reason")
-                    retryLocalCommandRecognition("LOCAL_ASR_ERROR")
+                    retryLocalCommandRecognition(reason)
                 }
             } finally {
                 commandListening.set(false)
@@ -401,7 +406,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         commandThread?.start()
     }
 
-    private fun captureCommandAudio(): FloatArray {
+    private fun captureCommandAudio(onRecordingStarted: () -> Unit): FloatArray {
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             throw IllegalStateException("PERMISSION")
         }
@@ -410,7 +415,13 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         if (record.state != AudioRecord.STATE_INITIALIZED) {
             throw IllegalStateException("AUDIO_INIT")
         }
-        record.startRecording()
+        try {
+            record.startRecording()
+        } catch (e: Throwable) {
+            throw IllegalStateException("AUDIO_START", e)
+        }
+        check(record.recordingState == AudioRecord.RECORDSTATE_RECORDING) { "AUDIO_START" }
+        onRecordingStarted()
 
         val remainingAtStart = session.remainingMs()
         if (remainingAtStart <= 0L) {
