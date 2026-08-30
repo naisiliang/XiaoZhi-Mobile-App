@@ -20,6 +20,7 @@ import com.k2fsa.sherpa.onnx.OnlineTransducerModelConfig
 import java.util.ArrayDeque
 import java.util.Locale
 import java.util.UUID
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.sqrt
 
@@ -383,10 +384,17 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                     mainHandler.post { continueIdleListening() }
                     return@Thread
                 }
-                mainHandler.post {
-                    setConversationState(ConversationState.RECOGNIZING)
-                    updateNotification("本地语音识别 · 正在转文字…")
+                val recognizingReady = CountDownLatch(1)
+                val recognizingPosted = mainHandler.post {
+                    try {
+                        setConversationState(ConversationState.RECOGNIZING)
+                        updateNotification("本地语音识别 · 正在转文字…")
+                    } finally {
+                        recognizingReady.countDown()
+                    }
                 }
+                check(recognizingPosted) { "RECOGNIZING_POST" }
+                recognizingReady.await()
                 val text = decodeLocalCommand(samples)
                 mainHandler.post {
                     if (text.isBlank()) retryLocalCommandRecognition("NO_MATCH")

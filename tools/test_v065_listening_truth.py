@@ -23,6 +23,19 @@ def function_body(name: str) -> str:
     raise AssertionError(f"{name} body is not balanced")
 
 
+def braced_block(source: str, opening: int) -> tuple[str, int]:
+    assert opening >= 0 and source[opening] == "{", opening
+    depth = 0
+    for index in range(opening, len(source)):
+        if source[index] == "{":
+            depth += 1
+        elif source[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return source[opening + 1 : index], index
+    raise AssertionError("block is not balanced")
+
+
 schedule = function_body("scheduleListeningAfterSpeech")
 ready = schedule.find("setConversationState(ConversationState.READY_TO_LISTEN)")
 start_call = schedule.find("startLocalCommandRecognition()")
@@ -43,12 +56,31 @@ start = function_body("startLocalCommandRecognition")
 assert "conversationState != ConversationState.READY_TO_LISTEN" in start
 capture_call = start.find("captureCommandAudio {")
 empty_check = start.find("if (samples.isEmpty())", capture_call)
-recognizing = start.find("setConversationState(ConversationState.RECOGNIZING)", empty_check)
-decode = start.find("decodeLocalCommand(samples)", recognizing)
-assert min(capture_call, empty_check, recognizing, decode) >= 0, (
-    capture_call,
-    empty_check,
+barrier = start.find("val recognizingReady = CountDownLatch(1)", empty_check)
+recognizing_post = start.find("mainHandler.post", barrier)
+post_opening = start.find("{", recognizing_post)
+assert min(capture_call, empty_check, barrier, recognizing_post, post_opening) >= 0, (
+    "RECOGNIZING must use a main-thread acknowledgement before decode",
+    (capture_call, empty_check, barrier, recognizing_post, post_opening),
+)
+recognizing_block, post_closing = braced_block(start, post_opening)
+recognizing = recognizing_block.find(
+    "setConversationState(ConversationState.RECOGNIZING)"
+)
+barrier_finally = recognizing_block.find("finally", recognizing)
+barrier_release = recognizing_block.find("recognizingReady.countDown()", recognizing)
+assert 0 <= recognizing < barrier_finally < barrier_release, (
     recognizing,
+    barrier_finally,
+    barrier_release,
+)
+post_check = start.find('check(recognizingPosted) { "RECOGNIZING_POST" }', post_closing)
+barrier_wait = start.find("recognizingReady.await()", post_closing)
+decode = start.find("decodeLocalCommand(samples)", barrier_wait)
+assert post_closing < post_check < barrier_wait < decode, (
+    post_closing,
+    post_check,
+    barrier_wait,
     decode,
 )
 capture_callback = start[capture_call:empty_check]
@@ -56,7 +88,6 @@ assert "setConversationState(ConversationState.LISTENING)" not in start[:capture
 assert "mainHandler.post" in capture_callback
 assert "setConversationState(ConversationState.LISTENING)" in capture_callback
 assert "session.touch(settings.sessionTimeoutSeconds)" in capture_callback
-assert empty_check < recognizing < decode, (empty_check, recognizing, decode)
 assert 'retryLocalCommandRecognition(reason)' in start
 
 capture = function_body("captureCommandAudio")
@@ -86,4 +117,4 @@ assert wake.count("startLocalCommandRecognition()") == 2, (
     "command ASR must only be defined once and started by the guarded scheduler"
 )
 
-print("PASS: LISTENING begins only after microphone recording is confirmed")
+print("PASS: LISTENING is recording and RECOGNIZING completes before decode")
