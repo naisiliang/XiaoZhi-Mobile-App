@@ -29,17 +29,16 @@ class ExecutionIntentFormatter {
                 combineContinuation(result.spokenResult, continuation)
             )
         } else {
-            val recovery = if (result.failureKind == CommandFailureKind.APP_NOT_FOUND) {
-                "请继续说。"
-            } else {
-                "请再试一次。"
-            }
+            val recovery = CommandRecoveryPolicy.forFailure(
+                result.failureKind ?: CommandFailureKind.EXECUTION_FAILED,
+                MAX_COMMAND_RECOGNITION_ATTEMPTS
+            ).continuation.orEmpty()
             ExecutionCopy(
                 announcement,
                 announcement,
                 null,
                 "❌ 执行失败：${label(action)}",
-                combineContinuation(result.spokenResult, recovery)
+                combineSentence(result.spokenResult, recovery)
             )
         }
     }
@@ -50,6 +49,14 @@ class ExecutionIntentFormatter {
         if (next.isBlank() || spoken.endsWith(next)) return spoken
         val prefix = spoken.trimEnd('。', '，', ',')
         return "$prefix，$next"
+    }
+
+    private fun combineSentence(spokenResult: String, continuation: String): String {
+        val spoken = spokenResult.trim()
+        val next = continuation.trim()
+        if (next.isBlank() || spoken.endsWith(next)) return spoken
+        val prefix = spoken.trimEnd('。', '，', ',')
+        return "$prefix。$next"
     }
 
     private fun label(action: DeviceAction): String = when (action) {

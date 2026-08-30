@@ -40,14 +40,11 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         private const val IMMEDIATE_LISTEN_DELAY_MS = 120L
         private const val IDLE_RELISTEN_DELAY_MS = 120L
         private const val DEVICE_DUPLICATE_WINDOW_MS = 1500L
-        private const val UNKNOWN_COMMAND_REPLY = "抱歉，我还不会这个指令，你可以换一个指令继续服务你"
-        private const val MAX_COMMAND_RECOGNITION_ATTEMPTS = 2
         private const val COMMAND_FRAME_SAMPLES = 800 // 50 ms @ 16 kHz
         private const val COMMAND_WAIT_SPEECH_MS = 4000
         private const val COMMAND_MAX_AUDIO_MS = 8000
         private const val PRE_ROLL_FRAMES = 8 // 400 ms
-        // The current local grammar deliberately has no standalone one-character commands.
-        private val knownOneCharacterCommands = emptySet<String>()
+        private val knownOneCharacterCommands = setOf("停")
     }
 
     private val running = AtomicBoolean(false)
@@ -402,20 +399,23 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
             try {
                 val samples = captureCommandAudio {
                     mainHandler.post {
-                        if (!running.get() || !conversationActive || exitInProgress) return@post
-                        if (generation != sessionGeneration || conversationState == ConversationState.EXITING) return@post
+                        if (!isCurrentCommandSession(generation)) return@post
                         updateNotification("本地语音识别 · 正在听你说…")
                         setConversationState(ConversationState.LISTENING)
                         session.touch(settings.sessionTimeoutSeconds)
                     }
                 }
                 if (samples.isEmpty()) {
-                    mainHandler.post { recoverRecognitionFailure(CommandFailureKind.NO_SPEECH) }
+                    mainHandler.post {
+                        if (!isCurrentCommandSession(generation)) return@post
+                        recoverRecognitionFailure(CommandFailureKind.NO_SPEECH)
+                    }
                     return@Thread
                 }
                 val recognizingReady = CountDownLatch(1)
                 val recognizingPosted = mainHandler.post {
                     try {
+                        if (!isCurrentCommandSession(generation)) return@post
                         setConversationState(ConversationState.RECOGNIZING)
                         updateNotification("本地语音识别 · 正在转文字…")
                     } finally {
@@ -428,11 +428,13 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                 commandListening.set(false)
                 releaseAudioRecord()
                 mainHandler.post {
+                    if (!isCurrentCommandSession(generation)) return@post
                     processUtterance(text)
                 }
             } catch (e: Throwable) {
                 val reason = e.message ?: e.javaClass.simpleName
                 mainHandler.post {
+                    if (!isCurrentCommandSession(generation)) return@post
                     retryLocalCommandRecognition(reason)
                 }
             } finally {
@@ -570,35 +572,24 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
             return
         }
 
-        when (kind) {
-            CommandFailureKind.NO_SPEECH -> {
-                commandRecognitionAttempts = 0
-                updateNotification("连续会话中 · 等待下一条指令")
-                scheduleListeningAfterSpeech(IDLE_RELISTEN_DELAY_MS)
+        val decision = CommandRecoveryPolicy.forFailure(kind, commandRecognitionAttempts)
+        if (decision.terminal) {
+            requestConversationExit(decision.spokenReply.orEmpty())
+            return
+        }
+        if (decision.resetAttempts) commandRecognitionAttempts = 0
+        val reply = decision.spokenReply ?: decision.continuation
+        if (reply == null) {
+            updateNotification("连续会话中 · 等待下一条指令")
+            scheduleListeningAfterSpeech(if (decision.immediateListen) IMMEDIATE_LISTEN_DELAY_MS else IDLE_RELISTEN_DELAY_MS)
+            return
+        }
+        setConversationState(ConversationState.SPEAKING)
+        val generation = sessionGeneration
+        speakThen(reply) {
+            if (generation == sessionGeneration && !exitInProgress) {
+                continueConversationSession(immediate = false)
             }
-            CommandFailureKind.ASR_EMPTY -> {
-                if (commandRecognitionAttempts >= MAX_COMMAND_RECOGNITION_ATTEMPTS) {
-                    commandRecognitionAttempts = 0
-                }
-                setConversationState(ConversationState.SPEAKING)
-                val generation = sessionGeneration
-                speakThen("刚才没有听清，请再说一次。") {
-                    if (generation == sessionGeneration && !exitInProgress) {
-                        continueConversationSession(immediate = false)
-                    }
-                }
-            }
-            CommandFailureKind.UNSUPPORTED_COMMAND -> {
-                commandRecognitionAttempts = 0
-                setConversationState(ConversationState.SPEAKING)
-                val generation = sessionGeneration
-                speakThen("这个指令我暂时还不会，你可以换一种说法。") {
-                    if (generation == sessionGeneration && !exitInProgress) {
-                        continueConversationSession(immediate = false)
-                    }
-                }
-            }
-            else -> Unit
         }
     }
 
@@ -669,13 +660,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                 if (!conversationActive || exitInProgress || requestGeneration != sessionGeneration) return@post
                 if (result.isFailure) {
                     conversationTurns += 1
-                    commandRecognitionAttempts = 0
-                    val message = "AI 服务暂时不可用，请稍后再试。"
-                    setConversationState(ConversationState.SPEAKING, heard)
-                    val generation = sessionGeneration
-                    speakThen(message) {
-                        if (generation == sessionGeneration && !exitInProgress) continueConversationSession(immediate = false)
-                    }
+                    recoverRecognitionFailure(CommandFailureKind.AI_UNAVAILABLE)
                     return@post
                 }
                 when (val outcome = result.getOrThrow()) {
@@ -702,16 +687,9 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                             is SafeToolPlan.Rejected -> {
                                 val failureKind = CommandFailureKind.SAFETY_REJECTED
                                 conversationTurns += 1
-                                commandRecognitionAttempts = 0
                                 memory.addTurn(rawText, "执行失败：${failureKind.name}:${toolPlan.result.debugCode}")
                                 updateNotification("❌ 执行失败：${failureKind.name}")
-                                setConversationState(ConversationState.SPEAKING, heard)
-                                val generation = sessionGeneration
-                                speakThen("这个操作不能执行。") {
-                                    if (generation == sessionGeneration && !exitInProgress) {
-                                        continueConversationSession(immediate = false)
-                                    }
-                                }
+                                recoverRecognitionFailure(failureKind)
                             }
                         }
                     }
@@ -778,7 +756,15 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun isLowQualityRecognition(normalized: String): Boolean =
-        normalized.length <= 1 && normalized !in knownOneCharacterCommands
+        CommandRecognitionQuality.failureKind(normalized, knownOneCharacterCommands) != null
+
+    private fun isCurrentCommandSession(generation: Long): Boolean {
+        return running.get() &&
+            conversationActive &&
+            !exitInProgress &&
+            generation == sessionGeneration &&
+            conversationState != ConversationState.EXITING
+    }
 
     private fun isDuplicateDeviceCommand(normalized: String, nowMs: Long = SystemClock.elapsedRealtime()): Boolean {
         if (normalized != lastDeviceCommand) {

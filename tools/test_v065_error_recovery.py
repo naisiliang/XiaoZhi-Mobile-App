@@ -10,6 +10,9 @@ import textwrap
 ROOT = Path(__file__).resolve().parents[1]
 WAKE = ROOT / "app/src/main/java/com/lchuang/xiaozhimobile/WakeService.kt"
 wake = WAKE.read_text(encoding="utf-8")
+device_action = (ROOT / "app/src/main/java/com/lchuang/xiaozhimobile/DeviceAction.kt").read_text(
+    encoding="utf-8"
+)
 
 
 def function_body(name: str) -> str:
@@ -57,14 +60,17 @@ def braced_block(source: str, marker: str) -> str:
     raise AssertionError(f"unbalanced block after: {marker}")
 
 
-# Deterministic static integration checks: Android callbacks cannot run in this
-# source test, so it proves branch ownership and relies on the compiler-backed
-# formatter harness below for concrete failure copy.
+# Android callbacks cannot run in this harness.  The compiler-backed policy
+# checks below exercise the category and retry semantics; these narrow source
+# checks verify that WakeService actually delegates worker callbacks to them.
 process = function_body("processNonExitUtterance")
 start_recognition = function_body("startLocalCommandRecognition")
 empty_capture = braced_block(start_recognition, "if (samples.isEmpty())")
 assert "recoverRecognitionFailure(CommandFailureKind.NO_SPEECH)" in empty_capture, (
     "a VAD capture with no speech must use the typed silent relisten path"
+)
+assert "isCurrentCommandSession(generation)" in empty_capture, (
+    "a stale no-speech callback must not mutate a newer or closed session"
 )
 
 utterance = function_body("processUtterance")
@@ -76,18 +82,38 @@ assert "isLowQualityRecognition(normalized)" in utterance, (
 )
 
 recovery = function_body("recoverRecognitionFailure")
-for kind in [
-    "CommandFailureKind.NO_SPEECH",
-    "CommandFailureKind.ASR_EMPTY",
-    "CommandFailureKind.UNSUPPORTED_COMMAND",
-]:
-    assert kind in recovery, f"typed recognition recovery missing: {kind}"
-assert "刚才没有听清，请再说一次。" in recovery
-assert "这个指令我暂时还不会，你可以换一种说法。" in recovery
+assert "CommandRecoveryPolicy.forFailure(kind, commandRecognitionAttempts)" in recovery
+assert "decision.terminal" in recovery
+assert "requestConversationExit" in recovery
+assert "const val MAX_COMMAND_RECOGNITION_ATTEMPTS = 2" in device_action
 assert "UNKNOWN_COMMAND_REPLY" not in recovery
-assert "UNKNOWN_COMMAND_REPLY" not in process, (
-    "unsupported text must use the category-specific recovery reply"
+assert "UNKNOWN_COMMAND_REPLY" not in process, "unsupported text must use category recovery"
+assert "UNKNOWN_COMMAND_REPLY" not in wake, (
+    "the obsolete generic reply must not remain available to typed failure paths"
 )
+
+for kind in [
+    "NO_SPEECH",
+    "ASR_EMPTY",
+    "UNSUPPORTED_COMMAND",
+    "APP_NOT_FOUND",
+    "EXECUTION_FAILED",
+    "AI_UNAVAILABLE",
+    "SAFETY_REJECTED",
+]:
+    assert re.search(rf"CommandFailureKind\.{kind}\b", device_action), (
+        f"typed recovery policy missing {kind}"
+    )
+
+for exact_copy in [
+    "刚才没有听清，请再说一次。",
+    "这个指令我暂时还不会，你可以换一种说法。",
+    "请继续说。",
+    "请再试一次。",
+    "AI 服务暂时不可用，请稍后再试。",
+    "这个操作不能执行。",
+]:
+    assert exact_copy in device_action, f"typed recovery copy missing: {exact_copy}"
 
 plan_index = process.find("router.plan(normalized)")
 ai_index = process.find("aiOrchestrator.respond")
@@ -103,16 +129,41 @@ rejected = braced_block(tool_branch, "is SafeToolPlan.Rejected ->")
 assert "executeDeviceAction(rawText, normalized" in allowed
 assert "executeDeviceAction(" not in rejected, "safety rejection must perform no device operation"
 assert "CommandFailureKind.SAFETY_REJECTED" in rejected
-assert "这个操作不能执行" in rejected
+assert "recoverRecognitionFailure(failureKind)" in rejected
 assert "UNKNOWN_COMMAND_REPLY" not in rejected
-assert "AI 服务暂时不可用，请稍后再试。" in process
+assert "recoverRecognitionFailure(CommandFailureKind.AI_UNAVAILABLE)" in process
+
+# Every worker-thread terminal callback must reject stale sessions before it
+# changes conversation state or invokes recovery/utterance processing.
+no_speech_post = braced_block(start_recognition, "if (samples.isEmpty())")
+session_guard = function_body("isCurrentCommandSession")
+for token in [
+    "running.get()",
+    "conversationActive",
+    "!exitInProgress",
+    "generation == sessionGeneration",
+    "conversationState != ConversationState.EXITING",
+]:
+    assert token in session_guard, f"captured-session guard missing: {token}"
+decoded_index = start_recognition.index("processUtterance(text)")
+assert "isCurrentCommandSession(generation)" in start_recognition[decoded_index - 240 : decoded_index]
+exception_index = start_recognition.index("retryLocalCommandRecognition(reason)")
+assert "isCurrentCommandSession(generation)" in start_recognition[exception_index - 240 : exception_index]
+
+assert 'private val knownOneCharacterCommands = setOf("停")' in wake, (
+    "the production quality gate must pass through the known one-character command"
+)
 
 formatter = (ROOT / "app/src/main/java/com/lchuang/xiaozhimobile/ExecutionIntentFormatter.kt").read_text(
     encoding="utf-8"
 )
-assert "CommandFailureKind.APP_NOT_FOUND" in formatter
-assert '"请继续说。"' in formatter
-assert '"请再试一次。"' in formatter
+assert "CommandRecoveryPolicy.forFailure(" in formatter
+assert 'return "$prefix。$next"' in formatter, (
+    "executor failures must use a sentence boundary"
+)
+assert 'return "$prefix，$next"' in formatter, (
+    "successful continuations must retain their existing Chinese comma behavior"
+)
 
 execute_action = function_body("executeDeviceAction")
 result_index = execute_action.find("completed.result")
@@ -152,6 +203,36 @@ with tempfile.TemporaryDirectory() as temp_dir:
             import com.lchuang.xiaozhimobile.*
 
             fun main() {
+                fun checkRecovery(
+                    kind: CommandFailureKind,
+                    attempts: Int,
+                    reply: String?,
+                    continuation: String?,
+                    resetAttempts: Boolean,
+                    terminal: Boolean
+                ) {
+                    val decision = CommandRecoveryPolicy.forFailure(kind, attempts)
+                    check(decision.spokenReply == reply) { "$kind reply=${decision.spokenReply}" }
+                    check(decision.continuation == continuation) { "$kind continuation=${decision.continuation}" }
+                    check(decision.resetAttempts == resetAttempts) { "$kind reset=${decision.resetAttempts}" }
+                    check(decision.terminal == terminal) { "$kind terminal=${decision.terminal}" }
+                }
+
+                check(MAX_COMMAND_RECOGNITION_ATTEMPTS == 2)
+                checkRecovery(CommandFailureKind.NO_SPEECH, 1, null, null, true, false)
+                checkRecovery(CommandFailureKind.ASR_EMPTY, 1, "刚才没有听清，请再说一次。", null, false, false)
+                checkRecovery(CommandFailureKind.ASR_EMPTY, 2, "刚才没有听清，我先退下了，有需要再叫我。", null, true, true)
+                checkRecovery(CommandFailureKind.UNSUPPORTED_COMMAND, 1, "这个指令我暂时还不会，你可以换一种说法。", null, true, false)
+                checkRecovery(CommandFailureKind.APP_NOT_FOUND, 1, null, "请继续说。", true, false)
+                checkRecovery(CommandFailureKind.EXECUTION_FAILED, 1, null, "请再试一次。", true, false)
+                checkRecovery(CommandFailureKind.AI_UNAVAILABLE, 1, "AI 服务暂时不可用，请稍后再试。", null, true, false)
+                checkRecovery(CommandFailureKind.SAFETY_REJECTED, 1, "这个操作不能执行。", null, true, false)
+
+                check(CommandRecognitionQuality.failureKind("", emptySet()) == CommandFailureKind.ASR_EMPTY)
+                check(CommandRecognitionQuality.failureKind("啊", emptySet()) == CommandFailureKind.ASR_EMPTY)
+                check(CommandRecognitionQuality.failureKind("停", setOf("停")) == null)
+                check(CommandRecognitionQuality.failureKind("打开微信", emptySet()) == null)
+
                 val formatter = ExecutionIntentFormatter()
                 val action = DeviceAction.OpenApp("不存在应用")
                 val result = DeviceExecutionResult(
@@ -165,9 +246,19 @@ with tempfile.TemporaryDirectory() as temp_dir:
                 check(copy.successNotification == null)
                 check(copy.failureNotification == "❌ 执行失败：打开不存在应用")
                 check(copy.finalSpoken == "没有找到可启动的“不存在应用”。请继续说。")
+                val executionFailure = formatter.finalCopy(
+                    action,
+                    result.copy(
+                        code = "OPEN_APP_FAILED",
+                        spokenResult = "没有成功打开不存在应用",
+                        failureKind = CommandFailureKind.EXECUTION_FAILED
+                    ),
+                    "这段兼容文案不得覆盖恢复策略"
+                )
+                check(executionFailure.finalSpoken == "没有成功打开不存在应用。请再试一次。")
                 check(result.failureKind == CommandFailureKind.APP_NOT_FOUND)
                 check(CommandFailureKind.SAFETY_REJECTED.name == "SAFETY_REJECTED")
-                println("PASS: specific execution failure and safety categories")
+                println("PASS: seven recovery categories, retry terminal, and recognition quality")
             }
             """
         ),
@@ -189,4 +280,4 @@ with tempfile.TemporaryDirectory() as temp_dir:
     )
     subprocess.run(["java", "-jar", str(jar)], cwd=ROOT, check=True)
 
-print("PASS: static WakeService failure routing uses unified real results")
+print("PASS: WakeService routes callbacks through executable recovery policy")
