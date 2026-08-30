@@ -3,6 +3,7 @@ import hashlib
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import textwrap
 
@@ -91,8 +92,11 @@ try:
         stderr=subprocess.DEVNULL,
     )
 except (FileNotFoundError, subprocess.CalledProcessError):
-    print("PASS: adaptive VAD source and command-capture integration (Kotlin compiler unavailable)")
-    raise SystemExit(0)
+    print(
+        f"FAIL: adaptive VAD Kotlin harness unavailable or unusable: {compiler}",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
 
 with tempfile.TemporaryDirectory() as temp_dir:
     temp = Path(temp_dir)
