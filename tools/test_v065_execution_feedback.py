@@ -383,6 +383,31 @@ with tempfile.TemporaryDirectory() as td:
                 check(events.isEmpty()) {
                     "cancelled utterance must suppress queued start and later done callbacks: $events"
                 }
+
+                events.clear()
+                queuedRegistry.register(
+                    "done-cancelled",
+                    { events += "DONE_CANCELLED_START" },
+                    { events += "DONE_CANCELLED_DONE" },
+                    flushPending = false
+                )
+                queuedRegistry.onStart("done-cancelled")
+                check(queuedDispatches.size == 1) {
+                    "onStart should queue exactly one callback before done delivery: ${queuedDispatches.size}"
+                }
+                queuedDispatches.removeAt(0)()
+                check(events == listOf("DONE_CANCELLED_START")) {
+                    "start should still deliver before queued done cancellation: $events"
+                }
+                queuedRegistry.onDone("done-cancelled")
+                check(queuedDispatches.size == 1) {
+                    "onDone should queue exactly one callback before cancellation: ${queuedDispatches.size}"
+                }
+                queuedRegistry.cancelPending()
+                queuedDispatches.removeAt(0)()
+                check(events == listOf("DONE_CANCELLED_START")) {
+                    "cancelPending must suppress queued onDone after delivery was queued: $events"
+                }
             }
 
             fun assertCoordinatorCancellation() {

@@ -39,22 +39,32 @@ class TtsProgressRegistry(
     }
 
     fun onDone(utteranceId: String) {
-        val state = pending[utteranceId] ?: return
-        if (state.completionScheduled.compareAndSet(false, true)) {
-            dispatchDone(state, deliverCallbacks = true)
-        }
+        pending[utteranceId]?.let(::scheduleDone)
     }
 
     fun onError(utteranceId: String) {
         val state = pending[utteranceId] ?: return
         dispatchStart(state)
         if (state.completionScheduled.compareAndSet(false, true)) {
-            dispatchDelayed(errorFallbackMs) { dispatchDone(state, deliverCallbacks = true) }
+            dispatchDelayed(errorFallbackMs) { dispatchDone(state) }
         }
     }
 
     fun cancelPending(deliverCallbacks: Boolean = false) {
-        pending.values.toList().forEach { dispatchDone(it, deliverCallbacks) }
+        pending.values.toList().forEach { state ->
+            if (!deliverCallbacks) {
+                state.cancelled.set(true)
+            }
+            if (state.completionScheduled.compareAndSet(false, true)) {
+                if (deliverCallbacks) {
+                    dispatch { dispatchDone(state) }
+                } else {
+                    pending.remove(state.id, state)
+                }
+            } else if (!deliverCallbacks) {
+                pending.remove(state.id, state)
+            }
+        }
     }
 
     private fun dispatchStart(state: PendingUtterance) {
@@ -66,10 +76,19 @@ class TtsProgressRegistry(
         }
     }
 
-    private fun dispatchDone(state: PendingUtterance, deliverCallbacks: Boolean) {
-        if (!deliverCallbacks) state.cancelled.set(true)
+    private fun scheduleDone(state: PendingUtterance) {
+        if (state.completionScheduled.compareAndSet(false, true)) {
+            dispatch { dispatchDone(state) }
+        }
+    }
+
+    private fun dispatchDone(state: PendingUtterance) {
         if (!state.doneDelivered.compareAndSet(false, true)) return
-        pending.remove(state.id, state)
-        if (deliverCallbacks) dispatch(state.onDone)
+        try {
+            // Cancelled stale continuations are suppressed even if completion was already queued.
+            if (!state.cancelled.get()) state.onDone()
+        } finally {
+            pending.remove(state.id, state)
+        }
     }
 }
