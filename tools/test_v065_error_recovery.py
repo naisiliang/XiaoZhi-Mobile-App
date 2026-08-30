@@ -61,6 +61,34 @@ def braced_block(source: str, marker: str) -> str:
 # source test, so it proves branch ownership and relies on the compiler-backed
 # formatter harness below for concrete failure copy.
 process = function_body("processNonExitUtterance")
+start_recognition = function_body("startLocalCommandRecognition")
+empty_capture = braced_block(start_recognition, "if (samples.isEmpty())")
+assert "recoverRecognitionFailure(CommandFailureKind.NO_SPEECH)" in empty_capture, (
+    "a VAD capture with no speech must use the typed silent relisten path"
+)
+
+utterance = function_body("processUtterance")
+assert "recoverRecognitionFailure(CommandFailureKind.ASR_EMPTY)" in utterance, (
+    "blank ASR and low-quality one-character ASR must not share unsupported recovery"
+)
+assert "isLowQualityRecognition(normalized)" in utterance, (
+    "one-character ASR must be classified before command routing"
+)
+
+recovery = function_body("recoverRecognitionFailure")
+for kind in [
+    "CommandFailureKind.NO_SPEECH",
+    "CommandFailureKind.ASR_EMPTY",
+    "CommandFailureKind.UNSUPPORTED_COMMAND",
+]:
+    assert kind in recovery, f"typed recognition recovery missing: {kind}"
+assert "刚才没有听清，请再说一次。" in recovery
+assert "这个指令我暂时还不会，你可以换一种说法。" in recovery
+assert "UNKNOWN_COMMAND_REPLY" not in recovery
+assert "UNKNOWN_COMMAND_REPLY" not in process, (
+    "unsupported text must use the category-specific recovery reply"
+)
+
 plan_index = process.find("router.plan(normalized)")
 ai_index = process.find("aiOrchestrator.respond")
 assert 0 <= plan_index < ai_index, "local plans must be resolved before AI"
@@ -77,7 +105,14 @@ assert "executeDeviceAction(" not in rejected, "safety rejection must perform no
 assert "CommandFailureKind.SAFETY_REJECTED" in rejected
 assert "这个操作不能执行" in rejected
 assert "UNKNOWN_COMMAND_REPLY" not in rejected
-assert "AI 服务暂时不可用，请稍后再试" in process
+assert "AI 服务暂时不可用，请稍后再试。" in process
+
+formatter = (ROOT / "app/src/main/java/com/lchuang/xiaozhimobile/ExecutionIntentFormatter.kt").read_text(
+    encoding="utf-8"
+)
+assert "CommandFailureKind.APP_NOT_FOUND" in formatter
+assert '"请继续说。"' in formatter
+assert '"请再试一次。"' in formatter
 
 execute_action = function_body("executeDeviceAction")
 result_index = execute_action.find("completed.result")
@@ -129,7 +164,7 @@ with tempfile.TemporaryDirectory() as temp_dir:
                 val copy = formatter.finalCopy(action, result, "请继续说。")
                 check(copy.successNotification == null)
                 check(copy.failureNotification == "❌ 执行失败：打开不存在应用")
-                check(copy.finalSpoken == "没有找到可启动的“不存在应用”。请再试一次。")
+                check(copy.finalSpoken == "没有找到可启动的“不存在应用”。请继续说。")
                 check(result.failureKind == CommandFailureKind.APP_NOT_FOUND)
                 check(CommandFailureKind.SAFETY_REJECTED.name == "SAFETY_REJECTED")
                 println("PASS: specific execution failure and safety categories")

@@ -29,7 +29,18 @@ class ExecutionIntentFormatter {
                 combineContinuation(result.spokenResult, continuation)
             )
         } else {
-            ExecutionCopy(announcement, announcement, null, "❌ 执行失败：${label(action)}", "${result.spokenResult}。请再试一次。")
+            val recovery = if (result.failureKind == CommandFailureKind.APP_NOT_FOUND) {
+                "请继续说。"
+            } else {
+                "请再试一次。"
+            }
+            ExecutionCopy(
+                announcement,
+                announcement,
+                null,
+                "❌ 执行失败：${label(action)}",
+                combineContinuation(result.spokenResult, recovery)
+            )
         }
     }
 

@@ -46,6 +46,8 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         private const val COMMAND_WAIT_SPEECH_MS = 4000
         private const val COMMAND_MAX_AUDIO_MS = 8000
         private const val PRE_ROLL_FRAMES = 8 // 400 ms
+        // The current local grammar deliberately has no standalone one-character commands.
+        private val knownOneCharacterCommands = emptySet<String>()
     }
 
     private val running = AtomicBoolean(false)
@@ -408,7 +410,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                     }
                 }
                 if (samples.isEmpty()) {
-                    mainHandler.post { continueIdleListening() }
+                    mainHandler.post { recoverRecognitionFailure(CommandFailureKind.NO_SPEECH) }
                     return@Thread
                 }
                 val recognizingReady = CountDownLatch(1)
@@ -426,13 +428,11 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                 commandListening.set(false)
                 releaseAudioRecord()
                 mainHandler.post {
-                    if (text.isBlank()) retryLocalCommandRecognition("NO_MATCH")
-                    else processUtterance(text)
+                    processUtterance(text)
                 }
             } catch (e: Throwable) {
                 val reason = e.message ?: e.javaClass.simpleName
                 mainHandler.post {
-                    updateNotification("本地语音识别失败：$reason")
                     retryLocalCommandRecognition(reason)
                 }
             } finally {
@@ -559,32 +559,54 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun retryLocalCommandRecognition(reason: String) {
-        if (!running.get()) return
+        updateNotification("本地语音识别失败：$reason")
+        recoverRecognitionFailure(CommandFailureKind.ASR_EMPTY)
+    }
+
+    private fun recoverRecognitionFailure(kind: CommandFailureKind) {
+        if (!running.get() || !conversationActive || exitInProgress) return
         if (session.isExpired()) {
             finishSessionForTimeout()
             return
         }
 
-        if (commandRecognitionAttempts < MAX_COMMAND_RECOGNITION_ATTEMPTS) {
-            updateNotification("没有听清($reason) · 将再次本地听取指令")
-            setConversationState(ConversationState.SPEAKING)
-            speakThen("没有听清，请直接说指令") {
-                continueConversationSession(immediate = false)
+        when (kind) {
+            CommandFailureKind.NO_SPEECH -> {
+                commandRecognitionAttempts = 0
+                updateNotification("连续会话中 · 等待下一条指令")
+                scheduleListeningAfterSpeech(IDLE_RELISTEN_DELAY_MS)
             }
-        } else {
-            commandRecognitionAttempts = 0
-            setConversationState(ConversationState.SPEAKING)
-            speakThen(UNKNOWN_COMMAND_REPLY) {
-                continueConversationSession(immediate = false)
+            CommandFailureKind.ASR_EMPTY -> {
+                if (commandRecognitionAttempts >= MAX_COMMAND_RECOGNITION_ATTEMPTS) {
+                    commandRecognitionAttempts = 0
+                }
+                setConversationState(ConversationState.SPEAKING)
+                val generation = sessionGeneration
+                speakThen("刚才没有听清，请再说一次。") {
+                    if (generation == sessionGeneration && !exitInProgress) {
+                        continueConversationSession(immediate = false)
+                    }
+                }
             }
+            CommandFailureKind.UNSUPPORTED_COMMAND -> {
+                commandRecognitionAttempts = 0
+                setConversationState(ConversationState.SPEAKING)
+                val generation = sessionGeneration
+                speakThen("这个指令我暂时还不会，你可以换一种说法。") {
+                    if (generation == sessionGeneration && !exitInProgress) {
+                        continueConversationSession(immediate = false)
+                    }
+                }
+            }
+            else -> Unit
         }
     }
 
     private fun processUtterance(rawText: String) {
         val normalized = VoiceCommandNormalizer.normalize(rawText)
         updateNotification("你说：$rawText")
-        if (normalized.isBlank()) {
-            retryLocalCommandRecognition("NO_MATCH")
+        if (normalized.isBlank() || isLowQualityRecognition(normalized)) {
+            recoverRecognitionFailure(CommandFailureKind.ASR_EMPTY)
             return
         }
         val heard = "我听到：$rawText"
@@ -634,12 +656,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         val aiConfigured = settings.apiBaseUrl.isNotBlank() && settings.model.isNotBlank()
         if (!aiConfigured) {
             conversationTurns += 1
-            commandRecognitionAttempts = 0
-            setConversationState(ConversationState.SPEAKING, heard)
-            val generation = sessionGeneration
-            speakThen(UNKNOWN_COMMAND_REPLY) {
-                if (generation == sessionGeneration && !exitInProgress) continueConversationSession(immediate = false)
-            }
+            recoverRecognitionFailure(CommandFailureKind.UNSUPPORTED_COMMAND)
             return
         }
 
@@ -653,7 +670,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                 if (result.isFailure) {
                     conversationTurns += 1
                     commandRecognitionAttempts = 0
-                    val message = "AI 服务暂时不可用，请稍后再试"
+                    val message = "AI 服务暂时不可用，请稍后再试。"
                     setConversationState(ConversationState.SPEAKING, heard)
                     val generation = sessionGeneration
                     speakThen(message) {
@@ -759,6 +776,9 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
             continueConversationSession(immediate = true)
         }
     }
+
+    private fun isLowQualityRecognition(normalized: String): Boolean =
+        normalized.length <= 1 && normalized !in knownOneCharacterCommands
 
     private fun isDuplicateDeviceCommand(normalized: String, nowMs: Long = SystemClock.elapsedRealtime()): Boolean {
         if (normalized != lastDeviceCommand) {
