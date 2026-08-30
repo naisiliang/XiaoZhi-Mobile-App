@@ -30,9 +30,12 @@ capture_integration=wake.find('val samples = captureCommandAudio {')
 listening=wake.find('setConversationState(ConversationState.LISTENING)',capture_integration)
 touch=wake.find('session.touch(settings.sessionTimeoutSeconds)',listening)
 assert capture_integration < listening < touch
-speak_then=re.search(r'private fun speakThen\(.*?\) \{(.*?)\n    \}',wake,re.S)
-assert speak_then and 'startLocalCommandRecognition()' not in speak_then.group(1)
-assert 'if (utteranceId == id) mainHandler.post(done)' in speak_then.group(1)
-assert 'speakCommandConfirmation(local.reply' in wake
-assert 'speakCommandConfirmation(executed.spokenText' in wake
+speak_progress=re.search(r'private fun speakWithProgress\(.*?\) \{(.*?)\n    \}',wake,re.S)
+assert speak_progress and 'startLocalCommandRecognition()' not in speak_progress.group(1)
+assert 'utteranceId != id' in speak_progress.group(1)
+assert 'compareAndSet(false, true)' in speak_progress.group(1)
+assert 'speakWithProgress(text, onDone = done)' in wake
+assert 'router.plan(normalized)' in wake
+assert 'safeToolExecutor.plan(outcome.call)' in wake
+assert wake.count('executeDeviceAction(rawText, normalized') >= 2
 print('PASS: command completion -> guarded real listening flow')

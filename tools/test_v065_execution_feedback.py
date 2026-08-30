@@ -1,11 +1,169 @@
 from pathlib import Path
 import os
+import re
 import subprocess
 import tempfile
 import textwrap
 
 
 root = Path(__file__).resolve().parents[1]
+wake_path = root / "app/src/main/java/com/lchuang/xiaozhimobile/WakeService.kt"
+wake = wake_path.read_text(encoding="utf-8")
+
+
+def function_body(name: str) -> str:
+    match = re.search(rf"private fun {re.escape(name)}\b", wake)
+    assert match, f"WakeService.{name} missing"
+    signature_open = wake.find("(", match.end())
+    assert signature_open >= 0, name
+    signature_depth = 0
+    signature_close = -1
+    for index in range(signature_open, len(wake)):
+        if wake[index] == "(":
+            signature_depth += 1
+        elif wake[index] == ")":
+            signature_depth -= 1
+            if signature_depth == 0:
+                signature_close = index
+                break
+    assert signature_close >= 0, f"WakeService.{name} signature is not balanced"
+    opening = wake.find("{", signature_close)
+    assert opening >= 0, f"WakeService.{name} body missing"
+    depth = 0
+    for index in range(opening, len(wake)):
+        if wake[index] == "{":
+            depth += 1
+        elif wake[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return wake[opening + 1 : index]
+    raise AssertionError(f"WakeService.{name} body is not balanced")
+
+
+def braced_block(source: str, marker: str) -> str:
+    marker_index = source.find(marker)
+    assert marker_index >= 0, f"missing block marker: {marker}"
+    opening = source.find("{", marker_index)
+    assert opening >= 0, f"missing opening brace after: {marker}"
+    depth = 0
+    for index in range(opening, len(source)):
+        if source[index] == "{":
+            depth += 1
+        elif source[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return source[opening + 1 : index]
+    raise AssertionError(f"unbalanced block after: {marker}")
+
+
+# Static Android-service integration contract. The pure transaction machinery is
+# compiler-backed below; these assertions pin the Android ownership and routing
+# that cannot be executed without the Android runtime.
+for field in [
+    "private lateinit var appExitController: AppExitController",
+    "private lateinit var deviceActionExecutor: DeviceActionExecutor",
+    "private lateinit var executionFormatter: ExecutionIntentFormatter",
+    "private lateinit var commandResultNotifier: CommandResultNotifier",
+    "private lateinit var executionCoordinator: ExecutionFeedbackCoordinator",
+    "private val audioEnhancementManager = AudioEnhancementManager()",
+]:
+    assert field in wake, f"WakeService dependency field missing: {field}"
+
+on_create = wake[wake.index("override fun onCreate()") : wake.index("override fun onStartCommand")]
+for token in [
+    "appExitController = AppExitController(this)",
+    "deviceActionExecutor = DeviceActionExecutor(phone, appExitController)",
+    "executionFormatter = ExecutionIntentFormatter()",
+    "commandResultNotifier = CommandResultNotifier(",
+    "publish = { text -> updateNotificationRaw(text) }",
+    "clockMs = { SystemClock.elapsedRealtime() }",
+    "holdMs = 4000L",
+    "executionCoordinator = ExecutionFeedbackCoordinator(",
+    "DelayedScheduler",
+    "mainHandler.postDelayed(block, delay)",
+    "DeviceActionRunner",
+    "deviceActionExecutor.execute(action, callback)",
+    "SpeechDriver",
+    "speakWithProgress(text, onStart, onDone)",
+    "actionDelayMs = 120L",
+]:
+    assert token in on_create, f"WakeService onCreate wiring missing: {token}"
+
+process = function_body("processNonExitUtterance")
+plan_index = process.find("router.plan(normalized)")
+ai_index = process.find("aiOrchestrator.respond")
+assert 0 <= plan_index < ai_index, "local side-effect-free plan must run before AI"
+assert "router.handle(" not in process, "WakeService must not bypass the unified action transaction"
+planned = braced_block(process, "is DeviceCommandPlan.Planned ->")
+assert "executeDeviceAction(rawText, normalized" in planned
+assert "return" in planned, "a planned local action must remain handled even when execution fails"
+
+tool_branch = process[process.index("is AiOutcome.Tool ->") :]
+safe_plan = tool_branch.find("safeToolExecutor.plan(outcome.call)")
+allowed = tool_branch.find("is SafeToolPlan.Allowed")
+same_funnel = tool_branch.find("executeDeviceAction(rawText, normalized", allowed)
+rejected = tool_branch.find("is SafeToolPlan.Rejected")
+assert 0 <= safe_plan < allowed < same_funnel, "AI tools must plan then use executeDeviceAction"
+assert rejected >= 0 and "SAFETY_REJECTED" in tool_branch[rejected:], (
+    "rejected AI tools must report SAFETY_REJECTED"
+)
+assert "safeToolExecutor.execute" not in tool_branch, "AI tools must never bypass SafeToolExecutor.plan"
+
+execute_action = function_body("executeDeviceAction")
+capture_guard = execute_action.find("commandListening.get()")
+duplicate_guard = execute_action.find("isDuplicateDeviceCommand(normalized)")
+coordinator_call = execute_action.find("executionCoordinator.execute")
+assert 0 <= capture_guard < coordinator_call, "command capture must guard device execution"
+assert 0 <= duplicate_guard < coordinator_call, "duplicate guard must run before every action"
+for token in [
+    "CommandTransaction(",
+    "executionFormatter.announcement(action)",
+    "completed.result",
+    "memory.addTurn(",
+    "continueConversationSession(immediate = true)",
+]:
+    assert token in execute_action, f"unified execution callback missing: {token}"
+result_index = execute_action.find("completed.result")
+memory_index = execute_action.find("memory.addTurn(")
+assert result_index < memory_index, "AI/local memory may only record the actual callback result"
+success_block = braced_block(execute_action, "if (result.success) {")
+assert "successfulDeviceActions += 1" in success_block
+assert execute_action.count("successfulDeviceActions += 1") == 1, (
+    "failed actions must not increment successfulDeviceActions"
+)
+
+start_recognition = function_body("startLocalCommandRecognition")
+assert "ttsSpeaking.get()" in start_recognition, "command ASR must refuse capture while TTS speaks"
+process_post = start_recognition.find("processUtterance(text)")
+capture_cleared = start_recognition.rfind("commandListening.set(false)", 0, process_post)
+assert 0 <= capture_cleared < process_post, "capture flag must clear before utterance processing"
+
+speak_progress = function_body("speakWithProgress")
+for token in [
+    "AtomicBoolean(false)",
+    "utteranceId != id",
+    "onStart",
+    "onDone",
+    "mainHandler.postDelayed",
+    "150L",
+    "ttsSpeaking.set(true)",
+    "ttsSpeaking.set(false)",
+]:
+    assert token in speak_progress, f"progress-aware TTS contract missing: {token}"
+assert speak_progress.count("override fun onError") == 2
+assert "compareAndSet(false, true)" in speak_progress, "TTS callbacks must be exactly-once guarded"
+speak_then = function_body("speakThen")
+assert "speakWithProgress(text, onDone = done)" in speak_then
+
+update_raw = function_body("updateNotificationRaw")
+update_transient = function_body("updateNotification")
+assert ".notify(NOTIFY_ID, notification(text))" in update_raw
+assert "commandResultNotifier.publishTransient(text)" in update_transient
+restart = function_body("restartWakeListening")
+clear_retention = restart.find("commandResultNotifier.clearRetention()")
+idle_publish = restart.find("updateNotificationRaw(")
+assert 0 <= clear_retention < idle_publish, "KWS idle must explicitly replace retained command results"
+
 sources = [
     root / "app/src/main/java/com/lchuang/xiaozhimobile/DeviceAction.kt",
     root / "app/src/main/java/com/lchuang/xiaozhimobile/CommandTransaction.kt",
@@ -35,6 +193,26 @@ with tempfile.TemporaryDirectory() as td:
         textwrap.dedent(
             """
             import com.lchuang.xiaozhimobile.*
+
+            class AndroidHandlerShape {
+                var observedDelayMs: Long? = null
+                fun postDelayed(block: Runnable, delayMs: Long): Boolean {
+                    observedDelayMs = delayMs
+                    block.run()
+                    return true
+                }
+            }
+
+            fun assertAndroidSamWiringShape() {
+                val handler = AndroidHandlerShape()
+                var called = false
+                val scheduler = DelayedScheduler { delay, block ->
+                    handler.postDelayed(block, delay)
+                }
+                scheduler.postDelayed(120L) { called = true }
+                check(called)
+                check(handler.observedDelayMs == 120L)
+            }
 
             fun assertNotifierRetention() {
                 class FakeClock(var nowMs: Long = 0L) {
@@ -191,6 +369,7 @@ with tempfile.TemporaryDirectory() as td:
             }
 
             fun main() {
+                assertAndroidSamWiringShape()
                 assertNotifierRetention()
                 assertFailureFeedback()
                 val events = mutableListOf<String>()
@@ -279,7 +458,8 @@ with tempfile.TemporaryDirectory() as td:
                 check(events == listOf(
                     "RUNNING_NOTIFICATION",
                     "ANNOUNCEMENT_SPEAK_CALLED",
-                    "ANNOUNCEMENT_ON_START"
+                    "ANNOUNCEMENT_ON_START",
+                    "SCHEDULE_120"
                 )) { "announcement must gate scheduling: $events" }
                 delayedBlock?.invoke() ?: error("announcement onStart did not schedule the device action")
                 check(announcementDone != null) { "announcement should retain its onDone callback" }

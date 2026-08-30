@@ -51,6 +51,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
     private val running = AtomicBoolean(false)
     private val kwsListening = AtomicBoolean(false)
     private val commandListening = AtomicBoolean(false)
+    private val ttsSpeaking = AtomicBoolean(false)
     private val mainHandler = Handler(Looper.getMainLooper())
     private val session = SessionController()
     private val audioEnhancementManager = AudioEnhancementManager()
@@ -62,6 +63,11 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
     private lateinit var mapController: MapController
     private lateinit var phone: PhoneController
     private lateinit var router: CommandRouter
+    private lateinit var appExitController: AppExitController
+    private lateinit var deviceActionExecutor: DeviceActionExecutor
+    private lateinit var executionFormatter: ExecutionIntentFormatter
+    private lateinit var commandResultNotifier: CommandResultNotifier
+    private lateinit var executionCoordinator: ExecutionFeedbackCoordinator
     private lateinit var ai: AiClient
     private lateinit var aiOrchestrator: AiOrchestrator
     private lateinit var safeToolExecutor: SafeToolExecutor
@@ -79,6 +85,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
     @Volatile private var conversationState = ConversationState.IDLE_WAKE
     private var sessionGeneration = 0L
     private var pendingListenRunnable: Runnable? = null
+    @Volatile private var activeTtsUtteranceId: String? = null
     private var lastDeviceCommand = ""
     private var lastDeviceCommandAtMs = 0L
     private var successfulDeviceActions = 0
@@ -101,6 +108,22 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         mapController = MapController(this, locationProvider)
         phone = PhoneController(this, installedAppRegistry, appLauncher, mapController)
         router = CommandRouter(phone)
+        appExitController = AppExitController(this)
+        deviceActionExecutor = DeviceActionExecutor(phone, appExitController)
+        executionFormatter = ExecutionIntentFormatter()
+        commandResultNotifier = CommandResultNotifier(
+            publish = { text -> updateNotificationRaw(text) },
+            clockMs = { SystemClock.elapsedRealtime() },
+            holdMs = 4000L
+        )
+        executionCoordinator = ExecutionFeedbackCoordinator(
+            scheduler = DelayedScheduler { delay, block -> mainHandler.postDelayed(block, delay) },
+            runner = DeviceActionRunner { action, callback -> deviceActionExecutor.execute(action, callback) },
+            speech = SpeechDriver { text, onStart, onDone -> speakWithProgress(text, onStart, onDone) },
+            formatter = executionFormatter,
+            notifier = commandResultNotifier,
+            actionDelayMs = 120L
+        )
         ai = AiClient(settings)
         aiOrchestrator = AiOrchestrator(settings, ai)
         safeToolExecutor = SafeToolExecutor(phone)
@@ -358,7 +381,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun startLocalCommandRecognition() {
-        if (!running.get() || commandListening.get()) return
+        if (!running.get() || commandListening.get() || ttsSpeaking.get()) return
         if (conversationState != ConversationState.READY_TO_LISTEN) return
         if (!conversationActive || session.isExpired()) {
             finishSessionForTimeout()
@@ -394,6 +417,8 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                 check(recognizingPosted) { "RECOGNIZING_POST" }
                 recognizingReady.await()
                 val text = decodeLocalCommand(samples)
+                commandListening.set(false)
+                releaseAudioRecord()
                 mainHandler.post {
                     if (text.isBlank()) retryLocalCommandRecognition("NO_MATCH")
                     else processUtterance(text)
@@ -592,20 +617,12 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
     private fun processNonExitUtterance(rawText: String, normalized: String, heard: String) {
         if (!conversationActive || exitInProgress) return
         val deviceLike = router.looksLikeDeviceCommand(normalized)
-        if (deviceLike && isDuplicateDeviceCommand(normalized)) {
-            updateNotification("已忽略重复指令 · $normalized")
-            overlay.update("你好，有什么可以帮你？", "已忽略重复指令", heard)
-            scheduleListeningAfterSpeech(IMMEDIATE_LISTEN_DELAY_MS)
-            return
-        }
-
-        val local = router.handle(normalized)
-        if (local.handled && local.success) {
-            conversationTurns += 1
-            commandRecognitionAttempts = 0
-            overlay.update("你好，有什么可以帮你？", local.reply.ifBlank { "指令已经执行完成" }, heard)
-            speakCommandConfirmation(local.reply)
-            return
+        when (val localPlan = router.plan(normalized)) {
+            is DeviceCommandPlan.Planned -> {
+                executeDeviceAction(rawText, normalized, localPlan.action, heard)
+                return
+            }
+            DeviceCommandPlan.Unhandled -> Unit
         }
 
         val aiConfigured = settings.apiBaseUrl.isNotBlank() && settings.model.isNotBlank()
@@ -655,19 +672,21 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                     is AiOutcome.Tool -> {
                         setConversationState(ConversationState.EXECUTING, heard)
                         overlay.update("你好，有什么可以帮你？", "正在执行安全手机操作…", heard)
-                        safeToolExecutor.execute(outcome.call) { executed ->
-                            mainHandler.post {
-                                if (!conversationActive || exitInProgress || requestGeneration != sessionGeneration) return@post
+                        when (val toolPlan = safeToolExecutor.plan(outcome.call)) {
+                            is SafeToolPlan.Allowed -> {
+                                executeDeviceAction(rawText, normalized, toolPlan.action, heard)
+                            }
+                            is SafeToolPlan.Rejected -> {
+                                val failureKind = CommandFailureKind.SAFETY_REJECTED
                                 conversationTurns += 1
                                 commandRecognitionAttempts = 0
-                                memory.addTurn(rawText, if (executed.success) "已执行：${executed.spokenText}" else "执行失败：${executed.debugCode}")
-                                if (executed.success) {
-                                    speakCommandConfirmation(executed.spokenText)
-                                } else {
-                                    setConversationState(ConversationState.SPEAKING, heard)
-                                    val generation = sessionGeneration
-                                    speakThen(UNKNOWN_COMMAND_REPLY) {
-                                        if (generation == sessionGeneration && !exitInProgress) continueConversationSession(immediate = false)
+                                memory.addTurn(rawText, "执行失败：${failureKind.name}:${toolPlan.result.debugCode}")
+                                updateNotification("❌ 执行失败：${failureKind.name}")
+                                setConversationState(ConversationState.SPEAKING, heard)
+                                val generation = sessionGeneration
+                                speakThen("这个操作不能执行。") {
+                                    if (generation == sessionGeneration && !exitInProgress) {
+                                        continueConversationSession(immediate = false)
                                     }
                                 }
                             }
@@ -675,6 +694,57 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                     }
                 }
             }
+        }
+    }
+
+    private fun executeDeviceAction(
+        rawText: String,
+        normalized: String,
+        action: DeviceAction,
+        heard: String
+    ) {
+        if (!conversationActive || exitInProgress) return
+        if (commandListening.get()) {
+            val generation = sessionGeneration
+            mainHandler.postDelayed({
+                if (generation == sessionGeneration && conversationActive && !exitInProgress) {
+                    executeDeviceAction(rawText, normalized, action, heard)
+                }
+            }, IMMEDIATE_LISTEN_DELAY_MS)
+            return
+        }
+        if (isDuplicateDeviceCommand(normalized)) {
+            updateNotification("已忽略重复指令 · $normalized")
+            overlay.update("你好，有什么可以帮你？", "已忽略重复指令", heard)
+            scheduleListeningAfterSpeech(IMMEDIATE_LISTEN_DELAY_MS)
+            return
+        }
+
+        commandRecognitionAttempts = 0
+        setConversationState(ConversationState.EXECUTING, heard)
+        overlay.update("你好，有什么可以帮你？", "正在执行安全手机操作…", heard)
+        val generation = sessionGeneration
+        val continuation = if (successfulDeviceActions == 0) "你有什么需求请说？" else "请继续说。"
+        val transaction = CommandTransaction(
+            rawText = rawText,
+            normalizedText = normalized,
+            action = action,
+            announcement = executionFormatter.announcement(action)
+        )
+        executionCoordinator.execute(transaction, continuation) { completed ->
+            if (!conversationActive || exitInProgress || generation != sessionGeneration) return@execute
+            val result = completed.result ?: return@execute
+            conversationTurns += 1
+            commandRecognitionAttempts = 0
+            memory.addTurn(
+                rawText,
+                if (result.success) "已执行：${result.spokenResult}" else "执行失败：${result.code}:${result.spokenResult}"
+            )
+            if (result.success) {
+                successfulDeviceActions += 1
+            }
+            overlay.update("你好，有什么可以帮你？", result.spokenResult, heard)
+            continueConversationSession(immediate = true)
         }
     }
 
@@ -689,32 +759,11 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         return delta in 0..DEVICE_DUPLICATE_WINDOW_MS
     }
 
-    private fun buildDeviceContinuation(result: String): String {
-        val clean = result.trim().ifBlank { "指令已经执行完成" }
-        return if (successfulDeviceActions == 0) {
-            "$clean，你有什么需求请说？"
-        } else {
-            "$clean，请继续说。"
-        }
-    }
-
     private fun buildAiContinuation(answer: String): String {
         val clean = answer.trim()
         if (clean.isBlank()) return "你还需要什么？"
         return if (clean.endsWith("？") || clean.endsWith("?")) clean else "$clean。你还需要什么？"
     }
-
-    private fun speakCommandConfirmation(text: String) {
-        val confirmation = buildDeviceContinuation(text)
-        successfulDeviceActions += 1
-        updateNotification("$confirmation · 正在准备继续监听")
-        setConversationState(ConversationState.SPEAKING)
-        val generation = sessionGeneration
-        speakThen(confirmation) {
-            if (generation == sessionGeneration && !exitInProgress) continueConversationSession(immediate = true)
-        }
-    }
-
 
     private fun continueConversationSession(immediate: Boolean = false) {
         if (!running.get() || exitInProgress) return
@@ -785,35 +834,75 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         overlay.hide()
         conversationState = ConversationState.IDLE_WAKE
         overlay.updateState(ConversationState.IDLE_WAKE)
-        updateNotification("全离线语音已开启 · 说“${wakePhraseManager.activePhrase()}”")
+        commandResultNotifier.clearRetention()
+        updateNotificationRaw("全离线语音已开启 · 说“${wakePhraseManager.activePhrase()}”")
         mainHandler.postDelayed({ startKwsCapture() }, 500)
     }
 
-    private fun speakThen(text: String, done: () -> Unit) {
+    private fun speakWithProgress(
+        text: String,
+        onStart: () -> Unit = {},
+        onDone: () -> Unit
+    ) {
+        val started = AtomicBoolean(false)
+        val completed = AtomicBoolean(false)
+        val id = UUID.randomUUID().toString()
+        fun dispatchStart() {
+            if (started.compareAndSet(false, true)) mainHandler.post(onStart)
+        }
+        fun dispatchDone(delayMs: Long = 0L) {
+            if (!completed.compareAndSet(false, true)) return
+            val completion = Runnable {
+                if (activeTtsUtteranceId == id) {
+                    activeTtsUtteranceId = null
+                    ttsSpeaking.set(false)
+                }
+                onDone()
+            }
+            if (delayMs > 0L) mainHandler.postDelayed(completion, delayMs)
+            else mainHandler.post(completion)
+        }
+
         if (text.isBlank()) {
-            mainHandler.post(done)
+            dispatchStart()
+            dispatchDone()
             return
         }
         val engine = tts
+        activeTtsUtteranceId = id
+        ttsSpeaking.set(true)
         if (!ttsReady || engine == null) {
-            mainHandler.postDelayed(done, 150)
+            dispatchStart()
+            dispatchDone(150L)
             return
         }
-        val id = UUID.randomUUID().toString()
         engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-            override fun onStart(utteranceId: String?) {}
+            override fun onStart(utteranceId: String?) {
+                if (utteranceId != id) return
+                dispatchStart()
+            }
             override fun onDone(utteranceId: String?) {
-                if (utteranceId == id) mainHandler.post(done)
+                if (utteranceId != id) return
+                dispatchDone()
             }
             @Deprecated("Deprecated in Java")
             override fun onError(utteranceId: String?) {
-                if (utteranceId == id) mainHandler.post(done)
+                if (utteranceId != id) return
+                dispatchDone()
             }
             override fun onError(utteranceId: String?, errorCode: Int) {
-                if (utteranceId == id) mainHandler.post(done)
+                if (utteranceId != id) return
+                dispatchDone()
             }
         })
-        engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, id)
+        if (engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, id) == TextToSpeech.ERROR) {
+            dispatchStart()
+            dispatchDone(150L)
+        }
+    }
+
+    private fun speakThen(text: String, done: () -> Unit) {
+        speakWithProgress(text, onDone = done)
     }
 
     override fun onInit(status: Int) {
@@ -860,8 +949,12 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
             .build()
     }
 
-    private fun updateNotification(text: String) {
+    private fun updateNotificationRaw(text: String) {
         getSystemService(NotificationManager::class.java).notify(NOTIFY_ID, notification(text))
+    }
+
+    private fun updateNotification(text: String) {
+        commandResultNotifier.publishTransient(text)
     }
 
     override fun onDestroy() {

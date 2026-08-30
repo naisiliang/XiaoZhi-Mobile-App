@@ -9,9 +9,23 @@ wake = (root / "app/src/main/java/com/lchuang/xiaozhimobile/WakeService.kt").rea
 
 
 def function_body(name: str) -> str:
-    match = re.search(rf"private fun {re.escape(name)}\b[^{{]*\{{", wake)
+    match = re.search(rf"private fun {re.escape(name)}\b", wake)
     assert match, f"{name} missing"
-    opening = match.end() - 1
+    signature_open = wake.find("(", match.end())
+    assert signature_open >= 0, name
+    signature_depth = 0
+    signature_close = -1
+    for index in range(signature_open, len(wake)):
+        if wake[index] == "(":
+            signature_depth += 1
+        elif wake[index] == ")":
+            signature_depth -= 1
+            if signature_depth == 0:
+                signature_close = index
+                break
+    assert signature_close >= 0, f"{name} signature is not balanced"
+    opening = wake.find("{", signature_close)
+    assert opening >= 0, f"{name} body missing"
     depth = 0
     for index in range(opening, len(wake)):
         if wake[index] == "{":
@@ -110,9 +124,12 @@ assert record_start < recording_check < started_callback, (
 assert 'throw IllegalStateException("AUDIO_INIT")' in capture[:record_start]
 assert 'throw IllegalStateException("AUDIO_START", e)' in capture
 
+speak_progress = function_body("speakWithProgress")
+assert "startLocalCommandRecognition()" not in speak_progress
+assert "utteranceId != id" in speak_progress
+assert "compareAndSet(false, true)" in speak_progress
 speak_then = function_body("speakThen")
-assert "startLocalCommandRecognition()" not in speak_then
-assert "if (utteranceId == id) mainHandler.post(done)" in speak_then
+assert "speakWithProgress(text, onDone = done)" in speak_then
 assert wake.count("startLocalCommandRecognition()") == 2, (
     "command ASR must only be defined once and started by the guarded scheduler"
 )

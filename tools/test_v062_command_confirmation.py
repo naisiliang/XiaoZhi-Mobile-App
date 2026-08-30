@@ -4,11 +4,13 @@ root = Path(__file__).resolve().parents[1]
 wake = (root / 'app/src/main/java/com/lchuang/xiaozhimobile/WakeService.kt').read_text('utf-8')
 router = (root / 'app/src/main/java/com/lchuang/xiaozhimobile/CommandRouter.kt').read_text('utf-8')
 safe = (root / 'app/src/main/java/com/lchuang/xiaozhimobile/SafeToolExecutor.kt').read_text('utf-8')
+coordinator = (root / 'app/src/main/java/com/lchuang/xiaozhimobile/ExecutionFeedbackCoordinator.kt').read_text('utf-8')
 
 checks = {
-    'shared command confirmation helper': 'speakCommandConfirmation' in wake,
-    'local command success speaks confirmation': 'speakCommandConfirmation(local.reply' in wake,
-    'AI tool success speaks confirmation': 'speakCommandConfirmation(executed.spokenText' in wake,
+    'shared command confirmation coordinator': 'ExecutionFeedbackCoordinator' in wake and 'executionCoordinator.execute' in wake,
+    'local command uses shared execution funnel': 'router.plan(normalized)' in wake and 'executeDeviceAction(rawText, normalized, localPlan.action, heard)' in wake,
+    'AI tool uses shared execution funnel': 'safeToolExecutor.plan(outcome.call)' in wake and 'executeDeviceAction(rawText, normalized, toolPlan.action, heard)' in wake,
+    'real result is spoken before transaction finishes': 'speech.speak(requireNotNull(copy.finalSpoken)' in coordinator and 'onFinished(transaction.copy(result = result))' in coordinator,
     'immediate listen remains 120ms': 'IMMEDIATE_LISTEN_DELAY_MS = 120L' in wake,
     'app reply is completed tense': '已打开${result.label}' in router,
     'AI open app reply is completed tense': '已打开${result.label}' in safe,

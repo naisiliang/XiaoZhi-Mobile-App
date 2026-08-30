@@ -9,7 +9,7 @@ checks = {
     'memory clear': 'memory.clear()' in wake,
     'AI tool branch': 'AiOutcome.Tool' in wake,
     'AI reply branch': 'AiOutcome.Reply' in wake,
-    'safe tool execution': 'safeToolExecutor.execute' in wake,
+    'safe tool plan-first execution': 'safeToolExecutor.plan' in wake and 'executeDeviceAction' in wake,
     'local immediate relisten preserved': 'continueConversationSession(immediate = true)' in wake,
     'dynamic wake notification': 'settings.wakePhrase' in wake or 'activePhrase()' in wake,
     'assistant name used': 'settings.assistantName' in wake,
