@@ -21,10 +21,24 @@ class ExecutionIntentFormatter {
                 val actual = result.actualPercent
                 if (actual != null) "媒体音量${actual}%" else result.notificationSummary
             } else result.notificationSummary
-            ExecutionCopy(announcement, announcement, "✅ 已成功执行：$summary", null, result.spokenResult)
+            ExecutionCopy(
+                announcement,
+                announcement,
+                "✅ 已成功执行：$summary",
+                null,
+                combineContinuation(result.spokenResult, continuation)
+            )
         } else {
             ExecutionCopy(announcement, announcement, null, "❌ 执行失败：${label(action)}", "${result.spokenResult}。请再试一次。")
         }
+    }
+
+    private fun combineContinuation(spokenResult: String, continuation: String): String {
+        val spoken = spokenResult.trim()
+        val next = continuation.trim()
+        if (next.isBlank() || spoken.endsWith(next)) return spoken
+        val prefix = spoken.trimEnd('。', '，', ',')
+        return "$prefix，$next"
     }
 
     private fun label(action: DeviceAction): String = when (action) {

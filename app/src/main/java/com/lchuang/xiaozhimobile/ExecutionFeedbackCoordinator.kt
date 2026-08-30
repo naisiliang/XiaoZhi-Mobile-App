@@ -1,5 +1,8 @@
 package com.lchuang.xiaozhimobile
 
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
+
 fun interface DelayedScheduler {
     fun postDelayed(delayMs: Long, block: () -> Unit)
 }
@@ -20,19 +23,55 @@ class ExecutionFeedbackCoordinator(
     private val notifier: CommandResultNotifier,
     private val actionDelayMs: Long = 120L
 ) {
+    private class PendingExecution {
+        val cancelled = AtomicBoolean(false)
+        val finished = AtomicBoolean(false)
+    }
+
+    private val pending = AtomicReference<PendingExecution?>(null)
+
+    fun cancelPending() {
+        pending.getAndSet(null)?.cancelled?.set(true)
+    }
+
     fun execute(
         transaction: CommandTransaction,
         continuation: String,
         onFinished: (CommandTransaction) -> Unit
     ) {
+        execute(transaction, continuation, isValid = { true }, onFinished = onFinished)
+    }
+
+    fun execute(
+        transaction: CommandTransaction,
+        continuation: String,
+        isValid: () -> Boolean,
+        onFinished: (CommandTransaction) -> Unit
+    ) {
+        val execution = PendingExecution()
+        pending.getAndSet(execution)?.cancelled?.set(true)
+
+        fun isCurrent(): Boolean =
+            pending.get() === execution && !execution.cancelled.get() && isValid()
+
         notifier.running(formatter.runningNotification(transaction.action))
         speech.speak(transaction.announcement, onStart = {
+            if (!isCurrent()) return@speak
             scheduler.postDelayed(actionDelayMs) {
+                if (!isCurrent()) return@postDelayed
                 runner.run(transaction.action) { result ->
+                    if (!isCurrent()) return@run
                     val copy = formatter.finalCopy(transaction.action, result, continuation)
+                    if (!isCurrent()) return@run
                     copy.successNotification?.let(notifier::success)
                     copy.failureNotification?.let(notifier::failure)
+                    if (!isCurrent()) return@run
                     speech.speak(requireNotNull(copy.finalSpoken), onStart = {}, onDone = {
+                        if (!isCurrent()) return@speak
+                        if (!execution.finished.compareAndSet(false, true)) return@speak
+                        if (!isCurrent()) return@speak
+                        pending.compareAndSet(execution, null)
+                        if (!isValid()) return@speak
                         onFinished(transaction.copy(result = result))
                     })
                 }

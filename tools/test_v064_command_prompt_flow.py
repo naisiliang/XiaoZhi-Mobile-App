@@ -32,8 +32,9 @@ touch=wake.find('session.touch(settings.sessionTimeoutSeconds)',listening)
 assert capture_integration < listening < touch
 speak_progress=re.search(r'private fun speakWithProgress\(.*?\) \{(.*?)\n    \}',wake,re.S)
 assert speak_progress and 'startLocalCommandRecognition()' not in speak_progress.group(1)
-assert 'utteranceId != id' in speak_progress.group(1)
-assert 'compareAndSet(false, true)' in speak_progress.group(1)
+assert 'ttsProgressRegistry.register(' in speak_progress.group(1)
+assert 'setOnUtteranceProgressListener' not in speak_progress.group(1)
+assert wake.count('setOnUtteranceProgressListener') == 1
 assert 'speakWithProgress(text, onDone = done)' in wake
 assert 'router.plan(normalized)' in wake
 assert 'safeToolExecutor.plan(outcome.call)' in wake

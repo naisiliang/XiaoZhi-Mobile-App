@@ -53,6 +53,11 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
     private val commandListening = AtomicBoolean(false)
     private val ttsSpeaking = AtomicBoolean(false)
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val ttsProgressRegistry = TtsProgressRegistry(
+        dispatch = { block -> mainHandler.post(block) },
+        dispatchDelayed = { delayMs, block -> mainHandler.postDelayed(block, delayMs) },
+        errorFallbackMs = 150L
+    )
     private val session = SessionController()
     private val audioEnhancementManager = AudioEnhancementManager()
 
@@ -79,6 +84,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
     private var tts: TextToSpeech? = null
     private var ttsVoiceManager: TtsVoiceManager? = null
     @Volatile private var ttsReady = false
+    private var ttsProgressListenerInstalled = false
     private var commandRecognitionAttempts = 0
     private var conversationActive = false
     private var conversationTurns = 0
@@ -731,7 +737,13 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
             action = action,
             announcement = executionFormatter.announcement(action)
         )
-        executionCoordinator.execute(transaction, continuation) { completed ->
+        executionCoordinator.execute(
+            transaction,
+            continuation,
+            isValid = {
+                running.get() && conversationActive && !exitInProgress && generation == sessionGeneration
+            }
+        ) { completed ->
             if (!conversationActive || exitInProgress || generation != sessionGeneration) return@execute
             val result = completed.result ?: return@execute
             conversationTurns += 1
@@ -789,6 +801,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
 
     private fun requestConversationExit(spokenText: String) {
         if (!running.get() || !conversationActive || exitInProgress) return
+        executionCoordinator.cancelPending()
         exitInProgress = true
         setConversationState(ConversationState.EXITING)
         sessionGeneration += 1
@@ -844,60 +857,40 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         onStart: () -> Unit = {},
         onDone: () -> Unit
     ) {
-        val started = AtomicBoolean(false)
-        val completed = AtomicBoolean(false)
         val id = UUID.randomUUID().toString()
-        fun dispatchStart() {
-            if (started.compareAndSet(false, true)) mainHandler.post(onStart)
-        }
-        fun dispatchDone(delayMs: Long = 0L) {
-            if (!completed.compareAndSet(false, true)) return
-            val completion = Runnable {
+        activeTtsUtteranceId = id
+        ttsSpeaking.set(true)
+        ttsProgressRegistry.register(
+            utteranceId = id,
+            onStart = onStart,
+            onDone = {
                 if (activeTtsUtteranceId == id) {
                     activeTtsUtteranceId = null
                     ttsSpeaking.set(false)
                 }
                 onDone()
-            }
-            if (delayMs > 0L) mainHandler.postDelayed(completion, delayMs)
-            else mainHandler.post(completion)
-        }
+            },
+            flushPending = true
+        )
 
         if (text.isBlank()) {
-            dispatchStart()
-            dispatchDone()
+            ttsProgressRegistry.onStart(id)
+            ttsProgressRegistry.onDone(id)
             return
         }
         val engine = tts
-        activeTtsUtteranceId = id
-        ttsSpeaking.set(true)
         if (!ttsReady || engine == null) {
-            dispatchStart()
-            dispatchDone(150L)
+            ttsProgressRegistry.onError(id)
             return
         }
-        engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-            override fun onStart(utteranceId: String?) {
-                if (utteranceId != id) return
-                dispatchStart()
-            }
-            override fun onDone(utteranceId: String?) {
-                if (utteranceId != id) return
-                dispatchDone()
-            }
-            @Deprecated("Deprecated in Java")
-            override fun onError(utteranceId: String?) {
-                if (utteranceId != id) return
-                dispatchDone()
-            }
-            override fun onError(utteranceId: String?, errorCode: Int) {
-                if (utteranceId != id) return
-                dispatchDone()
-            }
-        })
-        if (engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, id) == TextToSpeech.ERROR) {
-            dispatchStart()
-            dispatchDone(150L)
+        val status = try {
+            engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, id)
+        } catch (_: Throwable) {
+            ttsProgressRegistry.onError(id)
+            return
+        }
+        if (status == TextToSpeech.ERROR) {
+            ttsProgressRegistry.onError(id)
         }
     }
 
@@ -908,6 +901,27 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
             val engine = tts ?: return
+            if (!ttsProgressListenerInstalled) {
+                engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                    override fun onStart(utteranceId: String?) {
+                        utteranceId?.let(ttsProgressRegistry::onStart)
+                    }
+
+                    override fun onDone(utteranceId: String?) {
+                        utteranceId?.let(ttsProgressRegistry::onDone)
+                    }
+
+                    @Deprecated("Deprecated in Java")
+                    override fun onError(utteranceId: String?) {
+                        if (utteranceId != null) ttsProgressRegistry.onError(utteranceId)
+                    }
+
+                    override fun onError(utteranceId: String?, errorCode: Int) {
+                        if (utteranceId != null) ttsProgressRegistry.onError(utteranceId)
+                    }
+                })
+                ttsProgressListenerInstalled = true
+            }
             engine.language = Locale.SIMPLIFIED_CHINESE
             val manager = TtsVoiceManager(engine, settings)
             ttsVoiceManager = manager
@@ -959,6 +973,8 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
 
     override fun onDestroy() {
         if (::memory.isInitialized) memory.clear()
+        if (::executionCoordinator.isInitialized) executionCoordinator.cancelPending()
+        ttsProgressRegistry.cancelPending()
         running.set(false)
         kwsListening.set(false)
         commandListening.set(false)

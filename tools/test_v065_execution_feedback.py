@@ -2,6 +2,7 @@ from pathlib import Path
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import textwrap
 
@@ -66,6 +67,7 @@ for field in [
     "private lateinit var commandResultNotifier: CommandResultNotifier",
     "private lateinit var executionCoordinator: ExecutionFeedbackCoordinator",
     "private val audioEnhancementManager = AudioEnhancementManager()",
+    "private val ttsProgressRegistry = TtsProgressRegistry(",
 ]:
     assert field in wake, f"WakeService dependency field missing: {field}"
 
@@ -131,6 +133,8 @@ assert "successfulDeviceActions += 1" in success_block
 assert execute_action.count("successfulDeviceActions += 1") == 1, (
     "failed actions must not increment successfulDeviceActions"
 )
+assert "isValid =" in execute_action
+assert "generation == sessionGeneration" in execute_action
 
 start_recognition = function_body("startLocalCommandRecognition")
 assert "ttsSpeaking.get()" in start_recognition, "command ASR must refuse capture while TTS speaks"
@@ -140,20 +144,31 @@ assert 0 <= capture_cleared < process_post, "capture flag must clear before utte
 
 speak_progress = function_body("speakWithProgress")
 for token in [
-    "AtomicBoolean(false)",
-    "utteranceId != id",
+    "ttsProgressRegistry.register(",
+    "flushPending = true",
     "onStart",
     "onDone",
-    "mainHandler.postDelayed",
-    "150L",
     "ttsSpeaking.set(true)",
     "ttsSpeaking.set(false)",
+    "TextToSpeech.QUEUE_FLUSH",
+    "TextToSpeech.ERROR",
+    "ttsProgressRegistry.onError(id)",
 ]:
     assert token in speak_progress, f"progress-aware TTS contract missing: {token}"
-assert speak_progress.count("override fun onError") == 2
-assert "compareAndSet(false, true)" in speak_progress, "TTS callbacks must be exactly-once guarded"
+assert "setOnUtteranceProgressListener" not in speak_progress
+assert "try" in speak_progress and "catch" in speak_progress, "engine.speak exceptions need fallback"
+assert wake.count("setOnUtteranceProgressListener") == 1, "TextToSpeech has one global listener"
+assert wake.count("override fun onError") == 2
+assert wake.count("ttsProgressRegistry.onError(utteranceId)") == 2
+on_init = wake[wake.index("override fun onInit") : wake.index("private fun createNotificationChannel")]
+assert "setOnUtteranceProgressListener" in on_init
 speak_then = function_body("speakThen")
 assert "speakWithProgress(text, onDone = done)" in speak_then
+
+request_exit = function_body("requestConversationExit")
+assert "executionCoordinator.cancelPending()" in request_exit
+on_destroy = wake[wake.index("override fun onDestroy()") : wake.index("override fun onBind")]
+assert "executionCoordinator.cancelPending()" in on_destroy
 
 update_raw = function_body("updateNotificationRaw")
 update_transient = function_body("updateNotification")
@@ -170,6 +185,7 @@ sources = [
     root / "app/src/main/java/com/lchuang/xiaozhimobile/ExecutionIntentFormatter.kt",
     root / "app/src/main/java/com/lchuang/xiaozhimobile/CommandResultNotifier.kt",
     root / "app/src/main/java/com/lchuang/xiaozhimobile/ExecutionFeedbackCoordinator.kt",
+    root / "app/src/main/java/com/lchuang/xiaozhimobile/TtsProgressRegistry.kt",
 ]
 
 for source in sources:
@@ -177,6 +193,22 @@ for source in sources:
     assert "import android." not in source.read_text(encoding="utf-8"), (
         f"{source.name} must remain Android-independent"
     )
+
+tts_registry = (root / "app/src/main/java/com/lchuang/xiaozhimobile/TtsProgressRegistry.kt").read_text(
+    encoding="utf-8"
+)
+assert "cancelPending(deliverCallbacks: Boolean = false)" in tts_registry, (
+    "TTS cancellation must default to suppressing stale continuation callbacks"
+)
+assert "cancelPending(deliverCallbacks = false)" in tts_registry, (
+    "QUEUE_FLUSH replacement must cancel previous utterances without stale onDone"
+)
+assert "if (deliverCallbacks)" in tts_registry, (
+    "normal completion and cancellation must distinguish whether onDone is delivered"
+)
+assert "val cancelled = AtomicBoolean(false)" in tts_registry, (
+    "stale-start suppression must not reuse normal done delivery state"
+)
 
 with tempfile.TemporaryDirectory() as td:
     td = Path(td)
@@ -282,6 +314,163 @@ with tempfile.TemporaryDirectory() as td:
                 }
             }
 
+            fun assertTtsProgressRegistry() {
+                val delayed = mutableListOf<Pair<Long, () -> Unit>>()
+                val events = mutableListOf<String>()
+                val registry = TtsProgressRegistry(
+                    dispatch = { it() },
+                    dispatchDelayed = { delayMs, block -> delayed += delayMs to block },
+                    errorFallbackMs = 150L
+                )
+
+                registry.register("error", { events += "ERROR_START" }, { events += "ERROR_DONE" })
+                registry.onError("error")
+                registry.onError("error")
+                check(events == listOf("ERROR_START")) { "error must synthesize start once: $events" }
+                check(delayed.size == 1 && delayed.single().first == 150L)
+                delayed.removeAt(0).second()
+                registry.onDone("error")
+                check(events == listOf("ERROR_START", "ERROR_DONE")) {
+                    "error completion must be delayed and exactly once: $events"
+                }
+
+                events.clear()
+                registry.register("old", { events += "OLD_START" }, { events += "OLD_DONE" })
+                registry.register("new", { events += "NEW_START" }, { events += "NEW_DONE" }, flushPending = true)
+                registry.onStart("old")
+                registry.onDone("old")
+                registry.onStart("new")
+                registry.onDone("new")
+                check(events == listOf("NEW_START", "NEW_DONE")) {
+                    "QUEUE_FLUSH must cancel old pending work without stale continuation: $events"
+                }
+
+                events.clear()
+                registry.register("queued-a", { events += "A_START" }, { events += "A_DONE" }, flushPending = false)
+                registry.register("queued-b", { events += "B_START" }, { events += "B_DONE" }, flushPending = false)
+                registry.onStart("queued-b")
+                registry.onDone("queued-b")
+                check(events == listOf("B_START", "B_DONE")) { "callbacks must route by ID: $events" }
+                registry.cancelPending()
+                registry.onDone("queued-a")
+                check(events == listOf("B_START", "B_DONE")) {
+                    "cancelPending must suppress stale continuation and invalidate later callbacks: $events"
+                }
+
+                val queuedDispatches = mutableListOf<() -> Unit>()
+                val queuedRegistry = TtsProgressRegistry(
+                    dispatch = { queuedDispatches += it },
+                    dispatchDelayed = { _, block -> queuedDispatches += block },
+                    errorFallbackMs = 150L
+                )
+                events.clear()
+                queuedRegistry.register("normal", { events += "NORMAL_START" }, { events += "NORMAL_DONE" })
+                queuedRegistry.onStart("normal")
+                queuedRegistry.onDone("normal")
+                check(events.isEmpty()) { "queued dispatch should not run inline: $events" }
+                queuedDispatches.removeAt(0)()
+                queuedDispatches.removeAt(0)()
+                check(events == listOf("NORMAL_START", "NORMAL_DONE")) {
+                    "normal onStart queued before onDone must still deliver both callbacks in order: $events"
+                }
+
+                events.clear()
+                queuedRegistry.register("cancelled", { events += "CANCELLED_START" }, { events += "CANCELLED_DONE" }, flushPending = false)
+                queuedRegistry.onStart("cancelled")
+                queuedRegistry.cancelPending()
+                queuedDispatches.removeAt(0)()
+                queuedRegistry.onDone("cancelled")
+                check(events.isEmpty()) {
+                    "cancelled utterance must suppress queued start and later done callbacks: $events"
+                }
+            }
+
+            fun assertCoordinatorCancellation() {
+                fun transaction() = CommandTransaction(
+                    "打开微信", "打开微信", DeviceAction.OpenApp("微信"), "打开微信正在执行"
+                )
+                fun result() = DeviceExecutionResult(true, "OPEN_APP_OK", "微信已打开", "打开微信")
+
+                run {
+                    var delayed: (() -> Unit)? = null
+                    var runs = 0
+                    var finished = 0
+                    val coordinator = ExecutionFeedbackCoordinator(
+                        DelayedScheduler { _, block -> delayed = block },
+                        DeviceActionRunner { _, _ -> runs += 1 },
+                        SpeechDriver { _, onStart, _ -> onStart() },
+                        ExecutionIntentFormatter(),
+                        CommandResultNotifier({}, { 0L })
+                    )
+                    coordinator.execute(transaction(), "请继续说。", isValid = { true }) { finished += 1 }
+                    coordinator.cancelPending()
+                    delayed?.invoke()
+                    check(runs == 0 && finished == 0) { "cancel before 120ms must prevent device execution" }
+                }
+
+                run {
+                    var delayed: (() -> Unit)? = null
+                    var resultCallback: ((DeviceExecutionResult) -> Unit)? = null
+                    val notifications = mutableListOf<String>()
+                    var speechCalls = 0
+                    var finished = 0
+                    val coordinator = ExecutionFeedbackCoordinator(
+                        DelayedScheduler { _, block -> delayed = block },
+                        DeviceActionRunner { _, callback -> resultCallback = callback },
+                        SpeechDriver { _, onStart, _ -> speechCalls += 1; onStart() },
+                        ExecutionIntentFormatter(),
+                        CommandResultNotifier({ notifications += it }, { 0L })
+                    )
+                    coordinator.execute(transaction(), "请继续说。", isValid = { true }) { finished += 1 }
+                    delayed?.invoke()
+                    coordinator.cancelPending()
+                    resultCallback?.invoke(result())
+                    check(speechCalls == 1 && notifications == listOf("打开微信正在执行") && finished == 0) {
+                        "cancelled runner result must not publish or speak: $notifications / $speechCalls"
+                    }
+                }
+
+                run {
+                    var delayed: (() -> Unit)? = null
+                    var valid = true
+                    var runs = 0
+                    val coordinator = ExecutionFeedbackCoordinator(
+                        DelayedScheduler { _, block -> delayed = block },
+                        DeviceActionRunner { _, _ -> runs += 1 },
+                        SpeechDriver { _, onStart, _ -> onStart() },
+                        ExecutionIntentFormatter(),
+                        CommandResultNotifier({}, { 0L })
+                    )
+                    coordinator.execute(transaction(), "请继续说。", isValid = { valid }) {}
+                    valid = false
+                    delayed?.invoke()
+                    check(runs == 0) { "invalid session must be checked immediately before runner.run" }
+                }
+
+                run {
+                    var delayed: (() -> Unit)? = null
+                    var finalDone: (() -> Unit)? = null
+                    var speechCalls = 0
+                    var finished = 0
+                    val coordinator = ExecutionFeedbackCoordinator(
+                        DelayedScheduler { _, block -> delayed = block },
+                        DeviceActionRunner { _, callback -> callback(result()) },
+                        SpeechDriver { _, onStart, onDone ->
+                            speechCalls += 1
+                            if (speechCalls == 1) onStart() else finalDone = onDone
+                        },
+                        ExecutionIntentFormatter(),
+                        CommandResultNotifier({}, { 0L })
+                    )
+                    coordinator.execute(transaction(), "请继续说。", isValid = { true }) { finished += 1 }
+                    delayed?.invoke()
+                    check(finalDone != null)
+                    coordinator.cancelPending()
+                    finalDone?.invoke()
+                    check(finished == 0) { "cancelled final speech must not call onFinished" }
+                }
+            }
+
             fun assertFailureFeedback() {
                 val events = mutableListOf<String>()
                 val notifications = mutableListOf<String>()
@@ -371,6 +560,8 @@ with tempfile.TemporaryDirectory() as td:
             fun main() {
                 assertAndroidSamWiringShape()
                 assertNotifierRetention()
+                assertTtsProgressRegistry()
+                assertCoordinatorCancellation()
                 assertFailureFeedback()
                 val events = mutableListOf<String>()
                 val notifications = mutableListOf<String>()
@@ -418,7 +609,7 @@ with tempfile.TemporaryDirectory() as td:
                             check(events.contains("ANNOUNCEMENT_ON_START")) {
                                 "final speech started before announcement onStart: $events"
                             }
-                            check(text == "媒体音量已经调整到69%")
+                            check(text == "媒体音量已经调整到69%，你有什么需求请说？")
                             events += "FINAL_SPEAK"
                             finalDone = onDone
                         }
@@ -493,6 +684,19 @@ with tempfile.TemporaryDirectory() as td:
     jar = td / "execution-feedback.jar"
     compiler = os.environ.get("KOTLINC", "kotlinc")
     compiler_command = ["cmd", "/c", compiler] if compiler.lower().endswith((".bat", ".cmd")) else [compiler]
+    try:
+        subprocess.run(
+            [*compiler_command, "-version"],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        print(
+            f"FAIL: execution-feedback Kotlin harness unavailable or unusable: {compiler}",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
     subprocess.run(
         [
             *compiler_command,

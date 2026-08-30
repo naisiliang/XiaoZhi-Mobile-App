@@ -126,8 +126,9 @@ assert 'throw IllegalStateException("AUDIO_START", e)' in capture
 
 speak_progress = function_body("speakWithProgress")
 assert "startLocalCommandRecognition()" not in speak_progress
-assert "utteranceId != id" in speak_progress
-assert "compareAndSet(false, true)" in speak_progress
+assert "ttsProgressRegistry.register(" in speak_progress
+assert "setOnUtteranceProgressListener" not in speak_progress
+assert wake.count("setOnUtteranceProgressListener") == 1
 speak_then = function_body("speakThen")
 assert "speakWithProgress(text, onDone = done)" in speak_then
 assert wake.count("startLocalCommandRecognition()") == 2, (

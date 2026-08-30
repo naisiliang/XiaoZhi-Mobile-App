@@ -1,6 +1,7 @@
 from pathlib import Path
 import os
 import subprocess
+import sys
 import tempfile
 import textwrap
 
@@ -38,9 +39,24 @@ with tempfile.TemporaryDirectory() as td:
                 "你有什么需求请说？"
             )
             check(success.successNotification == "✅ 已成功执行：媒体音量69%")
-            check(success.finalSpoken == "媒体音量已经调整到69%")
+            check(success.finalSpoken == "媒体音量已经调整到69%，你有什么需求请说？")
             check(!success.successNotification!!.contains("70"))
-            check(success.finalSpoken == "媒体音量已经调整到69%")
+
+            val subsequentSuccess = formatter.finalCopy(
+                DeviceAction.OpenApp("微信"),
+                DeviceExecutionResult(true, "OPEN_APP_OK", "微信已打开", "打开微信"),
+                "请继续说。"
+            )
+            check(subsequentSuccess.finalSpoken == "微信已打开，请继续说。")
+            check(subsequentSuccess.finalSpoken!!.split("请继续说。").size == 2)
+
+            val alreadyContinued = formatter.finalCopy(
+                DeviceAction.OpenApp("微信"),
+                DeviceExecutionResult(true, "OPEN_APP_OK", "微信已打开，请继续说。", "打开微信"),
+                "请继续说。"
+            )
+            check(alreadyContinued.finalSpoken == "微信已打开，请继续说。")
+            check(alreadyContinued.finalSpoken!!.split("请继续说。").size == 2)
 
             val failure = formatter.finalCopy(
                 DeviceAction.OpenApp("微信"),
@@ -57,5 +73,18 @@ with tempfile.TemporaryDirectory() as td:
     jar = td / "execution-copy.jar"
     compiler = os.environ.get("KOTLINC", "kotlinc")
     compiler_command = ["cmd", "/c", compiler] if compiler.lower().endswith((".bat", ".cmd")) else [compiler]
+    try:
+        subprocess.run(
+            [*compiler_command, "-version"],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        print(
+            f"FAIL: execution-copy Kotlin harness unavailable or unusable: {compiler}",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
     subprocess.run([*compiler_command, *(str(source) for source in sources), str(stubs), str(harness), "-include-runtime", "-d", str(jar)], check=True)
     subprocess.run(["java", "-jar", str(jar)], check=True)
