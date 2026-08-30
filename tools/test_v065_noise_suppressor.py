@@ -34,7 +34,8 @@ for token in [
     "fun attach(record: AudioRecord): AutoCloseable",
     "NoiseSuppressor.isAvailable()",
     "NoiseSuppressor.create(record.audioSessionId)",
-    "enabled = true",
+    "setEnabled(true)",
+    "AudioEffect.SUCCESS",
     "release()",
     "catch",
     "AtomicBoolean",
@@ -92,16 +93,27 @@ with tempfile.TemporaryDirectory() as temp_dir:
         package android.media.audiofx
 
         import android.media.AudioRecord
+        import android.media.audiofx.AudioEffect.Companion.ERROR
+        import android.media.audiofx.AudioEffect.Companion.SUCCESS
 
-        class NoiseSuppressor private constructor() {
+        open class AudioEffect {
+            companion object {
+                const val SUCCESS: Int = 0
+                const val ERROR: Int = -1
+            }
+        }
+
+        class NoiseSuppressor private constructor() : AudioEffect() {
             var enabled: Boolean = false
-                set(value) {
-                    if (throwOnEnable) throw IllegalStateException("enable")
-                    field = value
-                }
 
             var releaseCalls = 0
                 private set
+
+            fun setEnabled(value: Boolean): Int {
+                if (throwOnEnable) throw IllegalStateException("enable")
+                enabled = value
+                return enableStatus
+            }
 
             fun release() {
                 releaseCalls += 1
@@ -112,6 +124,7 @@ with tempfile.TemporaryDirectory() as temp_dir:
                 var returnNull = false
                 var throwOnCreate = false
                 var throwOnEnable = false
+                var enableStatus = SUCCESS
                 var createCalls = 0
                 var lastCreated: NoiseSuppressor? = null
 
@@ -120,6 +133,7 @@ with tempfile.TemporaryDirectory() as temp_dir:
                     returnNull = false
                     throwOnCreate = false
                     throwOnEnable = false
+                    enableStatus = SUCCESS
                     createCalls = 0
                     lastCreated = null
                 }
@@ -170,6 +184,13 @@ with tempfile.TemporaryDirectory() as temp_dir:
                 attach().close()
                 check(NoiseSuppressor.lastCreated?.releaseCalls == 1) {
                     "failed enable must release the created effect"
+                }
+
+                NoiseSuppressor.reset()
+                NoiseSuppressor.enableStatus = android.media.audiofx.AudioEffect.ERROR
+                attach().close()
+                check(NoiseSuppressor.lastCreated?.releaseCalls == 1) {
+                    "non-success enable status must release the created effect"
                 }
 
                 NoiseSuppressor.reset()

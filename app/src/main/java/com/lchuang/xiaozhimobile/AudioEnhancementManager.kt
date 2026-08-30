@@ -1,6 +1,7 @@
 package com.lchuang.xiaozhimobile
 
 import android.media.AudioRecord
+import android.media.audiofx.AudioEffect
 import android.media.audiofx.NoiseSuppressor
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -10,7 +11,11 @@ class AudioEnhancementManager {
             if (!NoiseSuppressor.isAvailable()) return NO_OP
             val suppressor = NoiseSuppressor.create(record.audioSessionId) ?: return NO_OP
             try {
-                suppressor.enabled = true
+                val status = suppressor.setEnabled(true)
+                if (status != AudioEffect.SUCCESS) {
+                    try { suppressor.release() } catch (_: Throwable) {}
+                    return NO_OP
+                }
             } catch (_: Throwable) {
                 try { suppressor.release() } catch (_: Throwable) {}
                 return NO_OP
