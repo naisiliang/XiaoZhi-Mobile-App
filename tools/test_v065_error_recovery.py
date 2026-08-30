@@ -293,6 +293,15 @@ with tempfile.TemporaryDirectory() as temp_dir:
                 check(stopPlan is DeviceCommandPlan.Planned && stopPlan.action == DeviceAction.MediaStop) {
                     "one-character stop must plan MediaStop, got $stopPlan"
                 }
+                val navigationPlan = CommandRouter(PhoneController()).plan("导航到停车场")
+                check(
+                    navigationPlan == DeviceCommandPlan.Planned(
+                        DeviceAction.Navigate("停车场", MapAppPreference.AUTO),
+                        "导航到停车场"
+                    )
+                ) {
+                    "navigation containing 停 must remain a navigation plan, got $navigationPlan"
+                }
 
                 val formatter = ExecutionIntentFormatter()
                 val action = DeviceAction.OpenApp("不存在应用")
