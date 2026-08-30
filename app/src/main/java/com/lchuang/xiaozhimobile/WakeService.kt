@@ -53,6 +53,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
     private val commandListening = AtomicBoolean(false)
     private val mainHandler = Handler(Looper.getMainLooper())
     private val session = SessionController()
+    private val audioEnhancementManager = AudioEnhancementManager()
 
     private lateinit var settings: SettingsStore
     private lateinit var installedAppRegistry: InstalledAppRegistry
@@ -420,68 +421,73 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         if (record.state != AudioRecord.STATE_INITIALIZED) {
             throw IllegalStateException("AUDIO_INIT")
         }
+        val enhancement = audioEnhancementManager.attach(record)
         try {
-            record.startRecording()
-        } catch (e: Throwable) {
-            throw IllegalStateException("AUDIO_START", e)
-        }
-        check(record.recordingState == AudioRecord.RECORDSTATE_RECORDING) { "AUDIO_START" }
-        onRecordingStarted()
+            try {
+                record.startRecording()
+            } catch (e: Throwable) {
+                throw IllegalStateException("AUDIO_START", e)
+            }
+            check(record.recordingState == AudioRecord.RECORDSTATE_RECORDING) { "AUDIO_START" }
+            onRecordingStarted()
 
-        val remainingAtStart = session.remainingMs()
-        if (remainingAtStart <= 0L) {
-            try { record.stop() } catch (_: Throwable) {}
-            return FloatArray(0)
-        }
-        val waitSpeechBudgetMs = minOf(COMMAND_WAIT_SPEECH_MS.toLong(), remainingAtStart).toInt()
-        val maxSamples = SAMPLE_RATE * COMMAND_MAX_AUDIO_MS / 1000
-        val output = ShortArray(maxSamples)
-        var outputSize = 0
-        val frame = ShortArray(COMMAND_FRAME_SAMPLES)
-        val preRoll = ArrayDeque<ShortArray>()
-        val vad = AdaptiveVoiceActivityDetector()
-        vad.reset()
-        var speechStarted = false
-        var waitedMs = 0
+            val remainingAtStart = session.remainingMs()
+            if (remainingAtStart <= 0L) {
+                try { record.stop() } catch (_: Throwable) {}
+                return FloatArray(0)
+            }
+            val waitSpeechBudgetMs = minOf(COMMAND_WAIT_SPEECH_MS.toLong(), remainingAtStart).toInt()
+            val maxSamples = SAMPLE_RATE * COMMAND_MAX_AUDIO_MS / 1000
+            val output = ShortArray(maxSamples)
+            var outputSize = 0
+            val frame = ShortArray(COMMAND_FRAME_SAMPLES)
+            val preRoll = ArrayDeque<ShortArray>()
+            val vad = AdaptiveVoiceActivityDetector()
+            vad.reset()
+            var speechStarted = false
+            var waitedMs = 0
 
-        while (running.get() && commandListening.get() && outputSize < maxSamples) {
-            val n = record.read(frame, 0, frame.size)
-            if (n <= 0) continue
-            val rms = frameRms(frame, n)
-            val vadDecision = vad.accept(rms)
-            overlay.updateAudioLevel(normalizeOverlayAudioLevel(rms))
-            val frameMs = n * 1000 / SAMPLE_RATE
+            while (running.get() && commandListening.get() && outputSize < maxSamples) {
+                val n = record.read(frame, 0, frame.size)
+                if (n <= 0) continue
+                val rms = frameRms(frame, n)
+                val vadDecision = vad.accept(rms)
+                overlay.updateAudioLevel(normalizeOverlayAudioLevel(rms))
+                val frameMs = n * 1000 / SAMPLE_RATE
 
-            if (!speechStarted) {
-                preRoll.addLast(frame.copyOf(n))
-                while (preRoll.size > PRE_ROLL_FRAMES) preRoll.removeFirst()
-                waitedMs += frameMs
-                if (vadDecision.speechStarted) {
-                    speechStarted = true
-                    session.touch(settings.sessionTimeoutSeconds)
-                    for (chunk in preRoll) {
-                        val count = minOf(chunk.size, maxSamples - outputSize)
-                        chunk.copyInto(output, outputSize, 0, count)
-                        outputSize += count
-                        if (outputSize >= maxSamples) break
+                if (!speechStarted) {
+                    preRoll.addLast(frame.copyOf(n))
+                    while (preRoll.size > PRE_ROLL_FRAMES) preRoll.removeFirst()
+                    waitedMs += frameMs
+                    if (vadDecision.speechStarted) {
+                        speechStarted = true
+                        session.touch(settings.sessionTimeoutSeconds)
+                        for (chunk in preRoll) {
+                            val count = minOf(chunk.size, maxSamples - outputSize)
+                            chunk.copyInto(output, outputSize, 0, count)
+                            outputSize += count
+                            if (outputSize >= maxSamples) break
+                        }
+                        preRoll.clear()
                     }
-                    preRoll.clear()
+                    if (!speechStarted && waitedMs >= waitSpeechBudgetMs) break
+                    continue
                 }
-                if (!speechStarted && waitedMs >= waitSpeechBudgetMs) break
-                continue
+
+                val count = minOf(n, maxSamples - outputSize)
+                frame.copyInto(output, outputSize, 0, count)
+                outputSize += count
+
+                if (vadDecision.speechEnded && outputSize >= SAMPLE_RATE / 2) break
             }
 
-            val count = minOf(n, maxSamples - outputSize)
-            frame.copyInto(output, outputSize, 0, count)
-            outputSize += count
-
-            if (vadDecision.speechEnded && outputSize >= SAMPLE_RATE / 2) break
+            try { record.stop() } catch (_: Throwable) {}
+            overlay.updateAudioLevel(0.08f)
+            if (!speechStarted || outputSize == 0) return FloatArray(0)
+            return FloatArray(outputSize) { i -> output[i] / 32768.0f }
+        } finally {
+            enhancement.close()
         }
-
-        try { record.stop() } catch (_: Throwable) {}
-        overlay.updateAudioLevel(0.08f)
-        if (!speechStarted || outputSize == 0) return FloatArray(0)
-        return FloatArray(outputSize) { i -> output[i] / 32768.0f }
     }
 
     private fun normalizeOverlayAudioLevel(rms: Float): Float {
