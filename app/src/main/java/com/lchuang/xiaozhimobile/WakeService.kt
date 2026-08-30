@@ -45,10 +45,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         private const val COMMAND_FRAME_SAMPLES = 800 // 50 ms @ 16 kHz
         private const val COMMAND_WAIT_SPEECH_MS = 4000
         private const val COMMAND_MAX_AUDIO_MS = 8000
-        private const val COMMAND_END_SILENCE_MS = 900
-        private const val PRE_ROLL_FRAMES = 6 // 300 ms
-        private const val SPEECH_RMS_THRESHOLD = 0.0105f
-        private const val SILENCE_RMS_THRESHOLD = 0.0075f
+        private const val PRE_ROLL_FRAMES = 8 // 400 ms
     }
 
     private val running = AtomicBoolean(false)
@@ -442,15 +439,16 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         var outputSize = 0
         val frame = ShortArray(COMMAND_FRAME_SAMPLES)
         val preRoll = ArrayDeque<ShortArray>()
+        val vad = AdaptiveVoiceActivityDetector()
+        vad.reset()
         var speechStarted = false
-        var speechFrames = 0
-        var silenceMs = 0
         var waitedMs = 0
 
         while (running.get() && commandListening.get() && outputSize < maxSamples) {
             val n = record.read(frame, 0, frame.size)
             if (n <= 0) continue
             val rms = frameRms(frame, n)
+            val vadDecision = vad.accept(rms)
             overlay.updateAudioLevel(normalizeOverlayAudioLevel(rms))
             val frameMs = n * 1000 / SAMPLE_RATE
 
@@ -458,21 +456,16 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                 preRoll.addLast(frame.copyOf(n))
                 while (preRoll.size > PRE_ROLL_FRAMES) preRoll.removeFirst()
                 waitedMs += frameMs
-                if (rms >= SPEECH_RMS_THRESHOLD) {
-                    speechFrames += 1
-                    if (speechFrames >= 2) {
-                        speechStarted = true
-                        session.touch(settings.sessionTimeoutSeconds)
-                        for (chunk in preRoll) {
-                            val count = minOf(chunk.size, maxSamples - outputSize)
-                            chunk.copyInto(output, outputSize, 0, count)
-                            outputSize += count
-                            if (outputSize >= maxSamples) break
-                        }
-                        preRoll.clear()
+                if (vadDecision.speechStarted) {
+                    speechStarted = true
+                    session.touch(settings.sessionTimeoutSeconds)
+                    for (chunk in preRoll) {
+                        val count = minOf(chunk.size, maxSamples - outputSize)
+                        chunk.copyInto(output, outputSize, 0, count)
+                        outputSize += count
+                        if (outputSize >= maxSamples) break
                     }
-                } else {
-                    speechFrames = 0
+                    preRoll.clear()
                 }
                 if (!speechStarted && waitedMs >= waitSpeechBudgetMs) break
                 continue
@@ -482,8 +475,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
             frame.copyInto(output, outputSize, 0, count)
             outputSize += count
 
-            if (rms < SILENCE_RMS_THRESHOLD) silenceMs += frameMs else silenceMs = 0
-            if (silenceMs >= COMMAND_END_SILENCE_MS && outputSize >= SAMPLE_RATE / 2) break
+            if (vadDecision.speechEnded && outputSize >= SAMPLE_RATE / 2) break
         }
 
         try { record.stop() } catch (_: Throwable) {}
