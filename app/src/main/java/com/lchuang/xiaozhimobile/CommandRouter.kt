@@ -28,7 +28,7 @@ class CommandRouter(private val phone: PhoneController) {
 
         when {
             containsAny(text, "暂停音乐", "暂停播放", "音乐暂停", "暂停歌曲", "停一下音乐", "暂停一下音乐") -> return planned(DeviceAction.MediaPause)
-            containsAny(text, "停止音乐", "停止播放", "停止歌曲", "音乐停止", "关闭音乐", "关掉音乐", "把音乐停掉", "把音乐关掉") -> return planned(DeviceAction.MediaStop)
+            containsAny(text, "停", "停止音乐", "停止播放", "停止歌曲", "音乐停止", "关闭音乐", "关掉音乐", "把音乐停掉", "把音乐关掉") -> return planned(DeviceAction.MediaStop)
             containsAny(text, "继续播放", "继续音乐", "播放音乐", "开始播放", "放音乐", "播放一下音乐", "放一下音乐", "来首歌", "来一首歌") -> return planned(DeviceAction.MediaPlay)
             containsAny(text, "下一首", "下一曲", "切下一首") -> return planned(DeviceAction.MediaNext)
             containsAny(text, "上一首", "上一曲", "切上一首") -> return planned(DeviceAction.MediaPrevious)

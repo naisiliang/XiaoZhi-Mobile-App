@@ -188,12 +188,68 @@ except (FileNotFoundError, subprocess.CalledProcessError):
 sources = [
     ROOT / "app/src/main/java/com/lchuang/xiaozhimobile/DeviceAction.kt",
     ROOT / "app/src/main/java/com/lchuang/xiaozhimobile/ExecutionIntentFormatter.kt",
+    ROOT / "app/src/main/java/com/lchuang/xiaozhimobile/CommandRouter.kt",
 ]
 with tempfile.TemporaryDirectory() as temp_dir:
     temp = Path(temp_dir)
     stub = temp / "MapPreferenceStub.kt"
     stub.write_text(
-        "package com.lchuang.xiaozhimobile\nenum class MapAppPreference { AUTO, AMAP, BAIDU, SYSTEM }\n",
+        textwrap.dedent(
+            """
+            package com.lchuang.xiaozhimobile
+
+            enum class MapAppPreference { AUTO, AMAP, BAIDU, SYSTEM }
+
+            object VoiceCommandNormalizer {
+                fun normalize(raw: String): String = raw.trim().lowercase()
+            }
+
+            sealed interface VolumeAction {
+                data class SetPercent(val percent: Int) : VolumeAction
+                data object StepUp : VolumeAction
+                data object StepDown : VolumeAction
+                data object Unhandled : VolumeAction
+            }
+
+            class VolumeCommandParser {
+                fun parse(text: String): VolumeAction = VolumeAction.Unhandled
+            }
+
+            object AppLauncher {
+                sealed interface AppLaunchResult {
+                    data class Success(val label: String) : AppLaunchResult
+                    data class Failure(val error: AppLaunchError) : AppLaunchResult
+                }
+
+                enum class AppLaunchError {
+                    PACKAGE_NOT_VISIBLE,
+                    PACKAGE_NOT_INSTALLED,
+                    NO_LAUNCH_ACTIVITY,
+                    START_ACTIVITY_FAILED
+                }
+            }
+
+            class PhoneController {
+                data class MediaVolumeResult(val success: Boolean, val actualPercent: Int)
+                data class MapResult(val message: String, val success: Boolean)
+
+                fun openApp(name: String) = AppLauncher.AppLaunchResult.Success(name)
+                fun openMap(preference: MapAppPreference) = MapResult("", true)
+                fun searchNearby(keyword: String, preference: MapAppPreference, callback: () -> Unit) = callback()
+                fun navigate(destination: String, preference: MapAppPreference) = MapResult("", true)
+                fun openBrowser(target: String) = true
+                fun mediaPlay() = Unit
+                fun mediaPause() = Unit
+                fun mediaStop() = Unit
+                fun mediaNext() = Unit
+                fun mediaPrevious() = Unit
+                fun setMediaVolumePercent(percent: Int) = MediaVolumeResult(true, percent)
+                fun volumeUpVerified() = MediaVolumeResult(true, 50)
+                fun volumeDownVerified() = MediaVolumeResult(true, 50)
+                fun setFlashlight(enabled: Boolean) = true
+            }
+            """
+        ),
         encoding="utf-8",
     )
     harness = temp / "ErrorRecoveryHarness.kt"
@@ -233,6 +289,11 @@ with tempfile.TemporaryDirectory() as temp_dir:
                 check(CommandRecognitionQuality.failureKind("停", setOf("停")) == null)
                 check(CommandRecognitionQuality.failureKind("打开微信", emptySet()) == null)
 
+                val stopPlan = CommandRouter(PhoneController()).plan("停")
+                check(stopPlan is DeviceCommandPlan.Planned && stopPlan.action == DeviceAction.MediaStop) {
+                    "one-character stop must plan MediaStop, got $stopPlan"
+                }
+
                 val formatter = ExecutionIntentFormatter()
                 val action = DeviceAction.OpenApp("不存在应用")
                 val result = DeviceExecutionResult(
@@ -258,7 +319,7 @@ with tempfile.TemporaryDirectory() as temp_dir:
                 check(executionFailure.finalSpoken == "没有成功打开不存在应用。请再试一次。")
                 check(result.failureKind == CommandFailureKind.APP_NOT_FOUND)
                 check(CommandFailureKind.SAFETY_REJECTED.name == "SAFETY_REJECTED")
-                println("PASS: seven recovery categories, retry terminal, and recognition quality")
+                println("PASS: seven recovery categories, retry terminal, recognition quality, and one-character local stop planning")
             }
             """
         ),
