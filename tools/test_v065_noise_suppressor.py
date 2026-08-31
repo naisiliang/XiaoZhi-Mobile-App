@@ -32,6 +32,7 @@ manager = MANAGER.read_text(encoding="utf-8")
 for token in [
     "class AudioEnhancementManager",
     "fun attach(record: AudioRecord): AutoCloseable",
+    "import android.util.Log",
     "NoiseSuppressor.isAvailable()",
     "NoiseSuppressor.create(record.audioSessionId)",
     "setEnabled(true)",
@@ -39,6 +40,13 @@ for token in [
     "release()",
     "catch",
     "AtomicBoolean",
+    '"unavailable"',
+    '"availability check threw"',
+    '"create returned null"',
+    '"create threw"',
+    '"enable threw"',
+    '"enable failed"',
+    "Log.w",
 ]:
     assert token in manager, f"noise suppressor manager contract missing: {token}"
 
@@ -80,6 +88,8 @@ with tempfile.TemporaryDirectory() as temp_dir:
     effect_dir = temp / "android/media/audiofx"
     media_dir.mkdir(parents=True)
     effect_dir.mkdir(parents=True)
+    util_dir = temp / "android/util"
+    util_dir.mkdir(parents=True)
     (media_dir / "AudioRecord.kt").write_text(
         """
         package android.media
@@ -121,6 +131,7 @@ with tempfile.TemporaryDirectory() as temp_dir:
 
             companion object {
                 var available = true
+                var throwOnAvailable = false
                 var returnNull = false
                 var throwOnCreate = false
                 var throwOnEnable = false
@@ -130,6 +141,7 @@ with tempfile.TemporaryDirectory() as temp_dir:
 
                 fun reset() {
                     available = true
+                    throwOnAvailable = false
                     returnNull = false
                     throwOnCreate = false
                     throwOnEnable = false
@@ -138,7 +150,10 @@ with tempfile.TemporaryDirectory() as temp_dir:
                     lastCreated = null
                 }
 
-                fun isAvailable(): Boolean = available
+                fun isAvailable(): Boolean {
+                    if (throwOnAvailable) throw IllegalStateException("available")
+                    return available
+                }
 
                 fun create(recordingSession: Int): NoiseSuppressor? {
                     check(recordingSession > 0)
@@ -152,47 +167,95 @@ with tempfile.TemporaryDirectory() as temp_dir:
         """,
         encoding="utf-8",
     )
+    (util_dir / "Log.kt").write_text(
+        """
+        package android.util
+
+        object Log {
+            var throwOnWarning = false
+            val warningMessages = mutableListOf<String>()
+
+            fun reset() {
+                throwOnWarning = false
+                warningMessages.clear()
+            }
+
+            @JvmStatic
+            fun w(tag: String, message: String): Int {
+                if (throwOnWarning) throw IllegalStateException("log")
+                warningMessages += "$tag:$message"
+                return 0
+            }
+        }
+        """,
+        encoding="utf-8",
+    )
     harness = temp / "NoiseSuppressorHarness.kt"
     harness.write_text(
         textwrap.dedent(
             """
             import android.media.AudioRecord
             import android.media.audiofx.NoiseSuppressor
+            import android.util.Log
             import com.lchuang.xiaozhimobile.AudioEnhancementManager
 
             private fun attach(): AutoCloseable =
                 AudioEnhancementManager().attach(AudioRecord(7))
 
+            private fun checkFallback(reason: String) {
+                check(Log.warningMessages.any { it.contains(reason) }) {
+                    "missing fallback diagnostic: $reason; messages=${Log.warningMessages}"
+                }
+            }
+
             fun main() {
+                Log.reset()
                 NoiseSuppressor.reset()
                 NoiseSuppressor.available = false
                 attach().close()
                 check(NoiseSuppressor.createCalls == 0)
+                checkFallback("unavailable")
 
+                Log.reset()
+                NoiseSuppressor.reset()
+                NoiseSuppressor.throwOnAvailable = true
+                attach().close()
+                check(NoiseSuppressor.createCalls == 0)
+                checkFallback("availability check threw")
+
+                Log.reset()
                 NoiseSuppressor.reset()
                 NoiseSuppressor.returnNull = true
                 attach().close()
                 check(NoiseSuppressor.createCalls == 1)
+                checkFallback("create returned null")
 
+                Log.reset()
                 NoiseSuppressor.reset()
                 NoiseSuppressor.throwOnCreate = true
                 attach().close()
                 check(NoiseSuppressor.createCalls == 1)
+                checkFallback("create threw")
 
+                Log.reset()
                 NoiseSuppressor.reset()
                 NoiseSuppressor.throwOnEnable = true
                 attach().close()
                 check(NoiseSuppressor.lastCreated?.releaseCalls == 1) {
                     "failed enable must release the created effect"
                 }
+                checkFallback("enable threw")
 
+                Log.reset()
                 NoiseSuppressor.reset()
                 NoiseSuppressor.enableStatus = android.media.audiofx.AudioEffect.ERROR
                 attach().close()
                 check(NoiseSuppressor.lastCreated?.releaseCalls == 1) {
                     "non-success enable status must release the created effect"
                 }
+                checkFallback("enable failed")
 
+                Log.reset()
                 NoiseSuppressor.reset()
                 val handle = attach()
                 val effect = checkNotNull(NoiseSuppressor.lastCreated)
@@ -200,6 +263,12 @@ with tempfile.TemporaryDirectory() as temp_dir:
                 handle.close()
                 handle.close()
                 check(effect.releaseCalls == 1) { "close must release exactly once" }
+
+                Log.reset()
+                NoiseSuppressor.reset()
+                Log.throwOnWarning = true
+                NoiseSuppressor.available = false
+                attach().close()
                 println("PASS: noise suppressor fallback and idempotent release")
             }
             """
@@ -212,6 +281,7 @@ with tempfile.TemporaryDirectory() as temp_dir:
             *compiler_command,
             str(media_dir / "AudioRecord.kt"),
             str(effect_dir / "NoiseSuppressor.kt"),
+            str(util_dir / "Log.kt"),
             str(MANAGER),
             str(harness),
             "-include-runtime",

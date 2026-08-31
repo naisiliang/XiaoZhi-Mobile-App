@@ -122,7 +122,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             setPadding(0, dp(4), 0, dp(20))
         })
         status = TextView(this).apply {
-            text = "v0.6.4：会话状态机 + 悬浮层手动退出 + 智能退出 + 自然语言媒体音量"
+            text = "v0.6.5：会话状态机 + 悬浮层手动退出 + 智能退出 + 自然语言媒体音量"
             textSize = 15f
             setTextColor(Color.rgb(34, 95, 68))
             setPadding(dp(14), dp(12), dp(14), dp(12))

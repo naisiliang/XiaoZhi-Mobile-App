@@ -14,6 +14,7 @@ TESTS = [
     "tools/test_v065_listening_truth.py",
     "tools/test_v065_adaptive_vad.py",
     "tools/test_v065_noise_suppressor.py",
+    "tools/test_v065_release_metadata.py",
     "tools/test_v065_error_recovery.py",
     "tools/test_v065_validator_contract.py",
     "tools/test_v065_apk_validator_contract.py",
