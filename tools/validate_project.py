@@ -277,7 +277,7 @@ def _is_direct_python_test_run_statement(node: ast.stmt) -> bool:
     return isinstance(node, ast.Expr) and _is_python_test_run(node.value)
 
 
-def _contains_pre_run_exit(node: ast.AST) -> bool:
+def _contains_release_gate_loop_exit(node: ast.AST) -> bool:
     return any(isinstance(child, (ast.Break, ast.Continue, ast.Return, ast.Try)) for child in ast.walk(node))
 
 
@@ -292,10 +292,10 @@ def has_release_gate_loop_subprocess_run(source: str) -> bool:
             and node.iter.id == "TESTS"
         ):
             continue
-        for index, statement in enumerate(node.body):
+        if any(_contains_release_gate_loop_exit(statement) for statement in node.body):
+            return False
+        for statement in node.body:
             if _is_direct_python_test_run_statement(statement):
-                if any(_contains_pre_run_exit(previous) for previous in node.body[:index]):
-                    return False
                 return True
     return False
 
@@ -390,6 +390,13 @@ def _extract_when_entries(block: str) -> list[tuple[str, str]]:
     return entries
 
 
+def _normalize_kotlin_fragment(source: str) -> str:
+    return re.sub(r"\s+", "", source)
+
+
+SAFE_TOOL_REJECTION_BODY = 'rejected(ToolExecutionResult(false, "该操作不在安全工具白名单中", "REJECTED_NOT_ALLOWED"))'
+
+
 def _parse_safe_tool_allowlist(source: str) -> tuple[list[str], list[str]] | None:
     block = _extract_safe_tool_plan_block(source)
     if block is None:
@@ -420,14 +427,19 @@ def has_safe_tool_terminal_else_rejection(source: str) -> bool:
     block = _extract_safe_tool_plan_block(source)
     if block is None:
         return False
+    pattern = re.compile(
+        r"if\s*\(\s*terminal\s*\)\s*.*?\s*else\s*"
+        + re.escape(SAFE_TOOL_REJECTION_BODY)
+        + r"\s*(?:[}\n;]|$)",
+        re.S,
+    )
     search_from = 0
     while True:
         match = re.search(r"if\s*\(\s*terminal\s*\)", block[search_from:])
         if match is None:
             return True
         start = search_from + match.start()
-        snippet = block[start:start + 400]
-        if "else rejected(" not in snippet or "REJECTED_NOT_ALLOWED" not in snippet:
+        if not pattern.match(block[start:]):
             return False
         search_from = start + len("if (terminal)")
 
@@ -437,7 +449,9 @@ def has_single_safe_tool_rejecting_else(source: str) -> bool:
     if parsed is None:
         return False
     _, else_bodies = parsed
-    return len(else_bodies) == 1 and "rejected(" in else_bodies[0] and "REJECTED_NOT_ALLOWED" in else_bodies[0]
+    return len(else_bodies) == 1 and _normalize_kotlin_fragment(else_bodies[0]) == _normalize_kotlin_fragment(
+        SAFE_TOOL_REJECTION_BODY
+    )
 
 
 def has_exact_safe_tool_allowlist(source: str, expected: list[str]) -> bool:
