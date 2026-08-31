@@ -9,7 +9,16 @@ import textwrap
 
 root = Path(__file__).resolve().parents[1]
 wake_path = root / "app/src/main/java/com/lchuang/xiaozhimobile/WakeService.kt"
-wake = wake_path.read_text(encoding="utf-8")
+wake_revision = os.environ.get("WAKE_SERVICE_REVISION")
+if wake_revision:
+    wake = subprocess.check_output(
+        ["git", "show", f"{wake_revision}:app/src/main/java/com/lchuang/xiaozhimobile/WakeService.kt"],
+        cwd=root,
+        text=True,
+    )
+else:
+    wake_source = Path(os.environ["WAKE_SERVICE_SOURCE"]) if os.environ.get("WAKE_SERVICE_SOURCE") else wake_path
+    wake = wake_source.read_text(encoding="utf-8")
 
 
 def function_body(name: str) -> str:
@@ -110,8 +119,15 @@ assert rejected >= 0 and "SAFETY_REJECTED" in tool_branch[rejected:], (
     "rejected AI tools must report SAFETY_REJECTED"
 )
 rejected_block = braced_block(tool_branch, "is SafeToolPlan.Rejected ->")
-assert 'commandResultNotifier.failure("❌ 执行失败：${failureKind.name}")' in rejected_block, (
+failure_notification = 'commandResultNotifier.failure("❌ 执行失败：${failureKind.name}")'
+assert failure_notification in rejected_block, (
     "rejected AI tools must retain their failure notification"
+)
+assert rejected_block.index(failure_notification) < rejected_block.index("recoverRecognitionFailure(failureKind)"), (
+    "rejected AI tools must notify before normal recovery"
+)
+assert "updateNotification(" not in rejected_block, (
+    "rejected AI tools must use retained failure feedback, not a transient notification"
 )
 assert "safeToolExecutor.execute" not in tool_branch, "AI tools must never bypass SafeToolExecutor.plan"
 
@@ -247,6 +263,16 @@ with tempfile.TemporaryDirectory() as td:
             """
             import com.lchuang.xiaozhimobile.*
 
+            data class ToolExecutionResult(val success: Boolean, val spokenText: String, val debugCode: String)
+
+            private interface TestSafeToolPlan
+            private data class TestRejected(val result: ToolExecutionResult) : TestSafeToolPlan
+            private data object TestAllowed : TestSafeToolPlan
+
+            private interface TestAiOutcome
+            private data class TestTool(val plan: TestSafeToolPlan) : TestAiOutcome
+            private data object TestReply : TestAiOutcome
+
             class AndroidHandlerShape {
                 var observedDelayMs: Long? = null
                 fun postDelayed(block: Runnable, delayMs: Long): Boolean {
@@ -336,6 +362,48 @@ with tempfile.TemporaryDirectory() as td:
                 notifier.publishTransient("全离线语音已开启...")
                 check(published.last() == "全离线语音已开启...") {
                     "cleared retention must allow wake-idle text to win immediately: $published"
+                }
+            }
+
+            fun assertRejectedAiToolBranchRetention() {
+                val published = mutableListOf<String>()
+                val recovered = mutableListOf<CommandFailureKind>()
+                val notifier = CommandResultNotifier(
+                    publish = { published += it },
+                    clockMs = { 1_000L },
+                    holdMs = 4_000L
+                )
+                fun recoverRecognitionFailure(kind: CommandFailureKind) {
+                    recovered += kind
+                    notifier.publishTransient("连续会话中...")
+                }
+                val outcome: TestAiOutcome = TestTool(
+                    TestRejected(
+                        ToolExecutionResult(false, "该操作不在安全工具白名单中", "REJECTED_NOT_ALLOWED")
+                    )
+                )
+
+                when (outcome) {
+                    is TestTool -> when (outcome.plan) {
+                        is TestAllowed -> error("rejected test unexpectedly took allowed branch")
+                        is TestRejected -> {
+                            val failureKind = CommandFailureKind.SAFETY_REJECTED
+                            notifier.failure("❌ 执行失败：${failureKind.name}")
+                            recoverRecognitionFailure(failureKind)
+                        }
+                    }
+                    TestReply -> error("rejected test unexpectedly took reply branch")
+                    else -> error("rejected test used an unknown outcome")
+                }
+
+                check(recovered == listOf(CommandFailureKind.SAFETY_REJECTED)) {
+                    "rejected AI tool must recover with SAFETY_REJECTED: $recovered"
+                }
+                check(published == listOf("❌ 执行失败：SAFETY_REJECTED", "❌ 执行失败：SAFETY_REJECTED")) {
+                    "immediate transient recovery must not overwrite rejected failure: $published"
+                }
+                check(notifier.retainedText() == "❌ 执行失败：SAFETY_REJECTED") {
+                    "rejected AI tool failure must remain retained"
                 }
             }
 
@@ -714,6 +782,7 @@ with tempfile.TemporaryDirectory() as td:
             fun main() {
                 assertAndroidSamWiringShape()
                 assertNotifierRetention()
+                assertRejectedAiToolBranchRetention()
                 assertTtsProgressRegistry()
                 assertSilentTtsWatchdogLiveness()
                 assertCoordinatorCancellation()
