@@ -200,6 +200,93 @@ for test in TESTS:
     test = "tools/test_v065_validator_contract.py"
     subprocess.run(["python", test], cwd=root, check=True)
 """
+vars_loop_target_reassignment_source = f"""from pathlib import Path
+import subprocess
+
+root = Path(__file__).resolve().parents[1]
+TESTS = [
+{render_tests(EXPECTED_RELEASE_GATE_TESTS)}
+]
+
+for test in TESTS:
+    vars()["test"] = "tools/test_v065_validator_contract.py"
+    subprocess.run(["python", test], cwd=root, check=True)
+"""
+aliased_vars_loop_target_reassignment_source = f"""from pathlib import Path
+import subprocess
+
+root = Path(__file__).resolve().parents[1]
+TESTS = [
+{render_tests(EXPECTED_RELEASE_GATE_TESTS)}
+]
+
+for test in TESTS:
+    namespace = vars()
+    namespace["test"] = "tools/test_v065_validator_contract.py"
+    subprocess.run(["python", test], cwd=root, check=True)
+"""
+globals_loop_target_reassignment_source = f"""from pathlib import Path
+import subprocess
+
+root = Path(__file__).resolve().parents[1]
+TESTS = [
+{render_tests(EXPECTED_RELEASE_GATE_TESTS)}
+]
+
+for test in TESTS:
+    globals()["test"] = "tools/test_v065_validator_contract.py"
+    subprocess.run(["python", test], cwd=root, check=True)
+"""
+locals_loop_target_reassignment_source = f"""from pathlib import Path
+import subprocess
+
+root = Path(__file__).resolve().parents[1]
+TESTS = [
+{render_tests(EXPECTED_RELEASE_GATE_TESTS)}
+]
+
+for test in TESTS:
+    locals()["test"] = "tools/test_v065_validator_contract.py"
+    subprocess.run(["python", test], cwd=root, check=True)
+"""
+setattr_loop_target_reassignment_source = f"""from pathlib import Path
+import subprocess
+import sys
+
+root = Path(__file__).resolve().parents[1]
+TESTS = [
+{render_tests(EXPECTED_RELEASE_GATE_TESTS)}
+]
+
+for test in TESTS:
+    setattr(sys.modules[__name__], "test", "tools/test_v065_validator_contract.py")
+    subprocess.run(["python", test], cwd=root, check=True)
+"""
+setitem_loop_target_reassignment_source = f"""from pathlib import Path
+import subprocess
+
+root = Path(__file__).resolve().parents[1]
+TESTS = [
+{render_tests(EXPECTED_RELEASE_GATE_TESTS)}
+]
+
+for test in TESTS:
+    globals().__setitem__("test", "tools/test_v065_validator_contract.py")
+    subprocess.run(["python", test], cwd=root, check=True)
+"""
+external_namespace_alias_loop_target_reassignment_source = f"""from pathlib import Path
+import subprocess
+
+root = Path(__file__).resolve().parents[1]
+TESTS = [
+{render_tests(EXPECTED_RELEASE_GATE_TESTS)}
+]
+namespace = vars()
+
+for test in TESTS:
+    namespace["test"] = "tools/test_v065_validator_contract.py"
+    subprocess.run(["python", test], cwd=root, check=True)
+"""
 assert not validator.release_gate_delegates_expected_tests(comment_only_frozen_guard, EXPECTED_RELEASE_GATE_TESTS)
 assert not validator.has_release_gate_loop_subprocess_run(broken_loop_source)
 assert not validator.has_release_gate_loop_subprocess_run(unreachable_nested_run_source)
@@ -422,6 +509,41 @@ expect(
     "release gate rejects loop target reassignment before subprocess.run",
     not validator.has_release_gate_loop_subprocess_run(loop_target_reassignment_source),
     "validator currently accepts reassignment of the TESTS loop variable before subprocess.run",
+)
+expect(
+    "release gate rejects vars subscript loop target reassignment",
+    not validator.has_release_gate_loop_subprocess_run(vars_loop_target_reassignment_source),
+    "validator currently accepts vars()[\"test\"] rebinding of the loop variable",
+)
+expect(
+    "release gate rejects aliased vars subscript loop target reassignment",
+    not validator.has_release_gate_loop_subprocess_run(aliased_vars_loop_target_reassignment_source),
+    "validator currently accepts an aliased vars() namespace rebinding of the loop variable",
+)
+expect(
+    "release gate rejects globals subscript loop target reassignment",
+    not validator.has_release_gate_loop_subprocess_run(globals_loop_target_reassignment_source),
+    "validator currently accepts globals()[\"test\"] rebinding of the loop variable",
+)
+expect(
+    "release gate rejects locals subscript loop target reassignment",
+    not validator.has_release_gate_loop_subprocess_run(locals_loop_target_reassignment_source),
+    "validator currently accepts locals()[\"test\"] rebinding of the loop variable",
+)
+expect(
+    "release gate rejects setattr loop target reassignment",
+    not validator.has_release_gate_loop_subprocess_run(setattr_loop_target_reassignment_source),
+    "validator currently accepts setattr(..., \"test\", ...) rebinding of the loop variable",
+)
+expect(
+    "release gate rejects namespace __setitem__ loop target reassignment",
+    not validator.has_release_gate_loop_subprocess_run(setitem_loop_target_reassignment_source),
+    "validator currently accepts namespace.__setitem__(\"test\", ...) rebinding of the loop variable",
+)
+expect(
+    "release gate rejects external namespace alias loop target reassignment",
+    not validator.has_release_gate_loop_subprocess_run(external_namespace_alias_loop_target_reassignment_source),
+    "validator currently accepts a namespace alias created before the TESTS loop",
 )
 expect(
     "release gate rejects break after direct subprocess.run",

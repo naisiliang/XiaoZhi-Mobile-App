@@ -310,12 +310,140 @@ def _contains_release_gate_loop_exit(node: ast.AST) -> bool:
     return any(isinstance(child, (ast.Break, ast.Continue, ast.Return, ast.Try)) for child in ast.walk(node))
 
 
-def _contains_release_gate_loop_target_mutation(node: ast.AST, target_name: str) -> bool:
+def _static_string(node: ast.AST) -> str | None:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        left = _static_string(node.left)
+        right = _static_string(node.right)
+        if left is not None and right is not None:
+            return left + right
+    return None
+
+
+def _is_namespace_factory(node: ast.AST) -> bool:
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in {"globals", "locals", "vars"}
+        and not node.args
+        and not node.keywords
+    )
+
+
+def _is_namespace_reference(node: ast.AST, aliases: set[str]) -> bool:
+    return _is_namespace_factory(node) or (isinstance(node, ast.Name) and node.id in aliases)
+
+
+def _release_gate_aliases(node: ast.AST) -> tuple[set[str], set[str]]:
+    namespace_aliases: set[str] = set()
+    setattr_aliases = {"setattr"}
+    changed = True
+    while changed:
+        changed = False
+        for child in ast.walk(node):
+            if isinstance(child, ast.Assign):
+                value = child.value
+                targets = child.targets
+            elif isinstance(child, ast.AnnAssign):
+                value = child.value
+                targets = [child.target]
+            else:
+                continue
+
+            if _is_namespace_reference(value, namespace_aliases):
+                for target in targets:
+                    for name in _target_names(target):
+                        if name not in namespace_aliases:
+                            namespace_aliases.add(name)
+                            changed = True
+            if isinstance(value, ast.Name) and value.id in setattr_aliases:
+                for target in targets:
+                    for name in _target_names(target):
+                        if name not in setattr_aliases:
+                            setattr_aliases.add(name)
+                            changed = True
+    return namespace_aliases, setattr_aliases
+
+
+def _loop_target_key_may_be_mutated(node: ast.AST, target_name: str) -> bool:
+    key = _static_string(node)
+    return key is None or key == target_name
+
+
+def _namespace_subscript_may_mutate_loop_target(
+    node: ast.AST,
+    target_name: str,
+    namespace_aliases: set[str],
+) -> bool:
+    if not isinstance(node, ast.Subscript) or not _is_namespace_reference(node.value, namespace_aliases):
+        return False
+    return _loop_target_key_may_be_mutated(node.slice, target_name)
+
+
+def _namespace_mutator_may_mutate_loop_target(
+    node: ast.Call,
+    target_name: str,
+    namespace_aliases: set[str],
+) -> bool:
+    if not isinstance(node.func, ast.Attribute) or not _is_namespace_reference(node.func.value, namespace_aliases):
+        return False
+    if node.func.attr in {"clear", "update"}:
+        return True
+    if node.func.attr in {"__setitem__", "__delitem__", "pop", "setdefault"}:
+        return bool(node.args) and _loop_target_key_may_be_mutated(node.args[0], target_name)
+    return False
+
+
+def _setattr_may_mutate_loop_target(
+    node: ast.Call,
+    target_name: str,
+    setattr_aliases: set[str],
+) -> bool:
+    func = node.func
+    if isinstance(func, ast.Name) and func.id in setattr_aliases:
+        key_index = 1
+    elif isinstance(func, ast.Attribute) and func.attr in {"setattr", "__setattr__"}:
+        key_index = 1 if func.attr == "setattr" else 0
+    else:
+        return False
+    return len(node.args) > key_index and _loop_target_key_may_be_mutated(node.args[key_index], target_name)
+
+
+def _contains_release_gate_loop_target_mutation(
+    node: ast.AST,
+    target_name: str,
+    known_namespace_aliases: set[str] | None = None,
+    known_setattr_aliases: set[str] | None = None,
+) -> bool:
+    namespace_aliases, setattr_aliases = _release_gate_aliases(node)
+    namespace_aliases.update(known_namespace_aliases or set())
+    setattr_aliases.update(known_setattr_aliases or set())
+    loop_target_nodes = {id(child) for child in ast.walk(node.target)} if isinstance(node, ast.For) else set()
     for child in ast.walk(node):
+        if id(child) in loop_target_nodes:
+            continue
         if isinstance(child, ast.Name) and child.id == target_name and isinstance(child.ctx, (ast.Store, ast.Del)):
             return True
         if isinstance(child, (ast.Attribute, ast.Subscript)) and _target_base_name(child) == target_name:
             if isinstance(child.ctx, (ast.Store, ast.Del)):
+                return True
+        if isinstance(child, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            targets = child.targets if isinstance(child, ast.Assign) else [child.target]
+            if any(
+                _namespace_subscript_may_mutate_loop_target(target, target_name, namespace_aliases)
+                for target in targets
+            ):
+                return True
+        if isinstance(child, ast.Delete) and any(
+            _namespace_subscript_may_mutate_loop_target(target, target_name, namespace_aliases)
+            for target in child.targets
+        ):
+            return True
+        if isinstance(child, ast.Call):
+            if _namespace_mutator_may_mutate_loop_target(child, target_name, namespace_aliases):
+                return True
+            if _setattr_may_mutate_loop_target(child, target_name, setattr_aliases):
                 return True
         if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
             if any(argument.arg == target_name for argument in child.args.posonlyargs + child.args.args + child.args.kwonlyargs):
@@ -331,6 +459,7 @@ def _contains_release_gate_loop_target_mutation(node: ast.AST, target_name: str)
 
 def has_release_gate_loop_subprocess_run(source: str) -> bool:
     module = ast.parse(source)
+    namespace_aliases, setattr_aliases = _release_gate_aliases(module)
     for node in module.body:
         if not (
             isinstance(node, ast.For)
@@ -342,7 +471,12 @@ def has_release_gate_loop_subprocess_run(source: str) -> bool:
             continue
         if any(_contains_release_gate_loop_exit(statement) for statement in node.body):
             return False
-        if any(_contains_release_gate_loop_target_mutation(statement, node.target.id) for statement in node.body):
+        if _contains_release_gate_loop_target_mutation(
+            node,
+            node.target.id,
+            namespace_aliases,
+            setattr_aliases,
+        ):
             return False
         for statement in node.body:
             if _is_direct_python_test_run_statement(statement):
