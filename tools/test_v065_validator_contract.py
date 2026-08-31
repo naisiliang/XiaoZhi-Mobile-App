@@ -120,6 +120,15 @@ named_branch_safe_tools = safe_tools_source.replace(
 )
 assert named_branch_safe_tools != safe_tools_source, "named branch safe tool mutation did not apply"
 assert not validator.has_exact_safe_tool_allowlist(named_branch_safe_tools, EXPECTED_SAFE_TOOLS)
+computed_allowed_action_source = safe_tools_source.replace(
+    '        "media_play" -> allowed(DeviceAction.MediaPlay)\n',
+    '        "media_play" -> {\n'
+    '            val action = DeviceAction.MediaPlay\n'
+    "            allowed(action)\n"
+    "        }\n",
+    1,
+)
+assert computed_allowed_action_source != safe_tools_source, "computed allowed action mutation did not apply"
 print("PASS: safe tool allowlist extraction rejects any added when(call.tool) branch")
 
 
@@ -164,6 +173,18 @@ for test in TESTS:
     print(f"RUN: {test}")
     if False:
         subprocess.run(["python", test], cwd=root, check=True)
+"""
+globals_rebinding_source = f"""from pathlib import Path
+import subprocess
+
+root = Path(__file__).resolve().parents[1]
+TESTS = [
+{render_tests(EXPECTED_RELEASE_GATE_TESTS)}
+]
+globals()["TEST" + "S"] = []
+
+for test in TESTS:
+    subprocess.run(["python", test], cwd=root, check=True)
 """
 assert not validator.release_gate_delegates_expected_tests(comment_only_frozen_guard, EXPECTED_RELEASE_GATE_TESTS)
 assert not validator.has_release_gate_loop_subprocess_run(broken_loop_source)
@@ -379,6 +400,11 @@ expect(
     "validator currently accepts an alias expression that can clear the TESTS list",
 )
 expect(
+    "release gate rejects globals rebinding of TESTS",
+    not validator.release_gate_delegates_expected_tests(globals_rebinding_source, EXPECTED_RELEASE_GATE_TESTS),
+    "validator currently accepts globals()[...] rebinding of TESTS",
+)
+expect(
     "release gate rejects break after direct subprocess.run",
     not validator.has_release_gate_loop_subprocess_run(break_after_run_source),
     "validator currently accepts a post-run break in the TESTS loop",
@@ -417,6 +443,11 @@ expect(
     "safe tool allowlist rejects conditional fallthrough",
     not validator.has_exact_safe_tool_allowlist(conditional_fallthrough_source, EXPECTED_SAFE_TOOLS),
     "validator currently accepts a conditional Allowed branch without an else",
+)
+expect(
+    "safe tool allowlist rejects indirect allowed(action) branches",
+    not validator.has_exact_safe_tool_allowlist(computed_allowed_action_source, EXPECTED_SAFE_TOOLS),
+    "validator currently accepts allowed(action) with an indirect DeviceAction value",
 )
 expect(
     "safe tool allowlist requires a rejecting else branch",

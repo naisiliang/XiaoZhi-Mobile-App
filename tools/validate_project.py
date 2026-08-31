@@ -226,8 +226,26 @@ def _find_top_level_tests_assignment(module: ast.Module) -> tuple[int, list[str]
     return tests_values[0]
 
 
+def _has_release_gate_dynamic_bypass(module: ast.Module) -> bool:
+    for node in ast.walk(module):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in {"globals", "locals", "eval", "exec"}:
+            return True
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if (
+                    isinstance(target, ast.Subscript)
+                    and isinstance(target.value, ast.Call)
+                    and isinstance(target.value.func, ast.Name)
+                    and target.value.func.id in {"globals", "locals"}
+                ):
+                    return True
+    return False
+
+
 def parse_release_gate_tests(source: str) -> list[str] | None:
     module = ast.parse(source)
+    if _has_release_gate_dynamic_bypass(module):
+        return None
     tests_info = _find_top_level_tests_assignment(module)
     if tests_info is None:
         return None
@@ -419,6 +437,24 @@ SAFE_DEVICE_ACTIONS = {
 }
 
 
+def _extract_call_arguments(source: str, pattern: str) -> list[str] | None:
+    arguments: list[str] = []
+    for match in re.finditer(pattern, source):
+        open_index = source.find("(", match.start())
+        if open_index == -1:
+            return None
+        close_index = _matching_delimiter(source, open_index, "(", ")")
+        if close_index is None:
+            return None
+        arguments.append(source[open_index + 1:close_index].strip())
+    return arguments
+
+
+def _is_safe_tool_allowed_argument(argument: str) -> bool:
+    match = re.fullmatch(r"DeviceAction\.([A-Za-z_][A-Za-z0-9_]*)(?:\s*\(.*\))?", argument, flags=re.S)
+    return match is not None and match.group(1) in SAFE_DEVICE_ACTIONS
+
+
 def _parse_safe_tool_allowlist(source: str) -> tuple[list[str], list[str]] | None:
     block = _extract_safe_tool_plan_block(source)
     if block is None:
@@ -560,10 +596,10 @@ def has_exact_safe_tool_allowlist(source: str, expected: list[str]) -> bool:
     block = _extract_safe_tool_plan_block(source)
     if block is None:
         return False
-    if any(
-        action not in SAFE_DEVICE_ACTIONS
-        for action in re.findall(r"\ballowed\s*\(\s*DeviceAction\.([A-Za-z_][A-Za-z0-9_]*)", block)
-    ):
+    allowed_arguments = _extract_call_arguments(block, r"\ballowed\s*\(")
+    if not allowed_arguments:
+        return False
+    if any(not _is_safe_tool_allowed_argument(argument) for argument in allowed_arguments):
         return False
     if _has_conditional_fallthrough(block):
         return False
