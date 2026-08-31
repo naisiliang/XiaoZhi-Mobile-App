@@ -111,6 +111,16 @@ assert rejected >= 0 and "SAFETY_REJECTED" in tool_branch[rejected:], (
 )
 assert "safeToolExecutor.execute" not in tool_branch, "AI tools must never bypass SafeToolExecutor.plan"
 
+utterance = function_body("processUtterance")
+planned_exit_index = utterance.find("val localPlan = router.plan(normalized)")
+exit_classifier_index = utterance.find("exitDetector.classify(normalized)")
+assert 0 <= planned_exit_index < exit_classifier_index, (
+    "targeted app GoHome planning must precede assistant-session exit classification"
+)
+assert "localPlan.action is DeviceAction.GoHome" in utterance
+assert "localPlan.action.sourceApp != null" in utterance
+assert "executeDeviceAction(rawText, normalized, localPlan.action, heard)" in utterance
+
 execute_action = function_body("executeDeviceAction")
 capture_guard = execute_action.find("commandListening.get()")
 duplicate_guard = execute_action.find("isDuplicateDeviceCommand(normalized)")
@@ -153,6 +163,7 @@ for token in [
     "TextToSpeech.QUEUE_FLUSH",
     "TextToSpeech.ERROR",
     "ttsProgressRegistry.onError(id)",
+    "ttsProgressRegistry.scheduleWatchdog(id)",
 ]:
     assert token in speak_progress, f"progress-aware TTS contract missing: {token}"
 assert "setOnUtteranceProgressListener" not in speak_progress
@@ -209,6 +220,7 @@ assert "if (deliverCallbacks)" in tts_registry, (
 assert "val cancelled = AtomicBoolean(false)" in tts_registry, (
     "stale-start suppression must not reuse normal done delivery state"
 )
+assert "scheduleWatchdog" in tts_registry, "successful TTS must have a bounded no-callback watchdog"
 
 with tempfile.TemporaryDirectory() as td:
     td = Path(td)
@@ -335,6 +347,19 @@ with tempfile.TemporaryDirectory() as td:
                 }
 
                 events.clear()
+                registry.register("success-real", { events += "REAL_START" }, { events += "REAL_DONE" })
+                registry.scheduleWatchdog("success-real")
+                registry.onStart("success-real")
+                registry.onDone("success-real")
+                check(events == listOf("REAL_START", "REAL_DONE")) {
+                    "real TTS callbacks must suppress the watchdog fallback: $events"
+                }
+                delayed.removeAt(0).second()
+                check(events == listOf("REAL_START", "REAL_DONE")) {
+                    "a stale watchdog callback must not duplicate real completion: $events"
+                }
+
+                events.clear()
                 registry.register("old", { events += "OLD_START" }, { events += "OLD_DONE" })
                 registry.register("new", { events += "NEW_START" }, { events += "NEW_DONE" }, flushPending = true)
                 registry.onStart("old")
@@ -408,6 +433,55 @@ with tempfile.TemporaryDirectory() as td:
                 check(events == listOf("DONE_CANCELLED_START")) {
                     "cancelPending must suppress queued onDone after delivery was queued: $events"
                 }
+            }
+
+            fun assertSilentTtsWatchdogLiveness() {
+                val delayed = mutableListOf<Pair<Long, () -> Unit>>()
+                var speechCalls = 0
+                var runs = 0
+                var finished = 0
+                val registry = TtsProgressRegistry(
+                    dispatch = { it() },
+                    dispatchDelayed = { delayMs, block -> delayed += delayMs to block },
+                    errorFallbackMs = 150L,
+                    watchdogMs = 250L
+                )
+                val coordinator = ExecutionFeedbackCoordinator(
+                    scheduler = DelayedScheduler { delayMs, block -> delayed += delayMs to block },
+                    runner = DeviceActionRunner { _, callback ->
+                        runs += 1
+                        callback(DeviceExecutionResult(true, "OPEN_APP_OK", "微信已打开", "打开微信"))
+                    },
+                    speech = SpeechDriver { _, onStart, onDone ->
+                        speechCalls += 1
+                        val id = "watchdog-$speechCalls"
+                        registry.register(id, onStart, onDone)
+                        if (speechCalls == 1) {
+                            registry.scheduleWatchdog(id)
+                        } else {
+                            registry.onStart(id)
+                            registry.onDone(id)
+                        }
+                    },
+                    formatter = ExecutionIntentFormatter(),
+                    notifier = CommandResultNotifier({}, { 0L })
+                )
+
+                coordinator.execute(
+                    CommandTransaction("打开微信", "打开微信", DeviceAction.OpenApp("微信"), "打开微信正在执行"),
+                    "请继续说。"
+                ) { finished += 1 }
+
+                check(runs == 0 && finished == 0) { "silent TTS must wait for the watchdog: $runs / $finished" }
+                check(delayed.single().first == 250L) { "unexpected watchdog delay: $delayed" }
+                delayed.removeAt(0).second()
+                check(speechCalls == 1 && runs == 0) { "watchdog must synthesize onStart before the action delay" }
+                check(delayed.any { it.first == 120L }) { "watchdog onStart must preserve the 120ms action delay: $delayed" }
+                val actionDelay = delayed.indexOfFirst { it.first == 120L }
+                delayed.removeAt(actionDelay).second()
+                check(runs == 1 && finished == 1) { "silent TTS must eventually complete the execution: $runs / $finished" }
+                delayed.toList().forEach { it.second() }
+                check(finished == 1) { "fallback callbacks must not duplicate completion: $finished" }
             }
 
             fun assertCoordinatorCancellation() {
@@ -586,6 +660,7 @@ with tempfile.TemporaryDirectory() as td:
                 assertAndroidSamWiringShape()
                 assertNotifierRetention()
                 assertTtsProgressRegistry()
+                assertSilentTtsWatchdogLiveness()
                 assertCoordinatorCancellation()
                 assertFailureFeedback()
                 val events = mutableListOf<String>()

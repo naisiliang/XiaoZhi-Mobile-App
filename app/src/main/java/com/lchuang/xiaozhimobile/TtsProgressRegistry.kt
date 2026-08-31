@@ -6,7 +6,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 class TtsProgressRegistry(
     private val dispatch: (() -> Unit) -> Unit,
     private val dispatchDelayed: (Long, () -> Unit) -> Unit,
-    private val errorFallbackMs: Long = 150L
+    private val errorFallbackMs: Long = 150L,
+    private val watchdogMs: Long = 250L
 ) {
     private class PendingUtterance(
         val id: String,
@@ -17,6 +18,7 @@ class TtsProgressRegistry(
         val completionScheduled = AtomicBoolean(false)
         val doneDelivered = AtomicBoolean(false)
         val cancelled = AtomicBoolean(false)
+        val watchdogScheduled = AtomicBoolean(false)
     }
 
     private val pending = ConcurrentHashMap<String, PendingUtterance>()
@@ -40,6 +42,19 @@ class TtsProgressRegistry(
 
     fun onDone(utteranceId: String) {
         pending[utteranceId]?.let(::scheduleDone)
+    }
+
+    fun scheduleWatchdog(utteranceId: String) {
+        val state = pending[utteranceId] ?: return
+        if (!state.watchdogScheduled.compareAndSet(false, true)) return
+        dispatchDelayed(watchdogMs) {
+            if (pending[utteranceId] !== state || state.cancelled.get() || state.doneDelivered.get()) return@dispatchDelayed
+            if (state.started.get()) return@dispatchDelayed
+            dispatchStart(state)
+            if (state.completionScheduled.compareAndSet(false, true)) {
+                dispatchDelayed(errorFallbackMs) { dispatchDone(state) }
+            }
+        }
     }
 
     fun onError(utteranceId: String) {

@@ -109,8 +109,8 @@ assert mutated_safe_tools != safe_tools_source, "safe tool mutation did not appl
 assert validator.extract_safe_tool_allowlist(mutated_safe_tools) == EXPECTED_SAFE_TOOLS + ["go_home"]
 assert not validator.has_exact_safe_tool_allowlist(mutated_safe_tools, EXPECTED_SAFE_TOOLS)
 named_branch_safe_tools = safe_tools_source.replace(
-    "class SafeToolExecutor(private val phone: PhoneController) {\n",
-    'class SafeToolExecutor(private val phone: PhoneController) {\n    private companion object {\n        const val EXTRA_TOOL = "go_home"\n    }\n',
+    "class SafeToolExecutor(private val deviceActionExecutor: DeviceActionExecutor) {\n",
+    'class SafeToolExecutor(private val deviceActionExecutor: DeviceActionExecutor) {\n    private companion object {\n        const val EXTRA_TOOL = "go_home"\n    }\n',
     1,
 ).replace(
     "        else -> rejected(",

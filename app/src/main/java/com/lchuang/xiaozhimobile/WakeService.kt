@@ -131,7 +131,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         )
         ai = AiClient(settings)
         aiOrchestrator = AiOrchestrator(settings, ai)
-        safeToolExecutor = SafeToolExecutor(phone)
+        safeToolExecutor = SafeToolExecutor(deviceActionExecutor)
         memory = AiConversationMemory(maxTurns = 8)
         overlay = AssistantOverlayController(this)
         exitDetector = ConversationExitDetector()
@@ -602,6 +602,14 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         }
         val heard = "我听到：$rawText"
         setConversationState(ConversationState.EXECUTING, heard)
+        val localPlan = router.plan(normalized)
+        if (localPlan is DeviceCommandPlan.Planned &&
+            localPlan.action is DeviceAction.GoHome &&
+            localPlan.action.sourceApp != null
+        ) {
+            executeDeviceAction(rawText, normalized, localPlan.action, heard)
+            return
+        }
         when (exitDetector.classify(normalized)) {
             ExitDecision.EXIT -> {
                 requestConversationExit("好的，我先退下了，有需要再叫我")
@@ -897,6 +905,8 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         }
         if (status == TextToSpeech.ERROR) {
             ttsProgressRegistry.onError(id)
+        } else if (status == TextToSpeech.SUCCESS) {
+            ttsProgressRegistry.scheduleWatchdog(id)
         }
     }
 

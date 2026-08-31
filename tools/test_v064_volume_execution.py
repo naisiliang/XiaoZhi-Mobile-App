@@ -28,10 +28,10 @@ assert 'adjustStreamVolume' in down.group(1) and 'FLAG_SHOW_UI' in down.group(1)
 print('PASS: verified media volume execution source contract')
 router = (root / 'app/src/main/java/com/lchuang/xiaozhimobile/CommandRouter.kt').read_text(encoding='utf-8')
 safe = (root / 'app/src/main/java/com/lchuang/xiaozhimobile/SafeToolExecutor.kt').read_text(encoding='utf-8')
+device_executor = (root / 'app/src/main/java/com/lchuang/xiaozhimobile/DeviceActionExecutor.kt').read_text(encoding='utf-8')
 for token in ('VolumeCommandParser', 'VolumeAction.SetPercent', 'VolumeAction.StepUp', 'VolumeAction.StepDown', 'actualPercent'):
     assert token in router, f'router missing {token}'
-assert 'setMediaVolumePercent' in safe
-assert 'volumeUpVerified' in safe
-assert 'volumeDownVerified' in safe
-assert 'actualPercent' in safe
-print('PASS: router and safe tools use verified media volume')
+for token in ('setMediaVolumePercent', 'volumeUpVerified', 'volumeDownVerified', 'actualPercent'):
+    assert token in device_executor, f'device executor missing {token}'
+assert 'DeviceActionExecutor' in safe and 'deviceActionExecutor.execute' in safe
+print('PASS: router and safe tools use the unified verified media volume executor')

@@ -7,10 +7,17 @@ sealed interface SafeToolPlan {
     data class Rejected(val result: ToolExecutionResult) : SafeToolPlan
 }
 
-class SafeToolExecutor(private val phone: PhoneController) {
+class SafeToolExecutor(private val deviceActionExecutor: DeviceActionExecutor) {
     fun execute(call: AiToolCall, callback: (ToolExecutionResult) -> Unit) {
         when (val planned = plan(call)) {
-            is SafeToolPlan.Allowed -> execute(planned.action, callback)
+            is SafeToolPlan.Allowed -> when (planned.action) {
+                is DeviceAction.GoHome,
+                is DeviceAction.OpenMap,
+                DeviceAction.MediaStop -> callback(ToolExecutionResult(false, "该操作不在安全工具白名单中", "REJECTED_NOT_ALLOWED"))
+                else -> deviceActionExecutor.execute(planned.action) { result ->
+                    callback(ToolExecutionResult(result.success, result.spokenResult, result.code))
+                }
+            }
             is SafeToolPlan.Rejected -> callback(planned.result)
         }
     }
@@ -52,43 +59,6 @@ class SafeToolExecutor(private val phone: PhoneController) {
         else -> rejected(ToolExecutionResult(false, "该操作不在安全工具白名单中", "REJECTED_NOT_ALLOWED"))
     }
 
-    private fun execute(action: DeviceAction, callback: (ToolExecutionResult) -> Unit) {
-        when (action) {
-            is DeviceAction.OpenApp -> {
-                when (val result = phone.openApp(action.name)) {
-                    is AppLauncher.AppLaunchResult.Success -> callback(ToolExecutionResult(true, "已打开${result.label}", "OPEN_APP_OK"))
-                    is AppLauncher.AppLaunchResult.Failure -> callback(ToolExecutionResult(false, "没有成功打开${action.name}", "OPEN_APP_${result.error.name}"))
-                }
-            }
-            is DeviceAction.Navigate -> {
-                val result = phone.navigate(action.destination, action.preference)
-                callback(ToolExecutionResult(result.success, result.message, result.code))
-            }
-            is DeviceAction.SearchNearby -> phone.searchNearby(action.keyword, action.preference) { result ->
-                callback(ToolExecutionResult(result.success, result.message, result.code))
-            }
-            is DeviceAction.OpenWeb -> {
-                val ok = phone.openBrowser(action.target)
-                callback(ToolExecutionResult(ok, if (ok) "浏览器已打开" else "没有成功打开", if (ok) "OPEN_WEB_OK" else "OPEN_WEB_FAILED"))
-            }
-            DeviceAction.MediaPlay -> { phone.mediaPlay(); callback(ok("已播放", "MEDIA_PLAY")) }
-            DeviceAction.MediaPause -> { phone.mediaPause(); callback(ok("已暂停", "MEDIA_PAUSE")) }
-            DeviceAction.MediaNext -> { phone.mediaNext(); callback(ok("已切换到下一首", "MEDIA_NEXT")) }
-            DeviceAction.MediaPrevious -> { phone.mediaPrevious(); callback(ok("已切换到上一首", "MEDIA_PREVIOUS")) }
-            DeviceAction.MediaVolumeUp -> callback(volumeToolResult(phone.volumeUpVerified(), "VOLUME_UP"))
-            DeviceAction.MediaVolumeDown -> callback(volumeToolResult(phone.volumeDownVerified(), "VOLUME_DOWN"))
-            is DeviceAction.SetMediaVolume -> callback(volumeToolResult(phone.setMediaVolumePercent(action.percent), "SET_VOLUME"))
-            is DeviceAction.SetFlashlight -> {
-                val success = phone.setFlashlight(action.enabled)
-                val verb = if (action.enabled) "打开" else "关闭"
-                callback(ToolExecutionResult(success, if (success) "手电筒已$verb" else "没有成功${verb}手电筒", if (success) "FLASHLIGHT_${if (action.enabled) "ON" else "OFF"}" else "FLASHLIGHT_FAILED"))
-            }
-            is DeviceAction.GoHome,
-            is DeviceAction.OpenMap,
-            DeviceAction.MediaStop -> callback(ToolExecutionResult(false, "该操作不在安全工具白名单中", "REJECTED_NOT_ALLOWED"))
-        }
-    }
-
     private fun allowed(action: DeviceAction) = SafeToolPlan.Allowed(action)
     private fun rejected(result: ToolExecutionResult) = SafeToolPlan.Rejected(result)
     private fun hasRejectedWebScheme(value: String): Boolean {
@@ -100,16 +70,6 @@ class SafeToolExecutor(private val phone: PhoneController) {
     }
 
     private fun rejectedScheme() = ToolExecutionResult(false, "不支持该链接类型", "REJECTED_SCHEME")
-
-    private fun volumeToolResult(result: PhoneController.MediaVolumeResult, code: String): ToolExecutionResult {
-        val actual = result.actualPercent.coerceIn(0, 100)
-        val text = when (actual) {
-            0 -> "媒体音量已经静音"
-            100 -> "媒体音量已经调整到最大"
-            else -> "媒体音量已经调整到${actual}%"
-        }
-        return ToolExecutionResult(result.success, text, if (result.success) code else "${code}_PARTIAL")
-    }
 
     private fun stringArg(call: AiToolCall, name: String): String? = (call.args[name] as? String)?.trim()?.takeIf { it.isNotBlank() }
 
@@ -131,5 +91,4 @@ class SafeToolExecutor(private val phone: PhoneController) {
 
     private fun looksLikePackageName(value: String): Boolean = Regex("^[a-zA-Z][a-zA-Z0-9_]*(\\.[a-zA-Z0-9_]+){2,}$").matches(value)
     private fun invalidArgs(tool: String) = ToolExecutionResult(false, "指令参数不完整", "INVALID_ARGS_$tool")
-    private fun ok(text: String, code: String) = ToolExecutionResult(true, text, code)
 }

@@ -9,8 +9,9 @@ import textwrap
 root = Path(__file__).resolve().parents[1]
 safe_source = root / 'app/src/main/java/com/lchuang/xiaozhimobile/SafeToolExecutor.kt'
 action_source = root / 'app/src/main/java/com/lchuang/xiaozhimobile/DeviceAction.kt'
+executor_source = root / 'app/src/main/java/com/lchuang/xiaozhimobile/DeviceActionExecutor.kt'
 
-for source in (safe_source, action_source):
+for source in (safe_source, action_source, executor_source):
     assert source.exists(), f'missing source: {source.name}'
 
 safe_text = safe_source.read_text(encoding='utf-8')
@@ -20,13 +21,17 @@ allowlist = [
     'flashlight_on', 'flashlight_off',
 ]
 plan_block = re.search(
-    r'fun plan\(call: AiToolCall\): SafeToolPlan = when \(call\.tool\) \{(.*?)\n    \}\n\n    private fun execute',
+    r'fun plan\(call: AiToolCall\): SafeToolPlan = when \(call\.tool\) \{(.*?)\n    \}\n\n    private fun allowed',
     safe_text,
     re.S,
 )
 assert plan_block, 'SafeToolPlan.plan() is missing'
 planned_tools = re.findall(r'^        "([^"]+)" ->', plan_block.group(1), re.M)
 assert planned_tools == allowlist, f'allowlist changed: {planned_tools}'
+assert 'class SafeToolExecutor(private val deviceActionExecutor: DeviceActionExecutor)' in safe_text
+execute_block = safe_text[safe_text.index('fun execute(call: AiToolCall'):safe_text.index('fun plan(call: AiToolCall')]
+assert 'deviceActionExecutor.execute' in execute_block, 'compatibility execution must delegate to DeviceActionExecutor'
+assert 'phone.' not in execute_block, 'SafeToolExecutor.execute must not directly call PhoneController'
 for forbidden in ('go_home', 'delete_all_files', 'send_message', 'transfer_money', 'install_app', 'shell_command'):
     assert f'"{forbidden}"' not in safe_text, f'authority expanded with: {forbidden}'
 
@@ -54,13 +59,18 @@ with tempfile.TemporaryDirectory() as td:
         data class AiToolCall(val tool: String, val args: Map<String, Any?> = emptyMap())
         data class ToolExecutionResult(val success: Boolean, val message: String, val code: String)
 
+        class AppExitController {
+            data class HomeResult(val success: Boolean = true, val code: String = "GO_HOME_OK")
+            fun goHome() = HomeResult()
+        }
+
         object AppLauncher {
+            enum class AppLaunchError { PACKAGE_NOT_VISIBLE, PACKAGE_NOT_INSTALLED, NO_LAUNCH_ACTIVITY, START_ACTIVITY_FAILED }
+
             sealed class AppLaunchResult {
                 data class Success(val label: String) : AppLaunchResult()
-                data class Failure(val error: Error) : AppLaunchResult()
+                data class Failure(val error: AppLaunchError) : AppLaunchResult()
             }
-
-            enum class Error { FAILED }
         }
 
         @Suppress("UNUSED_PARAMETER")
@@ -91,7 +101,7 @@ with tempfile.TemporaryDirectory() as td:
 
         fun main() {
             val phone = PhoneController()
-            val executor = SafeToolExecutor(phone)
+            val executor = SafeToolExecutor(DeviceActionExecutor(phone, AppExitController()))
             fun planned(call: AiToolCall, expected: DeviceAction) {
                 check(executor.plan(call) == SafeToolPlan.Allowed(expected)) { "$call did not produce $expected" }
             }
@@ -130,7 +140,7 @@ with tempfile.TemporaryDirectory() as td:
     compiler = os.environ.get('KOTLINC', 'kotlinc')
     compiler_command = ['cmd', '/c', compiler] if compiler.lower().endswith(('.bat', '.cmd')) else [compiler]
     subprocess.run([
-        *compiler_command, str(uri_stub), str(action_source), str(safe_source), str(stubs), str(harness),
+        *compiler_command, str(uri_stub), str(action_source), str(executor_source), str(safe_source), str(stubs), str(harness),
         '-include-runtime', '-d', str(jar)
     ], check=True)
     subprocess.run(['java', '-jar', str(jar)], check=True)
