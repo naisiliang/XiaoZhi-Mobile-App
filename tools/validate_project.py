@@ -74,6 +74,8 @@ REQUIRED_V065_TESTS = [
     "tools/test_v065_adaptive_vad.py",
     "tools/test_v065_noise_suppressor.py",
     "tools/test_v065_error_recovery.py",
+    "tools/test_v065_validator_contract.py",
+    "tools/test_v065_apk_validator_contract.py",
 ]
 REQUIRED_HISTORICAL_TESTS = [
     "tools/test_v031_behavior.py",
@@ -101,6 +103,7 @@ REQUIRED_V065_SOURCES = [
     "app/src/main/java/com/lchuang/xiaozhimobile/ExecutionFeedbackCoordinator.kt",
     "app/src/main/java/com/lchuang/xiaozhimobile/ExecutionIntentFormatter.kt",
     "app/src/main/java/com/lchuang/xiaozhimobile/TtsProgressRegistry.kt",
+    "tools/validate_v065_apk.py",
 ]
 
 
@@ -705,6 +708,10 @@ def build_checks() -> list[tuple[str, bool]]:
         "- name: Fetch offline wake + ASR models",
         "- name: Build debug APK",
         "- name: Rename APK",
+        "- name: Upload APK",
+        "- name: Download exact APK artifact",
+        "- name: Verify downloaded APK",
+        "- name: Upload APK verification report",
     ]
     check("workflow release-gate order", appears_in_order(workflow, workflow_steps))
     check("workflow historical test commands", appears_in_order(workflow, [
@@ -727,6 +734,18 @@ def build_checks() -> list[tuple[str, bool]]:
     ]))
     check("workflow renamed apk", "run: cp app/build/outputs/apk/debug/app-debug.apk XiaoZhi-Mobile-v0.6.5-debug.apk" in workflow)
     check("workflow artifact path", "path: XiaoZhi-Mobile-v0.6.5-debug.apk" in workflow)
+    check("workflow downloads exact APK artifact", all(token in workflow for token in [
+        "name: XiaoZhi-Mobile-APK",
+        "path: artifact-verification",
+        "tools/validate_v065_apk.py",
+        "--artifact-dir artifact-verification",
+        '--report "$RUNNER_TEMP/xiaozhi-v065-apk-verification.json"',
+    ]))
+    check("workflow uploads verification report", all(token in workflow for token in [
+        "name: XiaoZhi-Mobile-APK-verification",
+        "path: ${{ runner.temp }}/xiaozhi-v065-apk-verification.json",
+        "if-no-files-found: error",
+    ]))
 
     noise_suppressor_files = []
     for path in ROOT.rglob("*.kt"):
