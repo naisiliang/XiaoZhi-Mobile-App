@@ -290,6 +290,105 @@ def _is_direct_python_test_run_statement(node: ast.stmt) -> bool:
     return isinstance(node, ast.Expr) and _is_python_test_run(node.value)
 
 
+def _is_release_gate_test_exists_check(node: ast.stmt) -> bool:
+    if not isinstance(node, ast.If) or node.orelse or len(node.body) != 1:
+        return False
+    condition = node.test
+    if not (
+        isinstance(condition, ast.UnaryOp)
+        and isinstance(condition.op, ast.Not)
+        and isinstance(condition.operand, ast.Call)
+        and not condition.operand.args
+        and not condition.operand.keywords
+    ):
+        return False
+    exists_call = condition.operand
+    if not (
+        isinstance(exists_call.func, ast.Attribute)
+        and exists_call.func.attr == "exists"
+        and isinstance(exists_call.func.value, ast.BinOp)
+        and isinstance(exists_call.func.value.op, ast.Div)
+        and isinstance(exists_call.func.value.left, ast.Name)
+        and exists_call.func.value.left.id == "root"
+        and isinstance(exists_call.func.value.right, ast.Name)
+        and exists_call.func.value.right.id == "test"
+    ):
+        return False
+    guarded_statement = node.body[0]
+    if not isinstance(guarded_statement, ast.Raise) or guarded_statement.exc is None:
+        return False
+    exception = guarded_statement.exc
+    if not (
+        isinstance(exception, ast.Call)
+        and isinstance(exception.func, ast.Name)
+        and exception.func.id == "SystemExit"
+        and len(exception.args) == 1
+        and not exception.keywords
+    ):
+        return False
+    message = exception.args[0]
+    return (
+        isinstance(message, ast.JoinedStr)
+        and len(message.values) == 2
+        and isinstance(message.values[0], ast.Constant)
+        and message.values[0].value == "release gate test missing: "
+        and isinstance(message.values[1], ast.FormattedValue)
+        and isinstance(message.values[1].value, ast.Name)
+        and message.values[1].value.id == "test"
+        and message.values[1].format_spec is None
+    )
+
+
+def _is_release_gate_run_print(node: ast.stmt) -> bool:
+    if not isinstance(node, ast.Expr) or not isinstance(node.value, ast.Call):
+        return False
+    call = node.value
+    if not isinstance(call.func, ast.Name) or call.func.id != "print":
+        return False
+    if len(call.args) != 1 or call.keywords:
+        return False
+    message = call.args[0]
+    return (
+        isinstance(message, ast.JoinedStr)
+        and len(message.values) == 2
+        and isinstance(message.values[0], ast.Constant)
+        and message.values[0].value == "RUN: "
+        and isinstance(message.values[1], ast.FormattedValue)
+        and isinstance(message.values[1].value, ast.Name)
+        and message.values[1].value.id == "test"
+        and message.values[1].format_spec is None
+    )
+
+
+def _is_exact_direct_python_test_run_statement(node: ast.stmt) -> bool:
+    if not _is_direct_python_test_run_statement(node):
+        return False
+    call = node.value
+    keywords = {item.arg: item.value for item in call.keywords}
+    return len(call.keywords) == 2 and set(keywords) == {"cwd", "check"}
+
+
+def _is_release_gate_loop_header(node: ast.AST) -> bool:
+    return (
+        isinstance(node, ast.For)
+        and isinstance(node.target, ast.Name)
+        and node.target.id == "test"
+        and isinstance(node.iter, ast.Name)
+        and node.iter.id == "TESTS"
+    )
+
+
+def _is_exact_release_gate_loop(node: ast.AST) -> bool:
+    return (
+        _is_release_gate_loop_header(node)
+        and not node.orelse
+        and len(node.body) == 3
+        and _is_release_gate_test_exists_check(node.body[0])
+        and _is_release_gate_run_print(node.body[1])
+        and _is_exact_direct_python_test_run_statement(node.body[2])
+    )
+
+
 def _contains_release_gate_loop_exit(node: ast.AST) -> bool:
     return any(isinstance(child, (ast.Break, ast.Continue, ast.Return, ast.Try)) for child in ast.walk(node))
 
@@ -581,29 +680,21 @@ def _contains_release_gate_loop_target_mutation(
 def has_release_gate_loop_subprocess_run(source: str) -> bool:
     module = ast.parse(source)
     namespace_aliases, namespace_factory_aliases, setattr_aliases = _release_gate_aliases(module)
-    for node in module.body:
-        if not (
-            isinstance(node, ast.For)
-            and isinstance(node.target, ast.Name)
-            and node.target.id == "test"
-            and isinstance(node.iter, ast.Name)
-            and node.iter.id == "TESTS"
-        ):
-            continue
-        if any(_contains_release_gate_loop_exit(statement) for statement in node.body):
-            return False
-        if _contains_release_gate_loop_target_mutation(
-            node,
-            node.target.id,
-            namespace_aliases,
-            namespace_factory_aliases,
-            setattr_aliases,
-        ):
-            return False
-        for statement in node.body:
-            if _is_direct_python_test_run_statement(statement):
-                return True
-    return False
+    loops = [node for node in module.body if _is_release_gate_loop_header(node)]
+    if len(loops) != 1 or not _is_exact_release_gate_loop(loops[0]):
+        return False
+    node = loops[0]
+    if _contains_release_gate_loop_exit(node):
+        return False
+    if _contains_release_gate_loop_target_mutation(
+        node,
+        node.target.id,
+        namespace_aliases,
+        namespace_factory_aliases,
+        setattr_aliases,
+    ):
+        return False
+    return True
 
 
 def release_gate_delegates_expected_tests(source: str, expected_tests: list[str]) -> bool:

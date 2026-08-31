@@ -386,6 +386,135 @@ for test in TESTS:
     factory()["test"] = "tools/test_v065_validator_contract.py"
     subprocess.run(["python", test], cwd=root, check=True)
 """
+namespace_popitem_source = f"""from pathlib import Path
+import subprocess
+
+root = Path(__file__).resolve().parents[1]
+TESTS = [
+{render_tests(EXPECTED_RELEASE_GATE_TESTS)}
+]
+namespace = vars()
+
+for test in TESTS:
+    namespace.popitem()
+    subprocess.run(["python", test], cwd=root, check=True)
+"""
+namespace_ior_source = f"""from pathlib import Path
+import subprocess
+
+root = Path(__file__).resolve().parents[1]
+TESTS = [
+{render_tests(EXPECTED_RELEASE_GATE_TESTS)}
+]
+namespace = globals()
+
+for test in TESTS:
+    namespace.__ior__({{"test": "tools/test_v065_validator_contract.py"}})
+    subprocess.run(["python", test], cwd=root, check=True)
+"""
+aliased_namespace_popitem_source = f"""from pathlib import Path
+import subprocess
+
+root = Path(__file__).resolve().parents[1]
+TESTS = [
+{render_tests(EXPECTED_RELEASE_GATE_TESTS)}
+]
+factory = vars
+namespace = factory()
+namespace_alias = namespace
+
+for test in TESTS:
+    namespace_alias.popitem()
+    subprocess.run(["python", test], cwd=root, check=True)
+"""
+aliased_namespace_ior_source = f"""from pathlib import Path
+import builtins
+import subprocess
+
+root = Path(__file__).resolve().parents[1]
+TESTS = [
+{render_tests(EXPECTED_RELEASE_GATE_TESTS)}
+]
+factory = getattr(builtins, "locals")
+namespace = factory()
+namespace_alias = namespace
+
+for test in TESTS:
+    namespace_alias.__ior__({{"test": "tools/test_v065_validator_contract.py"}})
+    subprocess.run(["python", test], cwd=root, check=True)
+"""
+namespace_arbitrary_method_source = f"""from pathlib import Path
+import subprocess
+
+root = Path(__file__).resolve().parents[1]
+TESTS = [
+{render_tests(EXPECTED_RELEASE_GATE_TESTS)}
+]
+namespace = globals()
+
+for test in TESTS:
+    namespace.copy()
+    subprocess.run(["python", test], cwd=root, check=True)
+"""
+namespace_attribute_mutation_source = f"""from pathlib import Path
+import subprocess
+
+root = Path(__file__).resolve().parents[1]
+TESTS = [
+{render_tests(EXPECTED_RELEASE_GATE_TESTS)}
+]
+namespace = locals()
+
+for test in TESTS:
+    namespace.hidden = "side effect"
+    subprocess.run(["python", test], cwd=root, check=True)
+"""
+namespace_mapping_operator_source = f"""from pathlib import Path
+import subprocess
+
+root = Path(__file__).resolve().parents[1]
+TESTS = [
+{render_tests(EXPECTED_RELEASE_GATE_TESTS)}
+]
+namespace = vars()
+
+for test in TESTS:
+    namespace |= {{"hidden": "side effect"}}
+    subprocess.run(["python", test], cwd=root, check=True)
+"""
+callable_alias_source = f"""from pathlib import Path
+import subprocess
+
+root = Path(__file__).resolve().parents[1]
+TESTS = [
+{render_tests(EXPECTED_RELEASE_GATE_TESTS)}
+]
+run_side_effect = print
+
+for test in TESTS:
+    run_side_effect("hidden side effect")
+    subprocess.run(["python", test], cwd=root, check=True)
+"""
+hidden_side_effect_source = f"""from pathlib import Path
+import subprocess
+
+root = Path(__file__).resolve().parents[1]
+TESTS = [
+{render_tests(EXPECTED_RELEASE_GATE_TESTS)}
+]
+
+def hidden_side_effect():
+    return None
+
+for test in TESTS:
+    hidden_side_effect()
+    subprocess.run(["python", test], cwd=root, check=True)
+"""
+additional_tests_loop_source = release_gate_source + """
+
+for test in TESTS:
+    print("hidden side effect")
+"""
 assert not validator.release_gate_delegates_expected_tests(comment_only_frozen_guard, EXPECTED_RELEASE_GATE_TESTS)
 assert not validator.has_release_gate_loop_subprocess_run(broken_loop_source)
 assert not validator.has_release_gate_loop_subprocess_run(unreachable_nested_run_source)
@@ -678,6 +807,56 @@ expect(
     "release gate rejects getattr namespace factory aliases",
     not validator.has_release_gate_loop_subprocess_run(builtin_getattr_callable_alias_loop_target_reassignment_source),
     "validator currently accepts getattr(builtins, factory) as a namespace factory alias",
+)
+expect(
+    "release gate rejects namespace popitem mutation",
+    not validator.has_release_gate_loop_subprocess_run(namespace_popitem_source),
+    "validator currently accepts namespace.popitem() inside the TESTS loop",
+)
+expect(
+    "release gate rejects namespace __ior__ mutation",
+    not validator.has_release_gate_loop_subprocess_run(namespace_ior_source),
+    "validator currently accepts namespace.__ior__() inside the TESTS loop",
+)
+expect(
+    "release gate rejects aliased namespace popitem mutation",
+    not validator.has_release_gate_loop_subprocess_run(aliased_namespace_popitem_source),
+    "validator currently accepts an alias of a vars() namespace calling popitem()",
+)
+expect(
+    "release gate rejects aliased namespace __ior__ mutation",
+    not validator.has_release_gate_loop_subprocess_run(aliased_namespace_ior_source),
+    "validator currently accepts an alias of a getattr(locals) namespace calling __ior__()",
+)
+expect(
+    "release gate rejects arbitrary namespace method calls",
+    not validator.has_release_gate_loop_subprocess_run(namespace_arbitrary_method_source),
+    "validator currently accepts an arbitrary method call on a namespace alias",
+)
+expect(
+    "release gate rejects namespace attribute mutation",
+    not validator.has_release_gate_loop_subprocess_run(namespace_attribute_mutation_source),
+    "validator currently accepts attribute mutation on a namespace alias",
+)
+expect(
+    "release gate rejects namespace mapping operators",
+    not validator.has_release_gate_loop_subprocess_run(namespace_mapping_operator_source),
+    "validator currently accepts a mapping operator on a namespace alias",
+)
+expect(
+    "release gate rejects callable aliases with hidden side effects",
+    not validator.has_release_gate_loop_subprocess_run(callable_alias_source),
+    "validator currently accepts a callable alias inside the TESTS loop",
+)
+expect(
+    "release gate rejects hidden side effects",
+    not validator.has_release_gate_loop_subprocess_run(hidden_side_effect_source),
+    "validator currently accepts an unrelated callable inside the TESTS loop",
+)
+expect(
+    "release gate rejects an additional TESTS loop",
+    not validator.has_release_gate_loop_subprocess_run(additional_tests_loop_source),
+    "validator currently accepts a second loop over TESTS after the safe loop",
 )
 expect(
     "release gate rejects break after direct subprocess.run",
