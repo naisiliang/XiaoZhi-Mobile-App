@@ -8,7 +8,7 @@ class TtsProgressRegistry(
     private val dispatchDelayed: (Long, () -> Unit) -> Unit,
     private val errorFallbackMs: Long = 150L,
     private val watchdogMs: Long = 250L,
-    private val onWatchdogTimeout: (String) -> Unit = {}
+    private val onWatchdogTimeout: (String) -> Boolean = { false }
 ) {
     private class PendingUtterance(
         val id: String,
@@ -20,6 +20,7 @@ class TtsProgressRegistry(
         val doneDelivered = AtomicBoolean(false)
         val cancelled = AtomicBoolean(false)
         val watchdogScheduled = AtomicBoolean(false)
+        val watchdogFiring = AtomicBoolean(false)
         val timedOut = AtomicBoolean(false)
     }
 
@@ -50,36 +51,49 @@ class TtsProgressRegistry(
         val state = pending[utteranceId] ?: return
         if (!state.watchdogScheduled.compareAndSet(false, true)) return
         dispatchDelayed(watchdogMs) {
-            val timedOut = synchronized(state) {
+            val shouldAttemptStop = synchronized(state) {
                 if (pending[utteranceId] !== state || state.cancelled.get() || state.doneDelivered.get()) {
                     false
                 } else if (state.started.get()) {
                     false
                 } else {
-                    state.timedOut.compareAndSet(false, true)
+                    state.watchdogFiring.compareAndSet(false, true)
+                }
+            }
+            if (!shouldAttemptStop) return@dispatchDelayed
+            val stopped = try {
+                onWatchdogTimeout(utteranceId)
+            } catch (_: Throwable) {
+                false
+            }
+            val timedOut = synchronized(state) {
+                state.watchdogFiring.set(false)
+                if (!stopped || pending[utteranceId] !== state || state.cancelled.get() || state.doneDelivered.get()) {
+                    false
+                } else {
+                    state.timedOut.set(true)
+                    // A real completion may already be queued in another dispatcher.
+                    // Release the reservation so the watchdog can own completion.
+                    state.completionScheduled.set(false)
+                    true
                 }
             }
             if (!timedOut) return@dispatchDelayed
-            try {
-                onWatchdogTimeout(utteranceId)
-            } catch (_: Throwable) {
-                // The fallback must remain live even if stopping the engine fails.
-            }
             dispatchStart(state, synthetic = true)
             val shouldScheduleDone = synchronized(state) {
                 state.completionScheduled.compareAndSet(false, true)
             }
-            if (shouldScheduleDone) dispatchDelayed(errorFallbackMs) { dispatchDone(state) }
+            if (shouldScheduleDone) dispatchDelayed(errorFallbackMs) { dispatchDone(state, synthetic = true) }
         }
     }
 
     fun onError(utteranceId: String) {
         val state = pending[utteranceId] ?: return
         synchronized(state) {
-            if (state.timedOut.get()) return@synchronized
+            if (state.watchdogFiring.get() || state.timedOut.get()) return@synchronized
             dispatchStart(state)
             if (state.completionScheduled.compareAndSet(false, true)) {
-                dispatchDelayed(errorFallbackMs) { dispatchDone(state) }
+                dispatchDelayed(errorFallbackMs) { dispatchDone(state, synthetic = false) }
             }
         }
     }
@@ -91,7 +105,7 @@ class TtsProgressRegistry(
             }
             if (state.completionScheduled.compareAndSet(false, true)) {
                 if (deliverCallbacks) {
-                    dispatch { dispatchDone(state) }
+                    dispatch { dispatchDone(state, synthetic = false) }
                 } else {
                     pending.remove(state.id, state)
                 }
@@ -107,7 +121,7 @@ class TtsProgressRegistry(
 
     private fun dispatchStart(state: PendingUtterance, synthetic: Boolean) {
         synchronized(state) {
-            if (state.cancelled.get() || (!synthetic && state.timedOut.get())) return@synchronized
+            if (state.cancelled.get() || state.watchdogFiring.get() || (!synthetic && state.timedOut.get())) return@synchronized
             if (state.started.compareAndSet(false, true)) {
                 dispatch {
                     if (!state.cancelled.get() && (synthetic || !state.timedOut.get())) state.onStart()
@@ -118,18 +132,21 @@ class TtsProgressRegistry(
 
     private fun scheduleDone(state: PendingUtterance) {
         synchronized(state) {
-            if (state.timedOut.get()) return@synchronized
+            if (state.watchdogFiring.get() || state.timedOut.get()) return@synchronized
             if (state.completionScheduled.compareAndSet(false, true)) {
-                dispatch { dispatchDone(state) }
+                dispatch { dispatchDone(state, synthetic = false) }
             }
         }
     }
 
-    private fun dispatchDone(state: PendingUtterance) {
-        if (!state.doneDelivered.compareAndSet(false, true)) return
+    private fun dispatchDone(state: PendingUtterance, synthetic: Boolean) {
+        val shouldDeliver = synchronized(state) {
+            (synthetic || !state.timedOut.get()) && state.doneDelivered.compareAndSet(false, true)
+        }
+        if (!shouldDeliver) return
         try {
             // Cancelled stale continuations are suppressed even if completion was already queued.
-            if (!state.cancelled.get()) state.onDone()
+            if (!state.cancelled.get() && (synthetic || !state.timedOut.get())) state.onDone()
         } finally {
             pending.remove(state.id, state)
         }

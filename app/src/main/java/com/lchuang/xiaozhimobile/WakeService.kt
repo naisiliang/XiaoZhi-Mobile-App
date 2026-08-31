@@ -61,12 +61,12 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                 val engine = tts
                 if (engine != null) {
                     try {
-                        engine.stop()
+                        engine.stop() == TextToSpeech.SUCCESS
                     } catch (_: Throwable) {
-                        // The registry still delivers its bounded fallback if stop fails.
+                        false
                     }
-                }
-            }
+                } else false
+            } else false
         }
     )
     private val session = SessionController()

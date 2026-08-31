@@ -348,6 +348,7 @@ with tempfile.TemporaryDirectory() as td:
                         check(events.isEmpty()) {
                             "callbacks emitted by stop() must be stale before synthetic start: $events"
                         }
+                        true
                     }
                 )
                 val registry = timeoutRegistry
@@ -489,7 +490,8 @@ with tempfile.TemporaryDirectory() as td:
                     dispatch = { it() },
                     dispatchDelayed = { delayMs, block -> delayed += delayMs to block },
                     errorFallbackMs = 150L,
-                    watchdogMs = 250L
+                    watchdogMs = 250L,
+                    onWatchdogTimeout = { true }
                 )
                 val coordinator = ExecutionFeedbackCoordinator(
                     scheduler = DelayedScheduler { delayMs, block -> delayed += delayMs to block },
