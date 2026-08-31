@@ -233,10 +233,18 @@ def parse_release_gate_tests(source: str) -> list[str] | None:
         return None
 
     tests_index, tests = tests_info
-    aliases = {"TESTS"}
     for node in module.body[tests_index + 1:]:
-        aliases.update(_collect_new_tests_aliases(node, aliases))
-        if _mutates_tests(node, aliases):
+        if (
+            isinstance(node, ast.For)
+            and isinstance(node.target, ast.Name)
+            and node.target.id == "test"
+            and isinstance(node.iter, ast.Name)
+            and node.iter.id == "TESTS"
+        ):
+            if any(_is_tests_name(child) for statement in node.body for child in ast.walk(statement)):
+                return None
+            continue
+        if any(_is_tests_name(child) for child in ast.walk(node)):
             return None
     return tests
 
@@ -395,6 +403,20 @@ def _normalize_kotlin_fragment(source: str) -> str:
 
 
 SAFE_TOOL_REJECTION_BODY = 'rejected(ToolExecutionResult(false, "该操作不在安全工具白名单中", "REJECTED_NOT_ALLOWED"))'
+SAFE_DEVICE_ACTIONS = {
+    "OpenApp",
+    "Navigate",
+    "SearchNearby",
+    "OpenWeb",
+    "MediaPlay",
+    "MediaPause",
+    "MediaNext",
+    "MediaPrevious",
+    "MediaVolumeUp",
+    "MediaVolumeDown",
+    "SetMediaVolume",
+    "SetFlashlight",
+}
 
 
 def _parse_safe_tool_allowlist(source: str) -> tuple[list[str], list[str]] | None:
@@ -454,9 +476,96 @@ def has_single_safe_tool_rejecting_else(source: str) -> bool:
     )
 
 
+def _matching_delimiter(source: str, start: int, opening: str, closing: str) -> int | None:
+    depth = 0
+    in_string = False
+    escape = False
+    quote = ""
+    for index in range(start, len(source)):
+        char = source[index]
+        if in_string:
+            if escape:
+                escape = False
+            elif char == "\\":
+                escape = True
+            elif char == quote:
+                in_string = False
+            continue
+        if char in {'"', "'"}:
+            in_string = True
+            quote = char
+        elif char == opening:
+            depth += 1
+        elif char == closing:
+            depth -= 1
+            if depth == 0:
+                return index
+    return None
+
+
+def _has_conditional_fallthrough(block: str) -> bool:
+    for match in re.finditer(r"\bif\s*\(", block):
+        condition_start = block.find("(", match.start())
+        condition_end = _matching_delimiter(block, condition_start, "(", ")")
+        if condition_end is None:
+            return True
+        remainder = block[condition_end + 1:]
+        depths = {"(": 0, "[": 0, "{": 0}
+        in_string = False
+        escape = False
+        quote = ""
+        index = 0
+        while index < len(remainder):
+            char = remainder[index]
+            if in_string:
+                if escape:
+                    escape = False
+                elif char == "\\":
+                    escape = True
+                elif char == quote:
+                    in_string = False
+                index += 1
+                continue
+            if char in {'"', "'"}:
+                in_string = True
+                quote = char
+                index += 1
+                continue
+            if char in depths:
+                depths[char] += 1
+                index += 1
+                continue
+            if char in ")]}":
+                opening = {')': '(', ']': '[', '}': '{'}[char]
+                depths[opening] -= 1
+                index += 1
+                continue
+            if not any(depths.values()):
+                if re.match(r"else\b", remainder[index:]):
+                    break
+                if (index == 0 or remainder[index - 1] == "\n") and re.match(
+                    r"\s*(?:\"[^\"\n]+\"|else)\s*->", remainder[index:]
+                ):
+                    return True
+            index += 1
+        else:
+            return True
+    return False
+
+
 def has_exact_safe_tool_allowlist(source: str, expected: list[str]) -> bool:
     parsed = _parse_safe_tool_allowlist(source)
     if parsed is None:
+        return False
+    block = _extract_safe_tool_plan_block(source)
+    if block is None:
+        return False
+    if any(
+        action not in SAFE_DEVICE_ACTIONS
+        for action in re.findall(r"\ballowed\s*\(\s*DeviceAction\.([A-Za-z_][A-Za-z0-9_]*)", block)
+    ):
+        return False
+    if _has_conditional_fallthrough(block):
         return False
     labels, _ = parsed
     return (

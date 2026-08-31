@@ -212,6 +212,19 @@ alias.clear()
 for test in TESTS:
     subprocess.run(["python", test], cwd=root, check=True)
 """
+alias_or_cleared_tests_source = f"""from pathlib import Path
+import subprocess
+
+root = Path(__file__).resolve().parents[1]
+TESTS = [
+{render_tests(EXPECTED_RELEASE_GATE_TESTS)}
+]
+alias = TESTS or []
+alias.clear()
+
+for test in TESTS:
+    subprocess.run(["python", test], cwd=root, check=True)
+"""
 slice_cleared_tests_source = f"""from pathlib import Path
 import subprocess
 
@@ -299,6 +312,18 @@ terminal_else_rejection_then_go_home_source = safe_tools_source.replace(
     1,
 )
 assert terminal_else_rejection_then_go_home_source != safe_tools_source, "terminal safe tool rejection-then-go-home mutation did not apply"
+conditional_go_home_source = safe_tools_source.replace(
+    '        "media_play" -> allowed(DeviceAction.MediaPlay)\n',
+    '        "media_play" -> if (call.args["unsafe"] == true) allowed(DeviceAction.GoHome(sourceApp = null)) else allowed(DeviceAction.MediaPlay)\n',
+    1,
+)
+assert conditional_go_home_source != safe_tools_source, "conditional safe tool mutation did not apply"
+conditional_fallthrough_source = safe_tools_source.replace(
+    '        "media_play" -> allowed(DeviceAction.MediaPlay)\n',
+    '        "media_play" -> if (call.args["unsafe"] == true) allowed(DeviceAction.MediaPlay)\n',
+    1,
+)
+assert conditional_fallthrough_source != safe_tools_source, "conditional fallthrough mutation did not apply"
 missing_else_safe_tools_source = safe_tools_source.replace(
     '        else -> rejected(ToolExecutionResult(false, "该操作不在安全工具白名单中", "REJECTED_NOT_ALLOWED"))\n',
     "",
@@ -349,6 +374,11 @@ expect(
     "validator currently accepts a pre-run break in the TESTS loop",
 )
 expect(
+    "release gate rejects alias = TESTS or [] followed by clear",
+    not validator.release_gate_delegates_expected_tests(alias_or_cleared_tests_source, EXPECTED_RELEASE_GATE_TESTS),
+    "validator currently accepts an alias expression that can clear the TESTS list",
+)
+expect(
     "release gate rejects break after direct subprocess.run",
     not validator.has_release_gate_loop_subprocess_run(break_after_run_source),
     "validator currently accepts a post-run break in the TESTS loop",
@@ -377,6 +407,16 @@ expect(
     "safe tool allowlist rejects terminal else that only mentions rejection before allowing GoHome",
     not validator.has_exact_safe_tool_allowlist(terminal_else_rejection_then_go_home_source, EXPECTED_SAFE_TOOLS),
     "validator currently accepts a terminal else that mentions rejection text but still returns DeviceAction.GoHome",
+)
+expect(
+    "safe tool allowlist rejects GoHome allowed in any conditional branch",
+    not validator.has_exact_safe_tool_allowlist(conditional_go_home_source, EXPECTED_SAFE_TOOLS),
+    "validator currently accepts a disallowed Allowed action nested in a conditional",
+)
+expect(
+    "safe tool allowlist rejects conditional fallthrough",
+    not validator.has_exact_safe_tool_allowlist(conditional_fallthrough_source, EXPECTED_SAFE_TOOLS),
+    "validator currently accepts a conditional Allowed branch without an else",
 )
 expect(
     "safe tool allowlist requires a rejecting else branch",
