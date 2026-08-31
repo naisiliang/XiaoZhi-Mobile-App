@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import importlib.util
+import subprocess
+import sys
 import tempfile
 import warnings
 from pathlib import Path
@@ -20,11 +22,11 @@ def load_module(path: Path, name: str):
     return module
 
 
-def write_minimal_apk(path: Path) -> None:
+def write_minimal_apk(path: Path, *, classes_suffix: bytes = b"") -> None:
     with ZipFile(path, "w", compression=ZIP_DEFLATED) as archive:
         for name, content in {
             "AndroidManifest.xml": b"manifest",
-            "classes.dex": b"dex",
+            "classes.dex": b"dex" + classes_suffix,
             "lib/arm64-v8a/libsherpa-onnx-jni.so": b"jni",
             "assets/sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20/encoder-epoch-13-avg-2-chunk-16-left-64.onnx": b"encoder",
             "assets/sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20/decoder-epoch-13-avg-2-chunk-16-left-64.onnx": b"decoder",
@@ -71,6 +73,68 @@ with tempfile.TemporaryDirectory() as tmp:
     assert report["artifact_zip_filename"] == "one.zip"
     assert report["apk"]["filename"] == EXPECTED_APK_NAME
 print("PASS: wrapper artifact ZIP is deterministic and validates its contained APK")
+
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp)
+    apk = root / "direct" / EXPECTED_APK_NAME
+    apk.parent.mkdir()
+    write_minimal_apk(apk)
+    artifact_zip = root / "artifact.zip"
+    packager.create_artifact_zip(apk, artifact_zip)
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(VALIDATOR_PATH),
+            "--artifact-zip",
+            str(artifact_zip),
+            "--artifact-dir",
+            str(apk.parent),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+print("PASS: combined validation accepts equal nested and direct APKs")
+
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp)
+    wrapped_apk = root / "wrapped" / EXPECTED_APK_NAME
+    direct_dir = root / "direct"
+    direct_apk = direct_dir / EXPECTED_APK_NAME
+    wrapped_apk.parent.mkdir()
+    direct_dir.mkdir()
+    write_minimal_apk(wrapped_apk)
+    write_minimal_apk(direct_apk, classes_suffix=b"-different-valid-fixture")
+    wrapped_report = validator.validate_apk(wrapped_apk)
+    direct_report = validator.validate_apk(direct_apk)
+    assert wrapped_report["filename"] == direct_report["filename"] == EXPECTED_APK_NAME
+    assert wrapped_report["size_bytes"] != direct_report["size_bytes"]
+    assert wrapped_report["sha256"] != direct_report["sha256"]
+    artifact_zip = root / "artifact.zip"
+    packager.create_artifact_zip(wrapped_apk, artifact_zip)
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(VALIDATOR_PATH),
+            "--artifact-zip",
+            str(artifact_zip),
+            "--artifact-dir",
+            str(direct_dir),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode == 1, (
+        "combined validation must reject individually valid APKs with mismatched "
+        f"bytes; got exit {result.returncode}: {output}"
+    )
+    assert "mismatch" in output.lower(), output
+print("PASS: combined validation rejects mismatched valid APKs")
 
 with tempfile.TemporaryDirectory() as tmp:
     root = Path(tmp)

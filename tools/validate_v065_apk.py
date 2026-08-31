@@ -133,6 +133,21 @@ def validate_artifact_zip(artifact_zip_path: Path) -> dict[str, object]:
     }
 
 
+def require_matching_apk_reports(
+    contained_report: dict[str, object], direct_report: dict[str, object]
+) -> None:
+    mismatched_fields = [
+        field
+        for field in ("filename", "size_bytes", "sha256")
+        if contained_report[field] != direct_report[field]
+    ]
+    if mismatched_fields:
+        raise ArtifactValidationError(
+            "artifact ZIP contained APK and direct APK metadata mismatch: "
+            + ", ".join(mismatched_fields)
+        )
+
+
 def write_report(report_path: Path, report: dict[str, object]) -> None:
     report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
@@ -151,6 +166,11 @@ def main() -> int:
             reports["artifact_zip"] = validate_artifact_zip(args.artifact_zip)
         if args.artifact_dir is not None:
             reports["direct_apk"] = validate_artifact_directory(args.artifact_dir)
+        if args.artifact_zip is not None and args.artifact_dir is not None:
+            require_matching_apk_reports(
+                reports["artifact_zip"]["apk"],
+                reports["direct_apk"],
+            )
         report = reports["artifact_zip"] if args.artifact_zip is not None else reports["direct_apk"]
         if args.report is not None:
             write_report(args.report, reports if len(reports) > 1 else report)
