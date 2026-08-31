@@ -45,6 +45,12 @@ def render_tests(tests: list[str]) -> str:
     return "\n".join(f'    "{test}",' for test in tests)
 
 
+def render_safe_tool_when(labels: list[str], else_body: str) -> str:
+    branches = [f'        "{label}" -> allowed(DeviceAction.MediaPlay)' for label in labels]
+    branches.append(f"        else -> {else_body}")
+    return "\n".join(branches)
+
+
 def expect(name: str, ok: bool, detail: str) -> None:
     if ok:
         print(f"PASS: {name}")
@@ -193,6 +199,31 @@ TESTS.clear()
 for test in TESTS:
     subprocess.run(["python", test], cwd=root, check=True)
 """
+alias_cleared_tests_source = f"""from pathlib import Path
+import subprocess
+
+root = Path(__file__).resolve().parents[1]
+TESTS = [
+{render_tests(EXPECTED_RELEASE_GATE_TESTS)}
+]
+alias = TESTS
+alias.clear()
+
+for test in TESTS:
+    subprocess.run(["python", test], cwd=root, check=True)
+"""
+slice_cleared_tests_source = f"""from pathlib import Path
+import subprocess
+
+root = Path(__file__).resolve().parents[1]
+TESTS = [
+{render_tests(EXPECTED_RELEASE_GATE_TESTS)}
+]
+TESTS[:] = []
+
+for test in TESTS:
+    subprocess.run(["python", test], cwd=root, check=True)
+"""
 break_before_run_source = f"""from pathlib import Path
 import subprocess
 
@@ -206,12 +237,49 @@ for test in TESTS:
         break
     subprocess.run(["python", test], cwd=root, check=True)
 """
+outer_try_except_pass_source = f"""from pathlib import Path
+import subprocess
+
+root = Path(__file__).resolve().parents[1]
+TESTS = [
+{render_tests(EXPECTED_RELEASE_GATE_TESTS)}
+]
+
+try:
+    for test in TESTS:
+        subprocess.run(["python", test], cwd=root, check=True)
+except Exception:
+    pass
+"""
 terminal_else_go_home_source = safe_tools_source.replace(
     '        "media_play" -> allowed(DeviceAction.MediaPlay)\n',
     '        "media_play" -> if (terminal) allowed(DeviceAction.MediaPlay) else allowed(DeviceAction.GoHome(sourceApp = null))\n',
     1,
 )
 assert terminal_else_go_home_source != safe_tools_source, "terminal safe tool mutation did not apply"
+missing_else_safe_tools_source = safe_tools_source.replace(
+    '        else -> rejected(ToolExecutionResult(false, "该操作不在安全工具白名单中", "REJECTED_NOT_ALLOWED"))\n',
+    "",
+    1,
+)
+assert missing_else_safe_tools_source != safe_tools_source, "missing else safe tool mutation did not apply"
+else_go_home_safe_tools_source = safe_tools_source.replace(
+    '        else -> rejected(ToolExecutionResult(false, "该操作不在安全工具白名单中", "REJECTED_NOT_ALLOWED"))',
+    '        else -> allowed(DeviceAction.GoHome(sourceApp = null))',
+    1,
+)
+assert else_go_home_safe_tools_source != safe_tools_source, "go-home else safe tool mutation did not apply"
+decoy_when = f"""private fun decoyPlan(call: AiToolCall): SafeToolPlan = when (call.tool) {{
+{render_safe_tool_when(EXPECTED_SAFE_TOOLS, 'rejected(ToolExecutionResult(false, "该操作不在安全工具白名单中", "REJECTED_NOT_ALLOWED"))')}
+    }}
+"""
+decoy_earlier_safe_tools_source = decoy_when + safe_tools_source.replace(
+    '        else -> rejected(ToolExecutionResult(false, "该操作不在安全工具白名单中", "REJECTED_NOT_ALLOWED"))',
+    '        "go_home" -> allowed(DeviceAction.GoHome(sourceApp = null))\n'
+    '        else -> rejected(ToolExecutionResult(false, "该操作不在安全工具白名单中", "REJECTED_NOT_ALLOWED"))',
+    1,
+)
+assert decoy_earlier_safe_tools_source != safe_tools_source, "decoy earlier safe tool mutation did not apply"
 
 expect(
     "release gate rejects try-wrapped subprocess.run",
@@ -224,14 +292,44 @@ expect(
     "validator currently accepts TESTS after reassignment and clear()",
 )
 expect(
+    "release gate rejects alias.clear on TESTS",
+    not validator.release_gate_delegates_expected_tests(alias_cleared_tests_source, EXPECTED_RELEASE_GATE_TESTS),
+    "validator currently accepts alias.clear() on the TESTS list",
+)
+expect(
+    "release gate rejects TESTS slice clearing",
+    not validator.release_gate_delegates_expected_tests(slice_cleared_tests_source, EXPECTED_RELEASE_GATE_TESTS),
+    "validator currently accepts TESTS[:] = [] after the top-level assignment",
+)
+expect(
     "release gate rejects break before subprocess.run",
     not validator.has_release_gate_loop_subprocess_run(break_before_run_source),
     "validator currently accepts a pre-run break in the TESTS loop",
 )
 expect(
+    "release gate rejects outer try except swallowing the loop",
+    not validator.has_release_gate_loop_subprocess_run(outer_try_except_pass_source),
+    "validator currently accepts an outer try/except pass around the TESTS loop",
+)
+expect(
     "safe tool allowlist rejects terminal else GoHome branch",
     not validator.has_exact_safe_tool_allowlist(terminal_else_go_home_source, EXPECTED_SAFE_TOOLS),
     "validator currently accepts an allowed branch that falls back to DeviceAction.GoHome",
+)
+expect(
+    "safe tool allowlist requires a rejecting else branch",
+    not validator.has_exact_safe_tool_allowlist(missing_else_safe_tools_source, EXPECTED_SAFE_TOOLS),
+    "validator currently accepts SafeToolExecutor.plan without a terminal rejecting else",
+)
+expect(
+    "safe tool allowlist rejects else allowing GoHome",
+    not validator.has_exact_safe_tool_allowlist(else_go_home_safe_tools_source, EXPECTED_SAFE_TOOLS),
+    "validator currently accepts an else branch that allows DeviceAction.GoHome",
+)
+expect(
+    "safe tool allowlist inspects the actual plan block instead of earlier decoys",
+    not validator.has_exact_safe_tool_allowlist(decoy_earlier_safe_tools_source, EXPECTED_SAFE_TOOLS),
+    "validator currently accepts an earlier decoy when(call.tool) while the actual plan adds a tool",
 )
 
 if failures:

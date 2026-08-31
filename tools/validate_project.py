@@ -151,23 +151,68 @@ def _parse_string_list_literal(node: ast.AST | None) -> list[str] | None:
     return values
 
 
-def _mutates_tests(node: ast.AST) -> bool:
+def _target_base_name(node: ast.AST) -> str | None:
+    current = node
+    while isinstance(current, (ast.Subscript, ast.Attribute)):
+        current = current.value
+    if isinstance(current, ast.Name):
+        return current.id
+    return None
+
+
+def _target_names(node: ast.AST) -> list[str]:
+    if isinstance(node, ast.Name):
+        return [node.id]
+    if isinstance(node, (ast.Tuple, ast.List)):
+        names: list[str] = []
+        for item in node.elts:
+            names.extend(_target_names(item))
+        return names
+    return []
+
+
+def _is_direct_tests_alias(node: ast.AST, aliases: set[str]) -> bool:
+    return isinstance(node, ast.Name) and node.id in aliases
+
+
+def _collect_new_tests_aliases(node: ast.AST, aliases: set[str]) -> set[str]:
+    new_aliases: set[str] = set()
     for child in ast.walk(node):
-        if isinstance(child, ast.Name) and child.id == "TESTS" and isinstance(child.ctx, (ast.Store, ast.Del)):
+        value: ast.AST | None = None
+        targets: list[ast.AST] = []
+        if isinstance(child, ast.Assign):
+            value = child.value
+            targets = child.targets
+        elif isinstance(child, ast.AnnAssign):
+            value = child.value
+            targets = [child.target]
+        if value is None or not _is_direct_tests_alias(value, aliases):
+            continue
+        for target in targets:
+            new_aliases.update(name for name in _target_names(target) if name not in aliases)
+    return new_aliases
+
+
+def _mutates_tests(node: ast.AST, aliases: set[str]) -> bool:
+    for child in ast.walk(node):
+        if isinstance(child, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            targets = child.targets if isinstance(child, ast.Assign) else [child.target]
+            if any(_target_base_name(target) in aliases for target in targets):
+                return True
+        if isinstance(child, ast.Delete) and any(_target_base_name(target) in aliases for target in child.targets):
             return True
         if (
             isinstance(child, ast.Call)
             and isinstance(child.func, ast.Attribute)
             and isinstance(child.func.value, ast.Name)
-            and child.func.value.id == "TESTS"
+            and child.func.value.id in aliases
             and child.func.attr in {"append", "clear", "extend", "insert", "pop", "remove", "reverse", "sort"}
         ):
             return True
     return False
 
 
-def parse_release_gate_tests(source: str) -> list[str] | None:
-    module = ast.parse(source)
+def _find_top_level_tests_assignment(module: ast.Module) -> tuple[int, list[str]] | None:
     tests_values: list[tuple[int, list[str]]] = []
     for index, node in enumerate(module.body):
         parsed = _parse_string_list_literal(_tests_assignment_value(node))
@@ -178,10 +223,20 @@ def parse_release_gate_tests(source: str) -> list[str] | None:
             return None
     if len(tests_values) != 1:
         return None
+    return tests_values[0]
 
-    tests_index, tests = tests_values[0]
+
+def parse_release_gate_tests(source: str) -> list[str] | None:
+    module = ast.parse(source)
+    tests_info = _find_top_level_tests_assignment(module)
+    if tests_info is None:
+        return None
+
+    tests_index, tests = tests_info
+    aliases = {"TESTS"}
     for node in module.body[tests_index + 1:]:
-        if _mutates_tests(node):
+        aliases.update(_collect_new_tests_aliases(node, aliases))
+        if _mutates_tests(node, aliases):
             return None
     return tests
 
@@ -228,7 +283,7 @@ def _contains_pre_run_exit(node: ast.AST) -> bool:
 
 def has_release_gate_loop_subprocess_run(source: str) -> bool:
     module = ast.parse(source)
-    for node in ast.walk(module):
+    for node in module.body:
         if not (
             isinstance(node, ast.For)
             and isinstance(node.target, ast.Name)
@@ -317,15 +372,35 @@ def _extract_braced_block(source: str, marker_re: re.Pattern[str]) -> str | None
     return None
 
 
-def _parse_safe_tool_allowlist(source: str) -> list[str] | None:
-    block = _extract_braced_block(source, re.compile(r"when\s*\(\s*call\.tool\s*\)\s*\{"))
+def _extract_safe_tool_plan_block(source: str) -> str | None:
+    return _extract_braced_block(
+        source,
+        re.compile(r"fun\s+plan\s*\(\s*call\s*:\s*AiToolCall\s*\)\s*:\s*SafeToolPlan\s*=\s*when\s*\(\s*call\.tool\s*\)\s*\{"),
+    )
+
+
+def _extract_when_entries(block: str) -> list[tuple[str, str]]:
+    matches = list(re.finditer(r"^\s*([^\n]+?)\s*->", block, flags=re.MULTILINE))
+    entries: list[tuple[str, str]] = []
+    for index, match in enumerate(matches):
+        label = match.group(1).strip()
+        body_start = match.end()
+        body_end = matches[index + 1].start() if index + 1 < len(matches) else len(block)
+        entries.append((label, block[body_start:body_end].strip()))
+    return entries
+
+
+def _parse_safe_tool_allowlist(source: str) -> tuple[list[str], list[str]] | None:
+    block = _extract_safe_tool_plan_block(source)
     if block is None:
         return None
 
     labels = []
-    for raw_entry in re.findall(r"^\s*([^\n]+?)\s*->", block, flags=re.MULTILINE):
+    else_bodies: list[str] = []
+    for raw_entry, body in _extract_when_entries(block):
         stripped = raw_entry.strip()
         if stripped == "else":
+            else_bodies.append(body)
             continue
         for raw_label in stripped.split(","):
             label = raw_label.strip()
@@ -333,29 +408,48 @@ def _parse_safe_tool_allowlist(source: str) -> list[str] | None:
             if match is None:
                 return None
             labels.append(match.group(1))
-    return labels
+    return labels, else_bodies
 
 
 def extract_safe_tool_allowlist(source: str) -> list[str]:
-    return _parse_safe_tool_allowlist(source) or []
+    parsed = _parse_safe_tool_allowlist(source)
+    return parsed[0] if parsed is not None else []
 
 
 def has_safe_tool_terminal_else_rejection(source: str) -> bool:
+    block = _extract_safe_tool_plan_block(source)
+    if block is None:
+        return False
     search_from = 0
     while True:
-        match = re.search(r"if\s*\(\s*terminal\s*\)", source[search_from:])
+        match = re.search(r"if\s*\(\s*terminal\s*\)", block[search_from:])
         if match is None:
             return True
         start = search_from + match.start()
-        snippet = source[start:start + 400]
+        snippet = block[start:start + 400]
         if "else rejected(" not in snippet or "REJECTED_NOT_ALLOWED" not in snippet:
             return False
         search_from = start + len("if (terminal)")
 
 
+def has_single_safe_tool_rejecting_else(source: str) -> bool:
+    parsed = _parse_safe_tool_allowlist(source)
+    if parsed is None:
+        return False
+    _, else_bodies = parsed
+    return len(else_bodies) == 1 and "rejected(" in else_bodies[0] and "REJECTED_NOT_ALLOWED" in else_bodies[0]
+
+
 def has_exact_safe_tool_allowlist(source: str, expected: list[str]) -> bool:
-    labels = _parse_safe_tool_allowlist(source)
-    return labels == expected and has_safe_tool_terminal_else_rejection(source)
+    parsed = _parse_safe_tool_allowlist(source)
+    if parsed is None:
+        return False
+    labels, _ = parsed
+    return (
+        labels == expected
+        and has_single_safe_tool_rejecting_else(source)
+        and has_safe_tool_terminal_else_rejection(source)
+    )
 
 
 def find_home_exit_forbidden_capabilities(source: str) -> list[str]:
