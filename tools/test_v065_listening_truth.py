@@ -108,7 +108,7 @@ capture = function_body("captureCommandAudio")
 assert "onRecordingStarted: () -> Unit" in wake
 record_start = capture.find("record.startRecording()")
 recording_check = capture.find(
-    "record.recordingState == AudioRecord.RECORDSTATE_RECORDING", record_start
+    "record.recordingState != AudioRecord.RECORDSTATE_RECORDING", record_start
 )
 started_callback = capture.find("onRecordingStarted()", recording_check)
 assert min(record_start, recording_check, started_callback) >= 0, (
@@ -121,6 +121,9 @@ assert record_start < recording_check < started_callback, (
     recording_check,
     started_callback,
 )
+assert "throw CommandAudioCaptureException(CommandAudioCaptureFailureKind.AUDIO_START)" in capture[
+    recording_check:started_callback
+]
 assert 'throw CommandAudioCaptureException(CommandAudioCaptureFailureKind.AUDIO_INIT)' in capture[:record_start]
 assert 'throw CommandAudioCaptureException(CommandAudioCaptureFailureKind.AUDIO_START, e)' in capture
 

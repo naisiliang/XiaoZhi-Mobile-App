@@ -22,10 +22,11 @@ capture=re.search(r'private fun captureCommandAudio\(onRecordingStarted: \(\) ->
 assert capture, 'captureCommandAudio callback missing'
 capture_body=capture.group(1)
 record_start=capture_body.find('record.startRecording()')
-recording_check=capture_body.find('record.recordingState == AudioRecord.RECORDSTATE_RECORDING')
+recording_check=capture_body.find('record.recordingState != AudioRecord.RECORDSTATE_RECORDING')
 started_callback=capture_body.find('onRecordingStarted()')
 assert min(record_start,recording_check,started_callback) >= 0
 assert record_start < recording_check < started_callback
+assert 'throw CommandAudioCaptureException(CommandAudioCaptureFailureKind.AUDIO_START)' in capture_body[recording_check:started_callback]
 capture_integration=wake.find('val samples = captureCommandAudio {')
 listening=wake.find('setConversationState(ConversationState.LISTENING)',capture_integration)
 touch=wake.find('session.touch(settings.sessionTimeoutSeconds)',listening)

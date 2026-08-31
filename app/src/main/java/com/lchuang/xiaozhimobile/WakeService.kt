@@ -483,8 +483,8 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
             } catch (e: Throwable) {
                 throw CommandAudioCaptureException(CommandAudioCaptureFailureKind.AUDIO_START, e)
             }
-            check(record.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
-                CommandAudioCaptureException(CommandAudioCaptureFailureKind.AUDIO_START)
+            if (record.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
+                throw CommandAudioCaptureException(CommandAudioCaptureFailureKind.AUDIO_START)
             }
             onRecordingStarted()
 
