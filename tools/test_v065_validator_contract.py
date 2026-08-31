@@ -40,6 +40,22 @@ EXPECTED_RELEASE_GATE_TESTS = [
     "tools/test_v065_validator_contract.py",
     "tools/test_v065_apk_validator_contract.py",
 ]
+EXPECTED_HISTORICAL_TESTS = [
+    "tools/test_v031_behavior.py",
+    "tools/test_v040_voice_flow.py",
+    "tools/test_v050_session.py",
+    "tools/test_v050_voice_flow.py",
+    "tools/test_v060_safe_tools.py",
+    "tools/test_v060_security.py",
+    "tools/test_v063_custom_wake_ppinyin.py",
+    "tools/test_v063_wake_error_diagnostics.py",
+    "tools/test_v064_wake_regression.py",
+    "tools/test_v064_exit_intent.py",
+    "tools/test_v064_volume_parser.py",
+    "tools/test_v064_volume_execution.py",
+    "tools/test_v064_command_prompt_flow.py",
+    "tools/test_v064_duplicate_guard.py",
+]
 failures: list[str] = []
 
 
@@ -70,6 +86,12 @@ def load_validator_module():
 
 validator = load_validator_module()
 token_fixture = "sk-" + "abcdefghijklmnopqrstuvwxyz123456"
+
+expect(
+    "historical test list exact",
+    validator.REQUIRED_HISTORICAL_TESTS == EXPECTED_HISTORICAL_TESTS,
+    "required historical tests must retain every prior entry and include v0.5 voice flow in order",
+)
 
 
 for forbidden in ("su", "shell", "forceStopPackage", "killBackgroundProcesses"):

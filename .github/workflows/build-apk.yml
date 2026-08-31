@@ -34,6 +34,7 @@ jobs:
           python3 tools/test_v031_behavior.py
           python3 tools/test_v040_voice_flow.py
           python3 tools/test_v050_session.py
+          python3 tools/test_v050_voice_flow.py
           python3 tools/test_v060_security.py
           python3 tools/test_v063_custom_wake_ppinyin.py
           python3 tools/test_v063_wake_error_diagnostics.py
