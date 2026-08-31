@@ -109,6 +109,10 @@ assert 0 <= safe_plan < allowed < same_funnel, "AI tools must plan then use exec
 assert rejected >= 0 and "SAFETY_REJECTED" in tool_branch[rejected:], (
     "rejected AI tools must report SAFETY_REJECTED"
 )
+rejected_block = braced_block(tool_branch, "is SafeToolPlan.Rejected ->")
+assert 'commandResultNotifier.failure("❌ 执行失败：${failureKind.name}")' in rejected_block, (
+    "rejected AI tools must retain their failure notification"
+)
 assert "safeToolExecutor.execute" not in tool_branch, "AI tools must never bypass SafeToolExecutor.plan"
 
 utterance = function_body("processUtterance")
@@ -320,6 +324,10 @@ with tempfile.TemporaryDirectory() as td:
                 }
                 check(notifier.retainedText() == "❌ 执行失败：打开微信") {
                     "failure text should also be retained"
+                }
+                notifier.publishTransient("连续会话中...")
+                check(published.last() == "❌ 执行失败：打开微信") {
+                    "failure retention must suppress transient recovery notification: $published"
                 }
                 notifier.clearRetention()
                 check(notifier.retainedText() == null) {
