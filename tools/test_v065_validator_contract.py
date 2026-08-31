@@ -188,6 +188,18 @@ globals()["TEST" + "S"] = []
 for test in TESTS:
     subprocess.run(["python", test], cwd=root, check=True)
 """
+loop_target_reassignment_source = f"""from pathlib import Path
+import subprocess
+
+root = Path(__file__).resolve().parents[1]
+TESTS = [
+{render_tests(EXPECTED_RELEASE_GATE_TESTS)}
+]
+
+for test in TESTS:
+    test = "tools/test_v065_validator_contract.py"
+    subprocess.run(["python", test], cwd=root, check=True)
+"""
 assert not validator.release_gate_delegates_expected_tests(comment_only_frozen_guard, EXPECTED_RELEASE_GATE_TESTS)
 assert not validator.has_release_gate_loop_subprocess_run(broken_loop_source)
 assert not validator.has_release_gate_loop_subprocess_run(unreachable_nested_run_source)
@@ -405,6 +417,11 @@ expect(
     "release gate rejects globals rebinding of TESTS",
     not validator.release_gate_delegates_expected_tests(globals_rebinding_source, EXPECTED_RELEASE_GATE_TESTS),
     "validator currently accepts globals()[...] rebinding of TESTS",
+)
+expect(
+    "release gate rejects loop target reassignment before subprocess.run",
+    not validator.has_release_gate_loop_subprocess_run(loop_target_reassignment_source),
+    "validator currently accepts reassignment of the TESTS loop variable before subprocess.run",
 )
 expect(
     "release gate rejects break after direct subprocess.run",

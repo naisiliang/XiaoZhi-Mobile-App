@@ -310,6 +310,25 @@ def _contains_release_gate_loop_exit(node: ast.AST) -> bool:
     return any(isinstance(child, (ast.Break, ast.Continue, ast.Return, ast.Try)) for child in ast.walk(node))
 
 
+def _contains_release_gate_loop_target_mutation(node: ast.AST, target_name: str) -> bool:
+    for child in ast.walk(node):
+        if isinstance(child, ast.Name) and child.id == target_name and isinstance(child.ctx, (ast.Store, ast.Del)):
+            return True
+        if isinstance(child, (ast.Attribute, ast.Subscript)) and _target_base_name(child) == target_name:
+            if isinstance(child.ctx, (ast.Store, ast.Del)):
+                return True
+        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            if any(argument.arg == target_name for argument in child.args.posonlyargs + child.args.args + child.args.kwonlyargs):
+                return True
+        if isinstance(child, ast.ExceptHandler) and child.name == target_name:
+            return True
+        if isinstance(child, ast.alias) and child.asname == target_name:
+            return True
+        if isinstance(child, (ast.Global, ast.Nonlocal)) and target_name in child.names:
+            return True
+    return False
+
+
 def has_release_gate_loop_subprocess_run(source: str) -> bool:
     module = ast.parse(source)
     for node in module.body:
@@ -322,6 +341,8 @@ def has_release_gate_loop_subprocess_run(source: str) -> bool:
         ):
             continue
         if any(_contains_release_gate_loop_exit(statement) for statement in node.body):
+            return False
+        if any(_contains_release_gate_loop_target_mutation(statement, node.target.id) for statement in node.body):
             return False
         for statement in node.body:
             if _is_direct_python_test_run_statement(statement):
