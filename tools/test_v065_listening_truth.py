@@ -121,8 +121,8 @@ assert record_start < recording_check < started_callback, (
     recording_check,
     started_callback,
 )
-assert 'throw IllegalStateException("AUDIO_INIT")' in capture[:record_start]
-assert 'throw IllegalStateException("AUDIO_START", e)' in capture
+assert 'throw CommandAudioCaptureException(CommandAudioCaptureFailureKind.AUDIO_INIT)' in capture[:record_start]
+assert 'throw CommandAudioCaptureException(CommandAudioCaptureFailureKind.AUDIO_START, e)' in capture
 
 speak_progress = function_body("speakWithProgress")
 assert "startLocalCommandRecognition()" not in speak_progress

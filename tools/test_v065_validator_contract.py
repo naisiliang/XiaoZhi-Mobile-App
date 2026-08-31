@@ -33,6 +33,7 @@ EXPECTED_RELEASE_GATE_TESTS = [
     "tools/test_v065_safe_tool_planning.py",
     "tools/test_v065_execution_copy.py",
     "tools/test_v065_execution_feedback.py",
+    "tools/test_v065_final_review_fixes.py",
     "tools/test_v065_listening_truth.py",
     "tools/test_v065_adaptive_vad.py",
     "tools/test_v065_noise_suppressor.py",

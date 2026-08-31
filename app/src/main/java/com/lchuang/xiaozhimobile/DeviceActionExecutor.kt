@@ -1,43 +1,59 @@
 package com.lchuang.xiaozhimobile
 
+import java.util.concurrent.atomic.AtomicBoolean
+
 class DeviceActionExecutor(
     private val phone: PhoneController,
     private val appExitController: AppExitController
 ) {
     fun execute(action: DeviceAction, callback: (DeviceExecutionResult) -> Unit) {
-        when (action) {
-            is DeviceAction.OpenApp -> callback(appResult(action.name, phone.openApp(action.name)))
-            is DeviceAction.GoHome -> callback(homeResult(action.sourceApp, appExitController.goHome()))
-            is DeviceAction.OpenMap -> callback(mapResult(phone.openMap(action.preference)))
-            is DeviceAction.SearchNearby -> phone.searchNearby(action.keyword, action.preference) { result ->
-                callback(mapResult(result))
+        val delivered = AtomicBoolean(false)
+        fun deliver(result: DeviceExecutionResult) {
+            if (!delivered.compareAndSet(false, true)) return
+            callback(result)
+        }
+
+        try {
+            when (action) {
+                is DeviceAction.OpenApp -> deliver(appResult(action.name, phone.openApp(action.name)))
+                is DeviceAction.GoHome -> deliver(homeResult(action.sourceApp, appExitController.goHome()))
+                is DeviceAction.OpenMap -> deliver(mapResult(phone.openMap(action.preference)))
+                is DeviceAction.SearchNearby -> phone.searchNearby(action.keyword, action.preference) { result ->
+                    try {
+                        deliver(mapResult(result))
+                    } catch (_: Throwable) {
+                        deliver(executionFailure())
+                    }
+                }
+                is DeviceAction.Navigate -> deliver(mapResult(phone.navigate(action.destination, action.preference)))
+                is DeviceAction.OpenWeb -> {
+                    val success = phone.openBrowser(action.target)
+                    deliver(if (success) {
+                        ok("OPEN_WEB_OK", "浏览器已打开", "打开浏览器")
+                    } else {
+                        failed("OPEN_WEB_FAILED", "没有成功打开浏览器", "打开浏览器失败")
+                    })
+                }
+                DeviceAction.MediaPlay -> { phone.mediaPlay(); deliver(ok("MEDIA_PLAY", "音乐已开始播放", "播放音乐")) }
+                DeviceAction.MediaPause -> { phone.mediaPause(); deliver(ok("MEDIA_PAUSE", "已暂停", "暂停播放")) }
+                DeviceAction.MediaStop -> { phone.mediaStop(); deliver(ok("MEDIA_STOP", "已停止播放", "停止播放")) }
+                DeviceAction.MediaNext -> { phone.mediaNext(); deliver(ok("MEDIA_NEXT", "已切换到下一首", "下一首")) }
+                DeviceAction.MediaPrevious -> { phone.mediaPrevious(); deliver(ok("MEDIA_PREVIOUS", "已切换到上一首", "上一首")) }
+                is DeviceAction.SetMediaVolume -> deliver(volumeResult(phone.setMediaVolumePercent(action.percent), "SET_VOLUME"))
+                DeviceAction.MediaVolumeUp -> deliver(volumeResult(phone.volumeUpVerified(), "VOLUME_UP"))
+                DeviceAction.MediaVolumeDown -> deliver(volumeResult(phone.volumeDownVerified(), "VOLUME_DOWN"))
+                is DeviceAction.SetFlashlight -> {
+                    val success = phone.setFlashlight(action.enabled)
+                    val verb = if (action.enabled) "打开" else "关闭"
+                    deliver(if (success) {
+                        ok("FLASHLIGHT_${if (action.enabled) "ON" else "OFF"}", "手电筒已$verb", "${verb}手电筒")
+                    } else {
+                        failed("FLASHLIGHT_FAILED", "没有成功${verb}手电筒", "${verb}手电筒失败")
+                    })
+                }
             }
-            is DeviceAction.Navigate -> callback(mapResult(phone.navigate(action.destination, action.preference)))
-            is DeviceAction.OpenWeb -> {
-                val success = phone.openBrowser(action.target)
-                callback(if (success) {
-                    ok("OPEN_WEB_OK", "浏览器已打开", "打开浏览器")
-                } else {
-                    failed("OPEN_WEB_FAILED", "没有成功打开浏览器", "打开浏览器失败")
-                })
-            }
-            DeviceAction.MediaPlay -> { phone.mediaPlay(); callback(ok("MEDIA_PLAY", "音乐已开始播放", "播放音乐")) }
-            DeviceAction.MediaPause -> { phone.mediaPause(); callback(ok("MEDIA_PAUSE", "已暂停", "暂停播放")) }
-            DeviceAction.MediaStop -> { phone.mediaStop(); callback(ok("MEDIA_STOP", "已停止播放", "停止播放")) }
-            DeviceAction.MediaNext -> { phone.mediaNext(); callback(ok("MEDIA_NEXT", "已切换到下一首", "下一首")) }
-            DeviceAction.MediaPrevious -> { phone.mediaPrevious(); callback(ok("MEDIA_PREVIOUS", "已切换到上一首", "上一首")) }
-            is DeviceAction.SetMediaVolume -> callback(volumeResult(phone.setMediaVolumePercent(action.percent), "SET_VOLUME"))
-            DeviceAction.MediaVolumeUp -> callback(volumeResult(phone.volumeUpVerified(), "VOLUME_UP"))
-            DeviceAction.MediaVolumeDown -> callback(volumeResult(phone.volumeDownVerified(), "VOLUME_DOWN"))
-            is DeviceAction.SetFlashlight -> {
-                val success = phone.setFlashlight(action.enabled)
-                val verb = if (action.enabled) "打开" else "关闭"
-                callback(if (success) {
-                    ok("FLASHLIGHT_${if (action.enabled) "ON" else "OFF"}", "手电筒已$verb", "${verb}手电筒")
-                } else {
-                    failed("FLASHLIGHT_FAILED", "没有成功${verb}手电筒", "${verb}手电筒失败")
-                })
-            }
+        } catch (_: Throwable) {
+            deliver(executionFailure())
         }
     }
 
@@ -89,4 +105,13 @@ class DeviceActionExecutor(
 
     private fun failed(code: String, spoken: String, summary: String) =
         DeviceExecutionResult(false, code, spoken, summary, CommandFailureKind.EXECUTION_FAILED)
+
+    private fun executionFailure() =
+        DeviceExecutionResult(
+            false,
+            "EXECUTION_FAILED",
+            "设备操作执行失败",
+            "设备操作执行失败",
+            CommandFailureKind.EXECUTION_FAILED
+        )
 }

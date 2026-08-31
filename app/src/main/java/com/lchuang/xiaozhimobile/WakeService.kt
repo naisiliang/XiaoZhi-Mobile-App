@@ -443,6 +443,12 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                     if (!isCurrentCommandSession(generation)) return@post
                     processUtterance(text)
                 }
+            } catch (e: CommandAudioCaptureException) {
+                mainHandler.post {
+                    if (!isCurrentCommandSession(generation)) return@post
+                    commandRecognitionAttempts = (commandRecognitionAttempts - 1).coerceAtLeast(0)
+                    recoverCommandAudioCaptureFailure(e.kind)
+                }
             } catch (e: Throwable) {
                 val reason = e.message ?: e.javaClass.simpleName
                 mainHandler.post {
@@ -459,21 +465,27 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
 
     private fun captureCommandAudio(onRecordingStarted: () -> Unit): FloatArray {
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            throw IllegalStateException("PERMISSION")
+            throw CommandAudioCaptureException(CommandAudioCaptureFailureKind.PERMISSION)
         }
-        val record = newAudioRecord()
+        val record = try {
+            newAudioRecord()
+        } catch (e: Throwable) {
+            throw CommandAudioCaptureException(CommandAudioCaptureFailureKind.AUDIO_INIT, e)
+        }
         audioRecord = record
         if (record.state != AudioRecord.STATE_INITIALIZED) {
-            throw IllegalStateException("AUDIO_INIT")
+            throw CommandAudioCaptureException(CommandAudioCaptureFailureKind.AUDIO_INIT)
         }
         val enhancement = audioEnhancementManager.attach(record)
         try {
             try {
                 record.startRecording()
             } catch (e: Throwable) {
-                throw IllegalStateException("AUDIO_START", e)
+                throw CommandAudioCaptureException(CommandAudioCaptureFailureKind.AUDIO_START, e)
             }
-            check(record.recordingState == AudioRecord.RECORDSTATE_RECORDING) { "AUDIO_START" }
+            check(record.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
+                CommandAudioCaptureException(CommandAudioCaptureFailureKind.AUDIO_START)
+            }
             onRecordingStarted()
 
             val remainingAtStart = session.remainingMs()
@@ -575,6 +587,11 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
     private fun retryLocalCommandRecognition(reason: String) {
         updateNotification("本地语音识别失败：$reason")
         recoverRecognitionFailure(CommandFailureKind.ASR_EMPTY)
+    }
+
+    private fun recoverCommandAudioCaptureFailure(kind: CommandAudioCaptureFailureKind) {
+        updateNotification("本地语音输入不可用：${CommandAudioCaptureRecovery.message(kind)}")
+        requestConversationExit(CommandAudioCaptureRecovery.message(kind))
     }
 
     private fun recoverRecognitionFailure(kind: CommandFailureKind) {

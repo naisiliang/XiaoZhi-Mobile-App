@@ -25,6 +25,7 @@ class ExecutionFeedbackCoordinator(
 ) {
     private class PendingExecution {
         val cancelled = AtomicBoolean(false)
+        val resultDelivered = AtomicBoolean(false)
         val finished = AtomicBoolean(false)
     }
 
@@ -59,13 +60,14 @@ class ExecutionFeedbackCoordinator(
             if (!isCurrent()) return@speak
             scheduler.postDelayed(actionDelayMs) {
                 if (!isCurrent()) return@postDelayed
-                runner.run(transaction.action) { result ->
-                    if (!isCurrent()) return@run
+                fun deliverResult(result: DeviceExecutionResult) {
+                    if (!isCurrent()) return
+                    if (!execution.resultDelivered.compareAndSet(false, true)) return
                     val copy = formatter.finalCopy(transaction.action, result, continuation)
-                    if (!isCurrent()) return@run
+                    if (!isCurrent()) return
                     copy.successNotification?.let(notifier::success)
                     copy.failureNotification?.let(notifier::failure)
-                    if (!isCurrent()) return@run
+                    if (!isCurrent()) return
                     speech.speak(requireNotNull(copy.finalSpoken), onStart = {}, onDone = {
                         if (!isCurrent()) return@speak
                         if (!execution.finished.compareAndSet(false, true)) return@speak
@@ -74,6 +76,26 @@ class ExecutionFeedbackCoordinator(
                         if (!isValid()) return@speak
                         onFinished(transaction.copy(result = result))
                     })
+                }
+
+                try {
+                    runner.run(transaction.action) { result ->
+                        deliverResult(result)
+                    }
+                } catch (_: Throwable) {
+                    try {
+                        deliverResult(
+                            DeviceExecutionResult(
+                                false,
+                                "EXECUTION_FAILED",
+                                "设备操作执行失败",
+                                "设备操作执行失败",
+                                CommandFailureKind.EXECUTION_FAILED
+                            )
+                        )
+                    } catch (_: Throwable) {
+                        // A failing feedback callback must not trigger a second result.
+                    }
                 }
             }
         }, onDone = {})
