@@ -26,6 +26,32 @@ jobs:
         with:
           gradle-version: '8.9'
 
+      - name: Frozen wake guard
+        run: python3 tools/test_v065_frozen_baseline.py
+
+      - name: Historical regression
+        run: |
+          python3 tools/test_v031_behavior.py
+          python3 tools/test_v040_voice_flow.py
+          python3 tools/test_v050_session.py
+          python3 tools/test_v060_security.py
+          python3 tools/test_v063_custom_wake_ppinyin.py
+          python3 tools/test_v063_wake_error_diagnostics.py
+          python3 tools/test_v064_wake_regression.py
+          python3 tools/test_v064_exit_intent.py
+          python3 tools/test_v064_volume_parser.py
+          python3 tools/test_v064_volume_execution.py
+          python3 tools/test_v064_command_prompt_flow.py
+          python3 tools/test_v064_duplicate_guard.py
+
+      - name: v0.6.5 feature regression
+        run: python3 tools/test_v065_release_gate.py
+
+      - name: Security regression
+        run: |
+          python3 tools/test_v060_safe_tools.py
+          python3 tools/test_v060_security.py
+
       - name: Validate source tree
         run: python3 tools/validate_project.py
 
@@ -36,10 +62,10 @@ jobs:
         run: gradle :app:assembleDebug --stacktrace
 
       - name: Rename APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk XiaoZhi-Mobile-v0.6.4-debug.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk XiaoZhi-Mobile-v0.6.5-debug.apk
 
       - uses: actions/upload-artifact@v4
         with:
           name: XiaoZhi-Mobile-APK
-          path: XiaoZhi-Mobile-v0.6.4-debug.apk
+          path: XiaoZhi-Mobile-v0.6.5-debug.apk
           if-no-files-found: error
