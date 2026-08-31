@@ -119,12 +119,12 @@ assert rejected >= 0 and "SAFETY_REJECTED" in tool_branch[rejected:], (
     "rejected AI tools must report SAFETY_REJECTED"
 )
 rejected_block = braced_block(tool_branch, "is SafeToolPlan.Rejected ->")
-failure_notification = 'commandResultNotifier.failure("❌ 执行失败：${failureKind.name}")'
-assert failure_notification in rejected_block, (
-    "rejected AI tools must retain their failure notification"
+rejected_feedback_call = "reportRejectedToolFeedback(toolPlan, commandResultNotifier)"
+assert rejected_feedback_call in rejected_block, (
+    "rejected AI tools must delegate production feedback handling"
 )
-assert rejected_block.index(failure_notification) < rejected_block.index("recoverRecognitionFailure(failureKind)"), (
-    "rejected AI tools must notify before normal recovery"
+assert "commandResultNotifier.failure" not in rejected_block, (
+    "rejected AI tools must not duplicate production feedback handling"
 )
 assert "updateNotification(" not in rejected_block, (
     "rejected AI tools must use retained failure feedback, not a transient notification"
@@ -211,13 +211,17 @@ idle_publish = restart.find("updateNotificationRaw(")
 assert 0 <= clear_retention < idle_publish, "KWS idle must explicitly replace retained command results"
 
 sources = [
+    root / "app/src/main/java/com/lchuang/xiaozhimobile/AiModels.kt",
     root / "app/src/main/java/com/lchuang/xiaozhimobile/DeviceAction.kt",
     root / "app/src/main/java/com/lchuang/xiaozhimobile/CommandTransaction.kt",
     root / "app/src/main/java/com/lchuang/xiaozhimobile/ExecutionIntentFormatter.kt",
     root / "app/src/main/java/com/lchuang/xiaozhimobile/CommandResultNotifier.kt",
     root / "app/src/main/java/com/lchuang/xiaozhimobile/ExecutionFeedbackCoordinator.kt",
     root / "app/src/main/java/com/lchuang/xiaozhimobile/TtsProgressRegistry.kt",
+    root / "app/src/main/java/com/lchuang/xiaozhimobile/RejectedToolFeedback.kt",
 ]
+
+safe_tool_executor = root / "app/src/main/java/com/lchuang/xiaozhimobile/SafeToolExecutor.kt"
 
 for source in sources:
     assert source.exists(), f"missing {source.name}"
@@ -249,11 +253,30 @@ assert "onWatchdogTimeout" in tts_wiring and "engine.stop()" in tts_wiring, (
 
 with tempfile.TemporaryDirectory() as td:
     td = Path(td)
-    stubs = td / "MapPreferenceStub.kt"
-    stubs.write_text(
+    uri_stub = td / "AndroidUriStub.kt"
+    uri_stub.write_text(
+        """
+        package android.net
+
+        class Uri private constructor(private val value: String) {
+            val scheme: String?
+                get() = value.substringBefore(':', "").takeIf { it.isNotEmpty() }
+
+            companion object {
+                fun parse(value: String): Uri = Uri(value)
+            }
+        }
+        """,
+        encoding="utf-8",
+    )
+    executor_stub = td / "DeviceActionExecutorStub.kt"
+    executor_stub.write_text(
         """
         package com.lchuang.xiaozhimobile
-        enum class MapAppPreference { AUTO, AMAP, BAIDU }
+
+        class DeviceActionExecutor {
+            fun execute(action: DeviceAction, callback: (DeviceExecutionResult) -> Unit) = Unit
+        }
         """,
         encoding="utf-8",
     )
@@ -262,16 +285,6 @@ with tempfile.TemporaryDirectory() as td:
         textwrap.dedent(
             """
             import com.lchuang.xiaozhimobile.*
-
-            data class ToolExecutionResult(val success: Boolean, val spokenText: String, val debugCode: String)
-
-            private interface TestSafeToolPlan
-            private data class TestRejected(val result: ToolExecutionResult) : TestSafeToolPlan
-            private data object TestAllowed : TestSafeToolPlan
-
-            private interface TestAiOutcome
-            private data class TestTool(val plan: TestSafeToolPlan) : TestAiOutcome
-            private data object TestReply : TestAiOutcome
 
             class AndroidHandlerShape {
                 var observedDelayMs: Long? = null
@@ -373,27 +386,16 @@ with tempfile.TemporaryDirectory() as td:
                     clockMs = { 1_000L },
                     holdMs = 4_000L
                 )
-                fun recoverRecognitionFailure(kind: CommandFailureKind) {
+
+                val plan = SafeToolExecutor(DeviceActionExecutor()).plan(
+                    AiToolCall("delete_everything", emptyMap())
+                )
+                check(plan is SafeToolPlan.Rejected) {
+                    "actual SafeToolExecutor must reject an unknown tool: $plan"
+                }
+                reportRejectedToolFeedback(plan, notifier) { kind ->
                     recovered += kind
                     notifier.publishTransient("连续会话中...")
-                }
-                val outcome: TestAiOutcome = TestTool(
-                    TestRejected(
-                        ToolExecutionResult(false, "该操作不在安全工具白名单中", "REJECTED_NOT_ALLOWED")
-                    )
-                )
-
-                when (outcome) {
-                    is TestTool -> when (outcome.plan) {
-                        is TestAllowed -> error("rejected test unexpectedly took allowed branch")
-                        is TestRejected -> {
-                            val failureKind = CommandFailureKind.SAFETY_REJECTED
-                            notifier.failure("❌ 执行失败：${failureKind.name}")
-                            recoverRecognitionFailure(failureKind)
-                        }
-                    }
-                    TestReply -> error("rejected test unexpectedly took reply branch")
-                    else -> error("rejected test used an unknown outcome")
                 }
 
                 check(recovered == listOf(CommandFailureKind.SAFETY_REJECTED)) {
@@ -924,8 +926,9 @@ with tempfile.TemporaryDirectory() as td:
     subprocess.run(
         [
             *compiler_command,
-            *(str(source) for source in sources),
-            str(stubs),
+            *(str(source) for source in [*sources, safe_tool_executor]),
+            str(uri_stub),
+            str(executor_stub),
             str(harness),
             "-include-runtime",
             "-d",

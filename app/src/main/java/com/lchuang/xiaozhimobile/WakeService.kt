@@ -725,8 +725,10 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                                 val failureKind = CommandFailureKind.SAFETY_REJECTED
                                 conversationTurns += 1
                                 memory.addTurn(rawText, "执行失败：${failureKind.name}:${toolPlan.result.debugCode}")
-                                commandResultNotifier.failure("❌ 执行失败：${failureKind.name}")
-                                recoverRecognitionFailure(failureKind)
+                                reportRejectedToolFeedback(toolPlan, commandResultNotifier) { recoverKind ->
+                                    check(recoverKind == failureKind)
+                                    recoverRecognitionFailure(failureKind)
+                                }
                             }
                         }
                     }
