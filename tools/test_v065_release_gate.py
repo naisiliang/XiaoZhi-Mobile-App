@@ -22,11 +22,6 @@ for test in TESTS:
     if not (root / test).exists():
         raise SystemExit(f"release gate test missing: {test}")
     print(f"RUN: {test}")
-    try:
-        subprocess.run(["python", test], cwd=root, check=True)
-    except FileNotFoundError as exc:
-        raise SystemExit(f"release gate could not start python for {test}: {exc}") from exc
-    except subprocess.CalledProcessError as exc:
-        raise SystemExit(f"release gate failed: {test} exited with {exc.returncode}") from exc
+    subprocess.run(["python", test], cwd=root, check=True)
 
 print("PASS: v0.6.5 release gate")

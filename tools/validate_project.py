@@ -126,22 +126,64 @@ def appears_in_order(source: str, markers: list[str]) -> bool:
     return True
 
 
+def _is_tests_name(node: ast.AST) -> bool:
+    return isinstance(node, ast.Name) and node.id == "TESTS"
+
+
+def _tests_assignment_value(node: ast.stmt) -> ast.AST | None:
+    if isinstance(node, ast.Assign):
+        if any(_is_tests_name(target) for target in node.targets):
+            return node.value
+        return None
+    if isinstance(node, ast.AnnAssign) and _is_tests_name(node.target):
+        return node.value
+    return None
+
+
+def _parse_string_list_literal(node: ast.AST | None) -> list[str] | None:
+    if not isinstance(node, ast.List):
+        return None
+    values = []
+    for item in node.elts:
+        if not isinstance(item, ast.Constant) or not isinstance(item.value, str):
+            return None
+        values.append(item.value)
+    return values
+
+
+def _mutates_tests(node: ast.AST) -> bool:
+    for child in ast.walk(node):
+        if isinstance(child, ast.Name) and child.id == "TESTS" and isinstance(child.ctx, (ast.Store, ast.Del)):
+            return True
+        if (
+            isinstance(child, ast.Call)
+            and isinstance(child.func, ast.Attribute)
+            and isinstance(child.func.value, ast.Name)
+            and child.func.value.id == "TESTS"
+            and child.func.attr in {"append", "clear", "extend", "insert", "pop", "remove", "reverse", "sort"}
+        ):
+            return True
+    return False
+
+
 def parse_release_gate_tests(source: str) -> list[str] | None:
     module = ast.parse(source)
-    for node in module.body:
-        if not isinstance(node, ast.Assign):
+    tests_values: list[tuple[int, list[str]]] = []
+    for index, node in enumerate(module.body):
+        parsed = _parse_string_list_literal(_tests_assignment_value(node))
+        if parsed is not None:
+            tests_values.append((index, parsed))
             continue
-        for target in node.targets:
-            if isinstance(target, ast.Name) and target.id == "TESTS":
-                if not isinstance(node.value, ast.List):
-                    return None
-                values = []
-                for item in node.value.elts:
-                    if not isinstance(item, ast.Constant) or not isinstance(item.value, str):
-                        return None
-                    values.append(item.value)
-                return values
-    return None
+        if _tests_assignment_value(node) is not None:
+            return None
+    if len(tests_values) != 1:
+        return None
+
+    tests_index, tests = tests_values[0]
+    for node in module.body[tests_index + 1:]:
+        if _mutates_tests(node):
+            return None
+    return tests
 
 
 def _is_python_test_run(node: ast.AST) -> bool:
@@ -180,6 +222,10 @@ def _is_direct_python_test_run_statement(node: ast.stmt) -> bool:
     return isinstance(node, ast.Expr) and _is_python_test_run(node.value)
 
 
+def _contains_pre_run_exit(node: ast.AST) -> bool:
+    return any(isinstance(child, (ast.Break, ast.Continue, ast.Return, ast.Try)) for child in ast.walk(node))
+
+
 def has_release_gate_loop_subprocess_run(source: str) -> bool:
     module = ast.parse(source)
     for node in ast.walk(module):
@@ -191,12 +237,10 @@ def has_release_gate_loop_subprocess_run(source: str) -> bool:
             and node.iter.id == "TESTS"
         ):
             continue
-        for statement in node.body:
+        for index, statement in enumerate(node.body):
             if _is_direct_python_test_run_statement(statement):
-                return True
-            if isinstance(statement, ast.Try) and any(
-                _is_direct_python_test_run_statement(child) for child in statement.body
-            ):
+                if any(_contains_pre_run_exit(previous) for previous in node.body[:index]):
+                    return False
                 return True
     return False
 
@@ -296,9 +340,22 @@ def extract_safe_tool_allowlist(source: str) -> list[str]:
     return _parse_safe_tool_allowlist(source) or []
 
 
+def has_safe_tool_terminal_else_rejection(source: str) -> bool:
+    search_from = 0
+    while True:
+        match = re.search(r"if\s*\(\s*terminal\s*\)", source[search_from:])
+        if match is None:
+            return True
+        start = search_from + match.start()
+        snippet = source[start:start + 400]
+        if "else rejected(" not in snippet or "REJECTED_NOT_ALLOWED" not in snippet:
+            return False
+        search_from = start + len("if (terminal)")
+
+
 def has_exact_safe_tool_allowlist(source: str, expected: list[str]) -> bool:
     labels = _parse_safe_tool_allowlist(source)
-    return labels == expected
+    return labels == expected and has_safe_tool_terminal_else_rejection(source)
 
 
 def find_home_exit_forbidden_capabilities(source: str) -> list[str]:

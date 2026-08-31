@@ -38,6 +38,18 @@ EXPECTED_RELEASE_GATE_TESTS = [
     "tools/test_v065_noise_suppressor.py",
     "tools/test_v065_error_recovery.py",
 ]
+failures: list[str] = []
+
+
+def render_tests(tests: list[str]) -> str:
+    return "\n".join(f'    "{test}",' for test in tests)
+
+
+def expect(name: str, ok: bool, detail: str) -> None:
+    if ok:
+        print(f"PASS: {name}")
+        return
+    failures.append(f"FAIL: {name}: {detail}")
 
 
 def load_validator_module():
@@ -151,6 +163,79 @@ assert not validator.release_gate_delegates_expected_tests(comment_only_frozen_g
 assert not validator.has_release_gate_loop_subprocess_run(broken_loop_source)
 assert not validator.has_release_gate_loop_subprocess_run(unreachable_nested_run_source)
 print("PASS: release gate structural checks enforce delegated frozen guard and in-loop subprocess execution")
+
+
+try_wrapped_run_source = f"""from pathlib import Path
+import subprocess
+
+root = Path(__file__).resolve().parents[1]
+TESTS = [
+{render_tests(EXPECTED_RELEASE_GATE_TESTS)}
+]
+
+for test in TESTS:
+    print(f"RUN: {{test}}")
+    try:
+        subprocess.run(["python", test], cwd=root, check=True)
+    except subprocess.CalledProcessError:
+        raise
+"""
+duplicate_and_cleared_tests_source = f"""from pathlib import Path
+import subprocess
+
+root = Path(__file__).resolve().parents[1]
+TESTS = [
+{render_tests(EXPECTED_RELEASE_GATE_TESTS)}
+]
+TESTS = list(TESTS)
+TESTS.clear()
+
+for test in TESTS:
+    subprocess.run(["python", test], cwd=root, check=True)
+"""
+break_before_run_source = f"""from pathlib import Path
+import subprocess
+
+root = Path(__file__).resolve().parents[1]
+TESTS = [
+{render_tests(EXPECTED_RELEASE_GATE_TESTS)}
+]
+
+for test in TESTS:
+    if test.endswith("baseline.py"):
+        break
+    subprocess.run(["python", test], cwd=root, check=True)
+"""
+terminal_else_go_home_source = safe_tools_source.replace(
+    '        "media_play" -> allowed(DeviceAction.MediaPlay)\n',
+    '        "media_play" -> if (terminal) allowed(DeviceAction.MediaPlay) else allowed(DeviceAction.GoHome(sourceApp = null))\n',
+    1,
+)
+assert terminal_else_go_home_source != safe_tools_source, "terminal safe tool mutation did not apply"
+
+expect(
+    "release gate rejects try-wrapped subprocess.run",
+    not validator.has_release_gate_loop_subprocess_run(try_wrapped_run_source),
+    "validator currently accepts subprocess.run wrapped in try inside the TESTS loop",
+)
+expect(
+    "release gate rejects duplicate or cleared TESTS assignment",
+    not validator.release_gate_delegates_expected_tests(duplicate_and_cleared_tests_source, EXPECTED_RELEASE_GATE_TESTS),
+    "validator currently accepts TESTS after reassignment and clear()",
+)
+expect(
+    "release gate rejects break before subprocess.run",
+    not validator.has_release_gate_loop_subprocess_run(break_before_run_source),
+    "validator currently accepts a pre-run break in the TESTS loop",
+)
+expect(
+    "safe tool allowlist rejects terminal else GoHome branch",
+    not validator.has_exact_safe_tool_allowlist(terminal_else_go_home_source, EXPECTED_SAFE_TOOLS),
+    "validator currently accepts an allowed branch that falls back to DeviceAction.GoHome",
+)
+
+if failures:
+    raise AssertionError("\n".join(failures))
 
 
 print("PASS: v0.6.5 validator contract")
