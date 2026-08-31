@@ -129,6 +129,133 @@ def appears_in_order(source: str, markers: list[str]) -> bool:
     return True
 
 
+def _is_exact_release_gate_imports(nodes: list[ast.stmt]) -> bool:
+    if len(nodes) != 2:
+        return False
+    pathlib_import, subprocess_import = nodes
+    return (
+        isinstance(pathlib_import, ast.ImportFrom)
+        and pathlib_import.level == 0
+        and pathlib_import.module == "pathlib"
+        and len(pathlib_import.names) == 1
+        and pathlib_import.names[0].name == "Path"
+        and pathlib_import.names[0].asname is None
+        and isinstance(subprocess_import, ast.Import)
+        and len(subprocess_import.names) == 1
+        and subprocess_import.names[0].name == "subprocess"
+        and subprocess_import.names[0].asname is None
+    )
+
+
+def _is_exact_release_gate_root_assignment(node: ast.stmt) -> bool:
+    if not (
+        isinstance(node, ast.Assign)
+        and node.type_comment is None
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id == "root"
+    ):
+        return False
+    expected = ast.parse("Path(__file__).resolve().parents[1]", mode="eval").body
+    return ast.dump(node.value, include_attributes=False) == ast.dump(expected, include_attributes=False)
+
+
+def _is_exact_release_gate_tests_assignment(node: ast.stmt) -> list[str] | None:
+    if not (
+        isinstance(node, ast.Assign)
+        and node.type_comment is None
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id == "TESTS"
+        and isinstance(node.value, ast.List)
+    ):
+        return None
+    tests: list[str] = []
+    for item in node.value.elts:
+        if not isinstance(item, ast.Constant) or not isinstance(item.value, str):
+            return None
+        tests.append(item.value)
+    return tests
+
+
+def _is_exact_release_gate_subprocess_run(node: ast.stmt) -> bool:
+    if not isinstance(node, ast.Expr) or not isinstance(node.value, ast.Call):
+        return False
+    call = node.value
+    if not (
+        isinstance(call.func, ast.Attribute)
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "subprocess"
+        and call.func.attr == "run"
+        and len(call.args) == 1
+        and isinstance(call.args[0], ast.List)
+        and len(call.args[0].elts) == 2
+        and isinstance(call.args[0].elts[0], ast.Constant)
+        and call.args[0].elts[0].value == "python"
+        and isinstance(call.args[0].elts[1], ast.Name)
+        and call.args[0].elts[1].id == "test"
+        and len(call.keywords) == 2
+        and call.keywords[0].arg == "cwd"
+        and call.keywords[1].arg == "check"
+    ):
+        return False
+    keywords = {keyword.arg: keyword.value for keyword in call.keywords}
+    return (
+        set(keywords) == {"cwd", "check"}
+        and isinstance(keywords["cwd"], ast.Name)
+        and keywords["cwd"].id == "root"
+        and isinstance(keywords["check"], ast.Constant)
+        and keywords["check"].value is True
+    )
+
+
+def _is_exact_release_gate_loop_structure(node: ast.stmt) -> bool:
+    return (
+        isinstance(node, ast.For)
+        and isinstance(node.target, ast.Name)
+        and node.target.id == "test"
+        and isinstance(node.iter, ast.Name)
+        and node.iter.id == "TESTS"
+        and not node.orelse
+        and len(node.body) == 3
+        and _is_release_gate_test_exists_check(node.body[0])
+        and _is_release_gate_run_print(node.body[1])
+        and _is_exact_release_gate_subprocess_run(node.body[2])
+    )
+
+
+def _is_exact_release_gate_pass_print(node: ast.stmt) -> bool:
+    return (
+        isinstance(node, ast.Expr)
+        and isinstance(node.value, ast.Call)
+        and isinstance(node.value.func, ast.Name)
+        and node.value.func.id == "print"
+        and len(node.value.args) == 1
+        and not node.value.keywords
+        and isinstance(node.value.args[0], ast.Constant)
+        and node.value.args[0].value == "PASS: v0.6.5 release gate"
+    )
+
+
+def _parse_exact_release_gate(source: str) -> list[str] | None:
+    try:
+        module = ast.parse(source)
+    except SyntaxError:
+        return None
+    if module.type_ignores or len(module.body) != 6 or not _is_exact_release_gate_imports(module.body[:2]):
+        return None
+    if not _is_exact_release_gate_root_assignment(module.body[2]):
+        return None
+    tests = _is_exact_release_gate_tests_assignment(module.body[3])
+    if tests is None:
+        return None
+    if not _is_exact_release_gate_loop_structure(module.body[4]):
+        return None
+    if not _is_exact_release_gate_pass_print(module.body[5]):
+        return None
+    return tests
+
+
 def _is_tests_name(node: ast.AST) -> bool:
     return isinstance(node, ast.Name) and node.id == "TESTS"
 
@@ -230,28 +357,7 @@ def _find_top_level_tests_assignment(module: ast.Module) -> tuple[int, list[str]
 
 
 def parse_release_gate_tests(source: str) -> list[str] | None:
-    module = ast.parse(source)
-    if _has_release_gate_dynamic_bypass(module):
-        return None
-    tests_info = _find_top_level_tests_assignment(module)
-    if tests_info is None:
-        return None
-
-    tests_index, tests = tests_info
-    for node in module.body[tests_index + 1:]:
-        if (
-            isinstance(node, ast.For)
-            and isinstance(node.target, ast.Name)
-            and node.target.id == "test"
-            and isinstance(node.iter, ast.Name)
-            and node.iter.id == "TESTS"
-        ):
-            if any(_is_tests_name(child) for statement in node.body for child in ast.walk(statement)):
-                return None
-            continue
-        if any(_is_tests_name(child) for child in ast.walk(node)):
-            return None
-    return tests
+    return _parse_exact_release_gate(source)
 
 
 def _is_python_test_run(node: ast.AST) -> bool:
@@ -678,23 +784,7 @@ def _contains_release_gate_loop_target_mutation(
 
 
 def has_release_gate_loop_subprocess_run(source: str) -> bool:
-    module = ast.parse(source)
-    namespace_aliases, namespace_factory_aliases, setattr_aliases = _release_gate_aliases(module)
-    loops = [node for node in module.body if _is_release_gate_loop_header(node)]
-    if len(loops) != 1 or not _is_exact_release_gate_loop(loops[0]):
-        return False
-    node = loops[0]
-    if _contains_release_gate_loop_exit(node):
-        return False
-    if _contains_release_gate_loop_target_mutation(
-        node,
-        node.target.id,
-        namespace_aliases,
-        namespace_factory_aliases,
-        setattr_aliases,
-    ):
-        return False
-    return True
+    return _parse_exact_release_gate(source) is not None
 
 
 def release_gate_delegates_expected_tests(source: str, expected_tests: list[str]) -> bool:

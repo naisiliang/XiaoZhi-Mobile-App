@@ -386,6 +386,59 @@ for test in TESTS:
     factory()["test"] = "tools/test_v065_validator_contract.py"
     subprocess.run(["python", test], cwd=root, check=True)
 """
+computed_namespace_alias_source = f"""from pathlib import Path
+import subprocess
+
+root = Path(__file__).resolve().parents[1]
+TESTS = [
+{render_tests(EXPECTED_RELEASE_GATE_TESTS)}
+]
+factory = (vars,)[0]
+
+for test in TESTS:
+    factory()["TESTS"] = []
+    if not (root / test).exists():
+        raise SystemExit(f"release gate test missing: {{test}}")
+    print(f"RUN: {{test}}")
+    subprocess.run(["python", test], cwd=root, check=True)
+
+print("PASS: v0.6.5 release gate")
+"""
+computed_namespace_ior_source = f"""from pathlib import Path
+import subprocess
+
+root = Path(__file__).resolve().parents[1]
+TESTS = [
+{render_tests(EXPECTED_RELEASE_GATE_TESTS)}
+]
+factory = (vars,)[0]
+
+for test in TESTS:
+    factory().__ior__({{"TESTS": []}})
+    if not (root / test).exists():
+        raise SystemExit(f"release gate test missing: {{test}}")
+    print(f"RUN: {{test}}")
+    subprocess.run(["python", test], cwd=root, check=True)
+
+print("PASS: v0.6.5 release gate")
+"""
+subprocess_run_monkeypatch_source = f"""from pathlib import Path
+import subprocess
+
+root = Path(__file__).resolve().parents[1]
+TESTS = [
+{render_tests(EXPECTED_RELEASE_GATE_TESTS)}
+]
+subprocess.run = lambda *args, **kwargs: None
+
+for test in TESTS:
+    if not (root / test).exists():
+        raise SystemExit(f"release gate test missing: {{test}}")
+    print(f"RUN: {{test}}")
+    subprocess.run(["python", test], cwd=root, check=True)
+
+print("PASS: v0.6.5 release gate")
+"""
 namespace_popitem_source = f"""from pathlib import Path
 import subprocess
 
@@ -807,6 +860,24 @@ expect(
     "release gate rejects getattr namespace factory aliases",
     not validator.has_release_gate_loop_subprocess_run(builtin_getattr_callable_alias_loop_target_reassignment_source),
     "validator currently accepts getattr(builtins, factory) as a namespace factory alias",
+)
+expect(
+    "release gate rejects computed namespace alias TESTS mutation",
+    not validator.parse_release_gate_tests(computed_namespace_alias_source)
+    and not validator.has_release_gate_loop_subprocess_run(computed_namespace_alias_source),
+    "validator currently accepts a tuple-indexed namespace factory that clears TESTS",
+)
+expect(
+    "release gate rejects computed namespace __ior__ mutation",
+    not validator.parse_release_gate_tests(computed_namespace_ior_source)
+    and not validator.has_release_gate_loop_subprocess_run(computed_namespace_ior_source),
+    "validator currently accepts a tuple-indexed namespace factory that mutates TESTS via __ior__",
+)
+expect(
+    "release gate rejects top-level subprocess.run monkeypatch",
+    not validator.parse_release_gate_tests(subprocess_run_monkeypatch_source)
+    and not validator.has_release_gate_loop_subprocess_run(subprocess_run_monkeypatch_source),
+    "validator currently accepts a top-level reassignment of subprocess.run",
 )
 expect(
     "release gate rejects namespace popitem mutation",
