@@ -43,6 +43,9 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         private const val COMMAND_FRAME_SAMPLES = 800 // 50 ms @ 16 kHz
         private const val COMMAND_WAIT_SPEECH_MS = 4000
         private const val COMMAND_MAX_AUDIO_MS = 8000
+        private const val COMMAND_MAX_READ_ERRORS = 8
+        private const val COMMAND_MAX_READ_ERROR_MS = 1000L
+        private const val COMMAND_MAX_ZERO_READ_MS = 1000L
         private const val PRE_ROLL_FRAMES = 8 // 400 ms
         private val knownOneCharacterCommands = setOf("停")
     }
@@ -503,10 +506,30 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
             vad.reset()
             var speechStarted = false
             var waitedMs = 0
+            var negativeReadCount = 0
+            var firstNegativeReadAtMs = 0L
+            var lastReadProgressAtMs = SystemClock.elapsedRealtime()
 
             while (running.get() && commandListening.get() && outputSize < maxSamples) {
                 val n = record.read(frame, 0, frame.size)
-                if (n <= 0) continue
+                val nowMs = SystemClock.elapsedRealtime()
+                if (n < 0) {
+                    if (negativeReadCount == 0) firstNegativeReadAtMs = nowMs
+                    negativeReadCount += 1
+                    if (
+                        negativeReadCount >= COMMAND_MAX_READ_ERRORS ||
+                        nowMs - firstNegativeReadAtMs >= COMMAND_MAX_READ_ERROR_MS
+                    ) {
+                        throw CommandAudioCaptureException(CommandAudioCaptureFailureKind.AUDIO_START)
+                    }
+                    continue
+                }
+                negativeReadCount = 0
+                if (n == 0) {
+                    if (nowMs - lastReadProgressAtMs >= COMMAND_MAX_ZERO_READ_MS) break
+                    continue
+                }
+                lastReadProgressAtMs = nowMs
                 val rms = frameRms(frame, n)
                 val vadDecision = vad.accept(rms)
                 overlay.updateAudioLevel(normalizeOverlayAudioLevel(rms))
