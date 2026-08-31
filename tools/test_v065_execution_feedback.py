@@ -221,6 +221,11 @@ assert "val cancelled = AtomicBoolean(false)" in tts_registry, (
     "stale-start suppression must not reuse normal done delivery state"
 )
 assert "scheduleWatchdog" in tts_registry, "successful TTS must have a bounded no-callback watchdog"
+assert "onWatchdogTimeout" in tts_registry, "watchdog must invalidate the timed-out engine utterance before fallback callbacks"
+tts_wiring = wake[wake.index("private val ttsProgressRegistry") : wake.index("private val session")]
+assert "onWatchdogTimeout" in tts_wiring and "engine.stop()" in tts_wiring, (
+    "WakeService must stop only the active timed-out TTS engine utterance"
+)
 
 with tempfile.TemporaryDirectory() as td:
     td = Path(td)
@@ -271,8 +276,8 @@ with tempfile.TemporaryDirectory() as td:
                     holdMs = 4_000L
                 )
 
-                notifier.running("打开微信正在执行")
-                check(published == listOf("打开微信正在执行")) {
+                notifier.running("⏳ 正在执行：打开微信")
+                check(published == listOf("⏳ 正在执行：打开微信")) {
                     "running should publish immediately without retention: $published"
                 }
                 check(notifier.retainedText() == null) {
@@ -280,7 +285,7 @@ with tempfile.TemporaryDirectory() as td:
                 }
 
                 notifier.success("✅ 已成功执行：打开微信")
-                check(published == listOf("打开微信正在执行", "✅ 已成功执行：打开微信")) {
+                check(published == listOf("⏳ 正在执行：打开微信", "✅ 已成功执行：打开微信")) {
                     "success should publish after running: $published"
                 }
                 check(notifier.retainedText() == "✅ 已成功执行：打开微信") {
@@ -329,11 +334,23 @@ with tempfile.TemporaryDirectory() as td:
             fun assertTtsProgressRegistry() {
                 val delayed = mutableListOf<Pair<Long, () -> Unit>>()
                 val events = mutableListOf<String>()
-                val registry = TtsProgressRegistry(
+                val watchdogTimeouts = mutableListOf<String>()
+                lateinit var timeoutRegistry: TtsProgressRegistry
+                timeoutRegistry = TtsProgressRegistry(
                     dispatch = { it() },
                     dispatchDelayed = { delayMs, block -> delayed += delayMs to block },
-                    errorFallbackMs = 150L
+                    errorFallbackMs = 150L,
+                    onWatchdogTimeout = { id ->
+                        watchdogTimeouts += id
+                        timeoutRegistry.onStart(id)
+                        timeoutRegistry.onDone(id)
+                        timeoutRegistry.onError(id)
+                        check(events.isEmpty()) {
+                            "callbacks emitted by stop() must be stale before synthetic start: $events"
+                        }
+                    }
                 )
+                val registry = timeoutRegistry
 
                 registry.register("error", { events += "ERROR_START" }, { events += "ERROR_DONE" })
                 registry.onError("error")
@@ -357,6 +374,34 @@ with tempfile.TemporaryDirectory() as td:
                 delayed.removeAt(0).second()
                 check(events == listOf("REAL_START", "REAL_DONE")) {
                     "a stale watchdog callback must not duplicate real completion: $events"
+                }
+
+                events.clear()
+                registry.register("delayed-watchdog", { events += "TIMEOUT_START" }, { events += "TIMEOUT_DONE" })
+                registry.scheduleWatchdog("delayed-watchdog")
+                check(delayed.size == 1 && delayed.single().first == 250L)
+                delayed.removeAt(0).second()
+                check(watchdogTimeouts == listOf("delayed-watchdog")) {
+                    "watchdog must invalidate and stop the timed-out utterance before fallback: $watchdogTimeouts"
+                }
+                check(events == listOf("TIMEOUT_START")) {
+                    "watchdog must synthesize start exactly once: $events"
+                }
+                registry.onStart("delayed-watchdog")
+                registry.onDone("delayed-watchdog")
+                registry.onError("delayed-watchdog")
+                check(events == listOf("TIMEOUT_START")) {
+                    "delayed real callbacks after watchdog must be stale: $events"
+                }
+                check(delayed.size == 1 && delayed.single().first == 150L)
+                delayed.removeAt(0).second()
+                check(events == listOf("TIMEOUT_START", "TIMEOUT_DONE")) {
+                    "watchdog fallback must synthesize done exactly once: $events"
+                }
+                registry.onStart("delayed-watchdog")
+                registry.onDone("delayed-watchdog")
+                check(events == listOf("TIMEOUT_START", "TIMEOUT_DONE")) {
+                    "stale callbacks after fallback completion must remain suppressed: $events"
                 }
 
                 events.clear()
@@ -524,7 +569,7 @@ with tempfile.TemporaryDirectory() as td:
                     delayed?.invoke()
                     coordinator.cancelPending()
                     resultCallback?.invoke(result())
-                    check(speechCalls == 1 && notifications == listOf("打开微信正在执行") && finished == 0) {
+                    check(speechCalls == 1 && notifications == listOf("⏳ 正在执行：打开微信") && finished == 0) {
                         "cancelled runner result must not publish or speak: $notifications / $speechCalls"
                     }
                 }
@@ -640,7 +685,7 @@ with tempfile.TemporaryDirectory() as td:
                 events += "FAILURE_FINAL_ON_DONE"
                 finalDone?.invoke() ?: error("failure final speech was not requested")
                 check(notifications == listOf(
-                    "打开微信正在执行",
+                    "⏳ 正在执行：打开微信",
                     "❌ 执行失败：打开微信"
                 )) { "failure notification must use failure copy: $notifications" }
                 check(events == listOf(
@@ -772,7 +817,7 @@ with tempfile.TemporaryDirectory() as td:
                     "FINISHED"
                 )) { "unexpected execution feedback order: $events" }
                 check(notifications == listOf(
-                    "调整媒体音量到百分之七十正在执行",
+                    "⏳ 正在执行：调整媒体音量到百分之七十",
                     "✅ 已成功执行：媒体音量69%"
                 )) { "result notification must use actual result copy: $notifications" }
                 println("PASS: v0.6.5 execution feedback event order")

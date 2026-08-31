@@ -27,7 +27,9 @@ with tempfile.TemporaryDirectory() as td:
         fun main() {
             val formatter = ExecutionIntentFormatter()
             check(formatter.announcement(DeviceAction.OpenApp("微信")) == "打开微信正在执行")
+            check(formatter.runningNotification(DeviceAction.OpenApp("微信")) == "⏳ 正在执行：打开微信")
             check(formatter.announcement(DeviceAction.GoHome("微信")) == "退出微信正在执行")
+            check(formatter.runningNotification(DeviceAction.GoHome("微信")) == "⏳ 正在执行：退出微信")
             check(formatter.announcement(DeviceAction.GoHome(null)) == "返回桌面正在执行")
             check(formatter.announcement(DeviceAction.SetMediaVolume(70)) == "调整媒体音量到百分之七十正在执行")
             check(formatter.announcement(DeviceAction.Navigate("泉水村", MapAppPreference.AUTO)) == "导航到泉水村正在执行")
@@ -39,6 +41,7 @@ with tempfile.TemporaryDirectory() as td:
                 "你有什么需求请说？"
             )
             check(success.successNotification == "✅ 已成功执行：媒体音量69%")
+            check(success.runningNotification == "⏳ 正在执行：调整媒体音量到百分之七十")
             check(success.finalSpoken == "媒体音量已经调整到69%，你有什么需求请说？")
             check(!success.successNotification!!.contains("70"))
 

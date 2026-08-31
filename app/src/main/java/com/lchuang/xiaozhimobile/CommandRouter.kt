@@ -172,7 +172,11 @@ class CommandRouter(private val phone: PhoneController) {
 
     private fun exitTarget(rawTarget: String): String? {
         val target = rawTarget.trim().removeSuffix("app").removeSuffix("应用").removeSuffix("软件").trim()
-        return target.takeIf { it.isNotBlank() && it !in genericExitTargets }
+        return target.takeIf {
+            it.isNotBlank() &&
+                it !in genericExitTargets &&
+                genericExitNouns.none { noun -> it.contains(noun) }
+        }
     }
 
     private companion object {
@@ -180,6 +184,9 @@ class CommandRouter(private val phone: PhoneController) {
         val appExitPrefix = Regex("^(?:退出|关闭|离开)(.+?)(?:app|应用|软件)?$")
         val appExitShortPrefix = Regex("^退一下(.+?)(?:app|应用|软件)?$")
         val appExitNatural = Regex("^(?:把)?(.+?)(?:退了|退掉|退一下|先关掉|先关闭)$")
-        val genericExitTargets = setOf("登录", "当前账号", "这个页面", "页面")
+        val genericExitTargets = setOf(
+            "登录", "当前账号", "账号", "账户", "密码", "这个页面", "当前页面", "登录页面", "页面", "界面"
+        )
+        val genericExitNouns = setOf("登录", "账号", "账户", "密码", "页面", "界面")
     }
 }

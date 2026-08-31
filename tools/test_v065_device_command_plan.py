@@ -6,6 +6,15 @@ import textwrap
 
 
 root = Path(__file__).resolve().parents[1]
+wake_source = (root / 'app/src/main/java/com/lchuang/xiaozhimobile/WakeService.kt').read_text(encoding='utf-8')
+process_start = wake_source.index('private fun processUtterance')
+process_end = wake_source.index('private fun classifyAmbiguousExitOrContinue', process_start)
+process_body = wake_source[process_start:process_end]
+assert process_body.index('val localPlan = router.plan(normalized)') < process_body.index('exitDetector.classify(normalized)'), (
+    'WakeService must plan targeted exits before assistant-session exit classification'
+)
+assert 'localPlan.action is DeviceAction.GoHome' in process_body
+assert 'localPlan.action.sourceApp != null' in process_body
 sources = [
     root / 'app/src/main/java/com/lchuang/xiaozhimobile/DeviceAction.kt',
     root / 'app/src/main/java/com/lchuang/xiaozhimobile/VolumeCommandParser.kt',
@@ -93,6 +102,10 @@ with tempfile.TemporaryDirectory() as td:
             }
             check(router.plan("退出") == DeviceCommandPlan.Unhandled)
             check(router.plan("退出登录") == DeviceCommandPlan.Unhandled)
+            check(router.plan("退出账号") == DeviceCommandPlan.Unhandled)
+            check(router.plan("离开密码") == DeviceCommandPlan.Unhandled)
+            check(router.plan("关闭页面") == DeviceCommandPlan.Unhandled)
+            check(router.plan("退出当前页面") == DeviceCommandPlan.Unhandled)
             check(router.plan("关闭这个页面") == DeviceCommandPlan.Unhandled)
             check(phone.sideEffects == 0) { "plan must not execute device commands" }
             check(router.handle("关闭手电筒") == CommandRouter.Result(true, "手电筒已关闭", true))

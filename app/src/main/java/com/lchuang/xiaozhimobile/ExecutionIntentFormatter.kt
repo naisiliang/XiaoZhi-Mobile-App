@@ -11,7 +11,7 @@ data class ExecutionCopy(
 class ExecutionIntentFormatter {
     fun announcement(action: DeviceAction): String = "${label(action)}正在执行"
 
-    fun runningNotification(action: DeviceAction): String = announcement(action)
+    fun runningNotification(action: DeviceAction): String = "⏳ 正在执行：${label(action)}"
 
     fun finalCopy(action: DeviceAction, result: DeviceExecutionResult, continuation: String): ExecutionCopy {
         val announcement = announcement(action)
@@ -23,7 +23,7 @@ class ExecutionIntentFormatter {
             } else result.notificationSummary
             ExecutionCopy(
                 announcement,
-                announcement,
+                runningNotification(action),
                 "✅ 已成功执行：$summary",
                 null,
                 combineContinuation(result.spokenResult, continuation)
@@ -35,7 +35,7 @@ class ExecutionIntentFormatter {
             ).continuation.orEmpty()
             ExecutionCopy(
                 announcement,
-                announcement,
+                runningNotification(action),
                 null,
                 "❌ 执行失败：${label(action)}",
                 combineSentence(result.spokenResult, recovery)

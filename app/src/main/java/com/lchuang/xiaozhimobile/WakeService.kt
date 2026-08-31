@@ -55,7 +55,19 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
     private val ttsProgressRegistry = TtsProgressRegistry(
         dispatch = { block -> mainHandler.post(block) },
         dispatchDelayed = { delayMs, block -> mainHandler.postDelayed(block, delayMs) },
-        errorFallbackMs = 150L
+        errorFallbackMs = 150L,
+        onWatchdogTimeout = { utteranceId ->
+            if (activeTtsUtteranceId == utteranceId) {
+                val engine = tts
+                if (engine != null) {
+                    try {
+                        engine.stop()
+                    } catch (_: Throwable) {
+                        // The registry still delivers its bounded fallback if stop fails.
+                    }
+                }
+            }
+        }
     )
     private val session = SessionController()
     private val audioEnhancementManager = AudioEnhancementManager()
