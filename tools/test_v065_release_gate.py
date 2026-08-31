@@ -19,6 +19,7 @@ TESTS = [
     "tools/test_v065_error_recovery.py",
     "tools/test_v065_validator_contract.py",
     "tools/test_v065_apk_validator_contract.py",
+    "tools/test_v065_artifact_zip_contract.py",
 ]
 
 

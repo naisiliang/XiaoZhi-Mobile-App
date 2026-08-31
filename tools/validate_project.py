@@ -78,6 +78,7 @@ REQUIRED_V065_TESTS = [
     "tools/test_v065_error_recovery.py",
     "tools/test_v065_validator_contract.py",
     "tools/test_v065_apk_validator_contract.py",
+    "tools/test_v065_artifact_zip_contract.py",
 ]
 REQUIRED_HISTORICAL_TESTS = [
     "tools/test_v031_behavior.py",
@@ -108,6 +109,7 @@ REQUIRED_V065_SOURCES = [
     "app/src/main/java/com/lchuang/xiaozhimobile/ExecutionIntentFormatter.kt",
     "app/src/main/java/com/lchuang/xiaozhimobile/TtsProgressRegistry.kt",
     "tools/validate_v065_apk.py",
+    "tools/package_v065_apk.py",
 ]
 
 
@@ -1171,8 +1173,11 @@ def build_checks() -> list[tuple[str, bool]]:
         "- name: Build debug APK",
         "- name: Rename APK",
         "- name: Upload APK",
+        "- name: Create deterministic APK integrity ZIP",
+        "- name: Upload APK integrity ZIP",
         "- name: Download exact APK artifact",
-        "- name: Verify downloaded APK",
+        "- name: Download APK integrity ZIP",
+        "- name: Verify downloaded artifact ZIP and APK",
         "- name: Upload APK verification report",
     ]
     check("workflow release-gate order", appears_in_order(workflow, workflow_steps))
@@ -1203,6 +1208,12 @@ def build_checks() -> list[tuple[str, bool]]:
         "tools/validate_v065_apk.py",
         "--artifact-dir artifact-verification",
         '--report "$RUNNER_TEMP/xiaozhi-v065-apk-verification.json"',
+    ]))
+    check("workflow validates downloaded artifact ZIP", all(token in workflow for token in [
+        "tools/package_v065_apk.py",
+        "name: XiaoZhi-Mobile-APK-integrity",
+        "path: artifact-zip-verification",
+        "--artifact-zip artifact-zip-verification/XiaoZhi-Mobile-v0.6.5-debug.apk.zip",
     ]))
     check("workflow uploads verification report", all(token in workflow for token in [
         "name: XiaoZhi-Mobile-APK-verification",

@@ -72,15 +72,35 @@ jobs:
           path: XiaoZhi-Mobile-v0.6.5-debug.apk
           if-no-files-found: error
 
+      - name: Create deterministic APK integrity ZIP
+        run: |
+          python3 tools/package_v065_apk.py \
+            --apk XiaoZhi-Mobile-v0.6.5-debug.apk \
+            --output XiaoZhi-Mobile-v0.6.5-debug.apk.zip
+
+      - name: Upload APK integrity ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: XiaoZhi-Mobile-APK-integrity
+          path: XiaoZhi-Mobile-v0.6.5-debug.apk.zip
+          if-no-files-found: error
+
       - name: Download exact APK artifact
         uses: actions/download-artifact@v4
         with:
           name: XiaoZhi-Mobile-APK
           path: artifact-verification
 
-      - name: Verify downloaded APK
+      - name: Download APK integrity ZIP
+        uses: actions/download-artifact@v4
+        with:
+          name: XiaoZhi-Mobile-APK-integrity
+          path: artifact-zip-verification
+
+      - name: Verify downloaded artifact ZIP and APK
         run: |
           python3 tools/validate_v065_apk.py \
+            --artifact-zip artifact-zip-verification/XiaoZhi-Mobile-v0.6.5-debug.apk.zip \
             --artifact-dir artifact-verification \
             --report "$RUNNER_TEMP/xiaozhi-v065-apk-verification.json"
 
