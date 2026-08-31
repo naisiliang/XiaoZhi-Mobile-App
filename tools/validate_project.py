@@ -176,6 +176,10 @@ def _is_python_test_run(node: ast.AST) -> bool:
     )
 
 
+def _is_direct_python_test_run_statement(node: ast.stmt) -> bool:
+    return isinstance(node, ast.Expr) and _is_python_test_run(node.value)
+
+
 def has_release_gate_loop_subprocess_run(source: str) -> bool:
     module = ast.parse(source)
     for node in ast.walk(module):
@@ -187,8 +191,12 @@ def has_release_gate_loop_subprocess_run(source: str) -> bool:
             and node.iter.id == "TESTS"
         ):
             continue
-        for child in ast.walk(ast.Module(body=node.body, type_ignores=[])):
-            if _is_python_test_run(child):
+        for statement in node.body:
+            if _is_direct_python_test_run_statement(statement):
+                return True
+            if isinstance(statement, ast.Try) and any(
+                _is_direct_python_test_run_statement(child) for child in statement.body
+            ):
                 return True
     return False
 
@@ -265,15 +273,32 @@ def _extract_braced_block(source: str, marker_re: re.Pattern[str]) -> str | None
     return None
 
 
-def extract_safe_tool_allowlist(source: str) -> list[str]:
+def _parse_safe_tool_allowlist(source: str) -> list[str] | None:
     block = _extract_braced_block(source, re.compile(r"when\s*\(\s*call\.tool\s*\)\s*\{"))
     if block is None:
-        return []
-    return re.findall(r'^\s*"([^"\n]+)"\s*->', block, flags=re.MULTILINE)
+        return None
+
+    labels = []
+    for raw_entry in re.findall(r"^\s*([^\n]+?)\s*->", block, flags=re.MULTILINE):
+        stripped = raw_entry.strip()
+        if stripped == "else":
+            continue
+        for raw_label in stripped.split(","):
+            label = raw_label.strip()
+            match = re.fullmatch(r'"([^"\n]+)"', label)
+            if match is None:
+                return None
+            labels.append(match.group(1))
+    return labels
+
+
+def extract_safe_tool_allowlist(source: str) -> list[str]:
+    return _parse_safe_tool_allowlist(source) or []
 
 
 def has_exact_safe_tool_allowlist(source: str, expected: list[str]) -> bool:
-    return extract_safe_tool_allowlist(source) == expected
+    labels = _parse_safe_tool_allowlist(source)
+    return labels == expected
 
 
 def find_home_exit_forbidden_capabilities(source: str) -> list[str]:

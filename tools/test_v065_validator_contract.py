@@ -90,6 +90,18 @@ mutated_safe_tools = safe_tools_source.replace(
 assert mutated_safe_tools != safe_tools_source, "safe tool mutation did not apply"
 assert validator.extract_safe_tool_allowlist(mutated_safe_tools) == EXPECTED_SAFE_TOOLS + ["go_home"]
 assert not validator.has_exact_safe_tool_allowlist(mutated_safe_tools, EXPECTED_SAFE_TOOLS)
+named_branch_safe_tools = safe_tools_source.replace(
+    "class SafeToolExecutor(private val phone: PhoneController) {\n",
+    'class SafeToolExecutor(private val phone: PhoneController) {\n    private companion object {\n        const val EXTRA_TOOL = "go_home"\n    }\n',
+    1,
+).replace(
+    "        else -> rejected(",
+    '        EXTRA_TOOL -> allowed(DeviceAction.GoHome(sourceApp = null))\n'
+    "        else -> rejected(",
+    1,
+)
+assert named_branch_safe_tools != safe_tools_source, "named branch safe tool mutation did not apply"
+assert not validator.has_exact_safe_tool_allowlist(named_branch_safe_tools, EXPECTED_SAFE_TOOLS)
 print("PASS: safe tool allowlist extraction rejects any added when(call.tool) branch")
 
 
@@ -121,8 +133,23 @@ for test in TESTS:
 
 subprocess.run(["python", test], cwd=root, check=True)
 """
+unreachable_nested_run_source = """from pathlib import Path
+import subprocess
+
+root = Path(__file__).resolve().parents[1]
+TESTS = [
+    "tools/test_v065_frozen_baseline.py",
+    "tools/test_v065_device_command_plan.py",
+]
+
+for test in TESTS:
+    print(f"RUN: {test}")
+    if False:
+        subprocess.run(["python", test], cwd=root, check=True)
+"""
 assert not validator.release_gate_delegates_expected_tests(comment_only_frozen_guard, EXPECTED_RELEASE_GATE_TESTS)
 assert not validator.has_release_gate_loop_subprocess_run(broken_loop_source)
+assert not validator.has_release_gate_loop_subprocess_run(unreachable_nested_run_source)
 print("PASS: release gate structural checks enforce delegated frozen guard and in-loop subprocess execution")
 
 
