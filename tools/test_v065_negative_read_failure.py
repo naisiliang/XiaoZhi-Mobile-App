@@ -8,6 +8,7 @@ import textwrap
 
 ROOT = Path(__file__).resolve().parents[1]
 WAKE = ROOT / "app/src/main/java/com/lchuang/xiaozhimobile/WakeService.kt"
+WATCHDOG = ROOT / "app/src/main/java/com/lchuang/xiaozhimobile/CommandAudioReadWatchdog.kt"
 FAILURE = ROOT / "app/src/main/java/com/lchuang/xiaozhimobile/CommandAudioCaptureFailure.kt"
 wake = WAKE.read_text(encoding="utf-8")
 
@@ -26,20 +27,21 @@ def function_body(name: str) -> str:
     raise AssertionError(f"unbalanced body: {name}")
 
 
+assert WATCHDOG.exists(), "production read watchdog seam is missing"
+watchdog = WATCHDOG.read_text(encoding="utf-8")
 capture = function_body("captureCommandAudio")
-negative_start = capture.find("if (n < 0)")
-assert negative_start >= 0, "capture must distinguish negative AudioRecord.read errors"
-negative_end = capture.find("if (n == 0)", negative_start)
-assert negative_end > negative_start, "zero-length reads need a separate non-error path"
-negative_branch = capture[negative_start:negative_end]
-assert "COMMAND_MAX_READ_ERRORS" in negative_branch, "negative reads need a bounded error-count limit"
-assert "SystemClock.elapsedRealtime()" in capture, "capture needs a wall-clock read watchdog"
-assert "COMMAND_MAX_READ_ERROR_MS" in negative_branch, "negative reads need a bounded wall-clock limit"
-assert "throw CommandAudioCaptureException(CommandAudioCaptureFailureKind.AUDIO_START)" in negative_branch
-zero_end = capture.find("val rms = frameRms", negative_end)
-assert zero_end > negative_end, "zero-read branch is not bounded before frame processing"
-assert "COMMAND_MAX_ZERO_READ_MS" in capture[negative_end:zero_end]
-assert "if (n <= 0) continue" not in capture, "negative reads must not spin through the old unbounded path"
+assert "CommandAudioReadWatchdog(" in capture, "capture must construct the production read watchdog"
+assert "readWatchdog.reset(SystemClock.elapsedRealtime())" in capture
+assert "readWatchdog.onRead(n, nowMs)" in capture, "capture must execute the production read decision"
+assert "negativeReadCount" not in capture, "capture must not duplicate watchdog state"
+assert "firstNegativeReadAtMs" not in capture, "capture must not duplicate watchdog state"
+assert "lastReadProgressAtMs" not in capture, "capture must not duplicate watchdog state"
+assert "CommandAudioReadDecision.AUDIO_START_FAILURE" in watchdog
+assert "CommandAudioReadDecision.STOP" in watchdog
+assert "CommandAudioReadDecision.PROCESS" in watchdog
+assert "negativeReadCount = 0" in watchdog, "positive reads must reset negative-read state"
+assert "enhancement.close()" in capture, "capture must retain enhancement cleanup"
+assert "throw CommandAudioCaptureException(CommandAudioCaptureFailureKind.AUDIO_START)" in capture
 
 
 def compiler_command() -> list[str]:
@@ -76,9 +78,8 @@ with tempfile.TemporaryDirectory() as temp_dir:
             """
             import com.lchuang.xiaozhimobile.CommandAudioCaptureException
             import com.lchuang.xiaozhimobile.CommandAudioCaptureFailureKind
-
-            private const val MAX_NEGATIVE_READS = 3
-            private const val MAX_NEGATIVE_READ_MS = 500L
+            import com.lchuang.xiaozhimobile.CommandAudioReadDecision
+            import com.lchuang.xiaozhimobile.CommandAudioReadWatchdog
 
             private class PersistentNegativeAudioRecord {
                 var readCalls = 0
@@ -89,74 +90,80 @@ with tempfile.TemporaryDirectory() as temp_dir:
                 }
             }
 
-            private class FakeClock {
+            private class PersistentZeroAudioRecord {
+                var readCalls = 0
+
+                fun read(): Int {
+                    readCalls += 1
+                    return 0
+                }
+            }
+
+            private fun audioStartFailure(decision: CommandAudioReadDecision): Nothing {
+                check(decision == CommandAudioReadDecision.AUDIO_START_FAILURE)
+                throw CommandAudioCaptureException(CommandAudioCaptureFailureKind.AUDIO_START)
+            }
+
+            private fun assertPersistentNegativeReadsBecomeTypedFailure() {
+                val record = PersistentNegativeAudioRecord()
+                val watchdog = CommandAudioReadWatchdog(
+                    maxNegativeReads = 3,
+                    maxNegativeDurationMs = 500L,
+                    maxZeroReadDurationMs = 200L,
+                )
+                watchdog.reset(0L)
+                var typedFailure: CommandAudioCaptureException? = null
                 var nowMs = 0L
-
-                fun elapsedRealtime(): Long {
+                while (typedFailure == null) {
                     nowMs += 100L
-                    return nowMs
-                }
-            }
-
-            private data class RecognitionOutcome(val route: String, val attempts: Int)
-
-            private fun captureCommandAudio(
-                record: PersistentNegativeAudioRecord,
-                clock: FakeClock
-            ): FloatArray {
-                var negativeReadCount = 0
-                var firstNegativeReadAtMs = 0L
-                val captureStartedAtMs = clock.elapsedRealtime()
-
-                while (true) {
-                    val n = record.read()
-                    val nowMs = clock.elapsedRealtime()
-                    if (n < 0) {
-                        if (negativeReadCount == 0) firstNegativeReadAtMs = nowMs
-                        negativeReadCount += 1
-                        if (
-                            negativeReadCount >= MAX_NEGATIVE_READS ||
-                            nowMs - firstNegativeReadAtMs >= MAX_NEGATIVE_READ_MS ||
-                            nowMs - captureStartedAtMs >= MAX_NEGATIVE_READ_MS
-                        ) {
-                            throw CommandAudioCaptureException(CommandAudioCaptureFailureKind.AUDIO_START)
+                    try {
+                        if (watchdog.onRead(record.read(), nowMs) == CommandAudioReadDecision.AUDIO_START_FAILURE) {
+                            audioStartFailure(CommandAudioReadDecision.AUDIO_START_FAILURE)
                         }
-                        continue
+                    } catch (e: CommandAudioCaptureException) {
+                        typedFailure = e
                     }
-                    if (n == 0) continue
-                    negativeReadCount = 0
-                    return FloatArray(n)
+                }
+                check(record.readCalls == 3) { "persistent negative reads were not count-bounded: ${record.readCalls}" }
+                check(typedFailure?.kind == CommandAudioCaptureFailureKind.AUDIO_START) {
+                    "persistent negative reads did not become typed AUDIO_START: $typedFailure"
                 }
             }
 
-            private fun startLocalCommandRecognition(
-                record: PersistentNegativeAudioRecord,
-                clock: FakeClock
-            ): RecognitionOutcome {
-                var attempts = 1
-                return try {
-                    captureCommandAudio(record, clock)
-                    RecognitionOutcome("decoded", attempts)
-                } catch (e: CommandAudioCaptureException) {
-                    attempts -= 1
-                    check(e.kind == CommandAudioCaptureFailureKind.AUDIO_START)
-                    RecognitionOutcome("recoverCommandAudioCaptureFailure", attempts)
+            private fun assertPersistentZeroReadsStopAtDeadline() {
+                val record = PersistentZeroAudioRecord()
+                val watchdog = CommandAudioReadWatchdog(
+                    maxNegativeReads = 3,
+                    maxNegativeDurationMs = 500L,
+                    maxZeroReadDurationMs = 200L,
+                )
+                watchdog.reset(0L)
+                check(watchdog.onRead(record.read(), 100L) == CommandAudioReadDecision.CONTINUE)
+                check(watchdog.onRead(record.read(), 200L) == CommandAudioReadDecision.STOP)
+                check(record.readCalls == 2) { "zero reads were not bounded: ${record.readCalls}" }
+            }
+
+            private fun assertPositiveReadResetsNegativeState() {
+                val watchdog = CommandAudioReadWatchdog(
+                    maxNegativeReads = 3,
+                    maxNegativeDurationMs = 500L,
+                    maxZeroReadDurationMs = 200L,
+                )
+                watchdog.reset(0L)
+                check(watchdog.onRead(-3, 100L) == CommandAudioReadDecision.CONTINUE)
+                check(watchdog.onRead(160, 150L) == CommandAudioReadDecision.PROCESS)
+                check(watchdog.onRead(-3, 200L) == CommandAudioReadDecision.CONTINUE)
+                check(watchdog.onRead(-3, 250L) == CommandAudioReadDecision.CONTINUE) {
+                    "positive read did not reset the negative-read count"
                 }
+                check(watchdog.onRead(-3, 300L) == CommandAudioReadDecision.AUDIO_START_FAILURE)
             }
 
             fun main() {
-                val record = PersistentNegativeAudioRecord()
-                val outcome = startLocalCommandRecognition(record, FakeClock())
-                check(record.readCalls <= MAX_NEGATIVE_READS) {
-                    "persistent negative reads were not bounded: ${record.readCalls}"
-                }
-                check(outcome.route == "recoverCommandAudioCaptureFailure") {
-                    "negative read failure used ${outcome.route}"
-                }
-                check(outcome.attempts == 0) {
-                    "typed capture failure consumed the wrong retry count: ${outcome.attempts}"
-                }
-                println("PASS: persistent negative reads have bounded typed capture recovery")
+                assertPersistentNegativeReadsBecomeTypedFailure()
+                assertPersistentZeroReadsStopAtDeadline()
+                assertPositiveReadResetsNegativeState()
+                println("PASS: production AudioRecord read watchdog bounds negative/zero reads and resets on progress")
             }
             """
         ),
@@ -169,7 +176,15 @@ with tempfile.TemporaryDirectory() as temp_dir:
         None,
     )
     subprocess.run(
-        [*command, str(FAILURE), str(harness), *([] if embedded_stdlib else ["-include-runtime"]), "-d", str(jar)],
+        [
+            *command,
+            str(WATCHDOG),
+            str(FAILURE),
+            str(harness),
+            *([] if embedded_stdlib else ["-include-runtime"]),
+            "-d",
+            str(jar),
+        ],
         cwd=ROOT,
         check=True,
     )
@@ -187,4 +202,4 @@ with tempfile.TemporaryDirectory() as temp_dir:
     else:
         subprocess.run(["java", "-jar", str(jar)], cwd=ROOT, check=True)
 
-print("PASS: persistent negative AudioRecord.read regression is bounded and typed")
+print("PASS: production AudioRecord read watchdog regression is bounded, typed, and executable")

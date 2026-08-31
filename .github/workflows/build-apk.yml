@@ -46,7 +46,10 @@ jobs:
           python3 tools/test_v064_duplicate_guard.py
 
       - name: v0.6.5 feature regression
-        run: python3 tools/test_v065_release_gate.py
+        run: |
+          python3 tools/test_v065_capture_failure_path.py
+          python3 tools/test_v065_negative_read_failure.py
+          python3 tools/test_v065_release_gate.py
 
       - name: Security regression
         run: |

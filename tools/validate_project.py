@@ -71,6 +71,8 @@ REQUIRED_V065_TESTS = [
     "tools/test_v065_execution_copy.py",
     "tools/test_v065_execution_feedback.py",
     "tools/test_v065_final_review_fixes.py",
+    "tools/test_v065_capture_failure_path.py",
+    "tools/test_v065_negative_read_failure.py",
     "tools/test_v065_listening_truth.py",
     "tools/test_v065_adaptive_vad.py",
     "tools/test_v065_noise_suppressor.py",
@@ -105,6 +107,7 @@ REQUIRED_V065_SOURCES = [
     "app/src/main/java/com/lchuang/xiaozhimobile/DeviceAction.kt",
     "app/src/main/java/com/lchuang/xiaozhimobile/DeviceActionExecutor.kt",
     "app/src/main/java/com/lchuang/xiaozhimobile/CommandAudioCaptureFailure.kt",
+    "app/src/main/java/com/lchuang/xiaozhimobile/CommandAudioReadWatchdog.kt",
     "app/src/main/java/com/lchuang/xiaozhimobile/ExecutionFeedbackCoordinator.kt",
     "app/src/main/java/com/lchuang/xiaozhimobile/ExecutionIntentFormatter.kt",
     "app/src/main/java/com/lchuang/xiaozhimobile/TtsProgressRegistry.kt",
@@ -1181,6 +1184,11 @@ def build_checks() -> list[tuple[str, bool]]:
         "- name: Upload APK verification report",
     ]
     check("workflow release-gate order", appears_in_order(workflow, workflow_steps))
+    check("workflow v0.6.5 capture watchdog tests", appears_in_order(workflow, [
+        "python3 tools/test_v065_capture_failure_path.py",
+        "python3 tools/test_v065_negative_read_failure.py",
+        "python3 tools/test_v065_release_gate.py",
+    ]))
     check("workflow historical test commands", appears_in_order(workflow, [
         "python3 tools/test_v031_behavior.py",
         "python3 tools/test_v040_voice_flow.py",

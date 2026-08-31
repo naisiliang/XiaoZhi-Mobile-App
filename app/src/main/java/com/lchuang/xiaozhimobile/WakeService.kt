@@ -506,30 +506,23 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
             vad.reset()
             var speechStarted = false
             var waitedMs = 0
-            var negativeReadCount = 0
-            var firstNegativeReadAtMs = 0L
-            var lastReadProgressAtMs = SystemClock.elapsedRealtime()
+            val readWatchdog = CommandAudioReadWatchdog(
+                maxNegativeReads = COMMAND_MAX_READ_ERRORS,
+                maxNegativeDurationMs = COMMAND_MAX_READ_ERROR_MS,
+                maxZeroReadDurationMs = COMMAND_MAX_ZERO_READ_MS
+            )
+            readWatchdog.reset(SystemClock.elapsedRealtime())
 
             while (running.get() && commandListening.get() && outputSize < maxSamples) {
                 val n = record.read(frame, 0, frame.size)
                 val nowMs = SystemClock.elapsedRealtime()
-                if (n < 0) {
-                    if (negativeReadCount == 0) firstNegativeReadAtMs = nowMs
-                    negativeReadCount += 1
-                    if (
-                        negativeReadCount >= COMMAND_MAX_READ_ERRORS ||
-                        nowMs - firstNegativeReadAtMs >= COMMAND_MAX_READ_ERROR_MS
-                    ) {
+                when (readWatchdog.onRead(n, nowMs)) {
+                    CommandAudioReadDecision.AUDIO_START_FAILURE ->
                         throw CommandAudioCaptureException(CommandAudioCaptureFailureKind.AUDIO_START)
-                    }
-                    continue
+                    CommandAudioReadDecision.STOP -> break
+                    CommandAudioReadDecision.CONTINUE -> continue
+                    CommandAudioReadDecision.PROCESS -> Unit
                 }
-                negativeReadCount = 0
-                if (n == 0) {
-                    if (nowMs - lastReadProgressAtMs >= COMMAND_MAX_ZERO_READ_MS) break
-                    continue
-                }
-                lastReadProgressAtMs = nowMs
                 val rms = frameRms(frame, n)
                 val vadDecision = vad.accept(rms)
                 overlay.updateAudioLevel(normalizeOverlayAudioLevel(rms))

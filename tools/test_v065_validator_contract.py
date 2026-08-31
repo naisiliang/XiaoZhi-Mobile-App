@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 VALIDATOR_PATH = ROOT / "tools/validate_project.py"
 SAFE_TOOL_PATH = ROOT / "app/src/main/java/com/lchuang/xiaozhimobile/SafeToolExecutor.kt"
 RELEASE_GATE_PATH = ROOT / "tools/test_v065_release_gate.py"
+WORKFLOW_PATH = ROOT / ".github/workflows/build-apk.yml"
 EXPECTED_SAFE_TOOLS = [
     "open_app",
     "navigate",
@@ -34,6 +35,8 @@ EXPECTED_RELEASE_GATE_TESTS = [
     "tools/test_v065_execution_copy.py",
     "tools/test_v065_execution_feedback.py",
     "tools/test_v065_final_review_fixes.py",
+    "tools/test_v065_capture_failure_path.py",
+    "tools/test_v065_negative_read_failure.py",
     "tools/test_v065_listening_truth.py",
     "tools/test_v065_adaptive_vad.py",
     "tools/test_v065_noise_suppressor.py",
@@ -163,6 +166,12 @@ release_gate_source = RELEASE_GATE_PATH.read_text(encoding="utf-8")
 assert validator.parse_release_gate_tests(release_gate_source) == EXPECTED_RELEASE_GATE_TESTS
 assert validator.has_release_gate_loop_subprocess_run(release_gate_source)
 assert validator.release_gate_delegates_expected_tests(release_gate_source, EXPECTED_RELEASE_GATE_TESTS)
+workflow_source = WORKFLOW_PATH.read_text(encoding="utf-8")
+assert validator.appears_in_order(workflow_source, [
+    "python3 tools/test_v065_capture_failure_path.py",
+    "python3 tools/test_v065_negative_read_failure.py",
+    "python3 tools/test_v065_release_gate.py",
+])
 
 comment_only_frozen_guard = release_gate_source.replace(
     '    "tools/test_v065_frozen_baseline.py",\n',
