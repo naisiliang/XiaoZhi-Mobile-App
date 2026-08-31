@@ -86,10 +86,12 @@ with tempfile.TemporaryDirectory() as td:
                 registry.register("queued-real", { events += "START" }, { events += "DONE" })
                 registry.scheduleWatchdog("queued-real")
                 registry.onDone("queued-real")
-                check(queued.isEmpty())
+                check(queued.size == 1) {
+                    "watchdog must start with exactly one queued real completion callback: ${queued.size}"
+                }
                 delayed.removeAt(0).second()
                 check(events.isEmpty()) { "watchdog must queue callbacks without running them inline: $events" }
-                queued.toList().forEach { it() }
+                while (queued.isNotEmpty()) queued.removeAt(0)()
                 check(events == listOf("START")) {
                     "queued real completion must be stale after confirmed watchdog: $events"
                 }
