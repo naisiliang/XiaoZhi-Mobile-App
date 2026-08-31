@@ -287,6 +287,105 @@ for test in TESTS:
     namespace["test"] = "tools/test_v065_validator_contract.py"
     subprocess.run(["python", test], cwd=root, check=True)
 """
+vars_callable_alias_chain_loop_target_reassignment_source = f"""from pathlib import Path
+import subprocess
+
+root = Path(__file__).resolve().parents[1]
+TESTS = [
+{render_tests(EXPECTED_RELEASE_GATE_TESTS)}
+]
+factory = vars
+factory_alias = factory
+
+for test in TESTS:
+    namespace = factory_alias()
+    namespace["test"] = "tools/test_v065_validator_contract.py"
+    subprocess.run(["python", test], cwd=root, check=True)
+"""
+globals_callable_alias_chain_loop_target_reassignment_source = f"""from pathlib import Path
+import subprocess
+
+root = Path(__file__).resolve().parents[1]
+TESTS = [
+{render_tests(EXPECTED_RELEASE_GATE_TESTS)}
+]
+factory = globals
+factory_alias = factory
+
+for test in TESTS:
+    namespace = factory_alias()
+    namespace["test"] = "tools/test_v065_validator_contract.py"
+    subprocess.run(["python", test], cwd=root, check=True)
+"""
+locals_callable_alias_chain_loop_target_reassignment_source = f"""from pathlib import Path
+import subprocess
+
+root = Path(__file__).resolve().parents[1]
+TESTS = [
+{render_tests(EXPECTED_RELEASE_GATE_TESTS)}
+]
+factory = locals
+factory_alias = factory
+
+for test in TESTS:
+    namespace = factory_alias()
+    namespace["test"] = "tools/test_v065_validator_contract.py"
+    subprocess.run(["python", test], cwd=root, check=True)
+"""
+builtin_attribute_callable_alias_loop_target_reassignment_source = f"""from pathlib import Path
+import builtins
+import subprocess
+
+root = Path(__file__).resolve().parents[1]
+TESTS = [
+{render_tests(EXPECTED_RELEASE_GATE_TESTS)}
+]
+factory = builtins.vars
+
+for test in TESTS:
+    factory()["test"] = "tools/test_v065_validator_contract.py"
+    subprocess.run(["python", test], cwd=root, check=True)
+"""
+builtin_import_callable_alias_loop_target_reassignment_source = f"""from pathlib import Path
+from builtins import globals as factory
+import subprocess
+
+root = Path(__file__).resolve().parents[1]
+TESTS = [
+{render_tests(EXPECTED_RELEASE_GATE_TESTS)}
+]
+
+for test in TESTS:
+    factory()["test"] = "tools/test_v065_validator_contract.py"
+    subprocess.run(["python", test], cwd=root, check=True)
+"""
+builtin_subscript_callable_alias_loop_target_reassignment_source = f"""from pathlib import Path
+import subprocess
+
+root = Path(__file__).resolve().parents[1]
+TESTS = [
+{render_tests(EXPECTED_RELEASE_GATE_TESTS)}
+]
+factory = __builtins__["vars"]
+
+for test in TESTS:
+    factory()["test"] = "tools/test_v065_validator_contract.py"
+    subprocess.run(["python", test], cwd=root, check=True)
+"""
+builtin_getattr_callable_alias_loop_target_reassignment_source = f"""from pathlib import Path
+import builtins
+import subprocess
+
+root = Path(__file__).resolve().parents[1]
+TESTS = [
+{render_tests(EXPECTED_RELEASE_GATE_TESTS)}
+]
+factory = getattr(builtins, "locals")
+
+for test in TESTS:
+    factory()["test"] = "tools/test_v065_validator_contract.py"
+    subprocess.run(["python", test], cwd=root, check=True)
+"""
 assert not validator.release_gate_delegates_expected_tests(comment_only_frozen_guard, EXPECTED_RELEASE_GATE_TESTS)
 assert not validator.has_release_gate_loop_subprocess_run(broken_loop_source)
 assert not validator.has_release_gate_loop_subprocess_run(unreachable_nested_run_source)
@@ -544,6 +643,41 @@ expect(
     "release gate rejects external namespace alias loop target reassignment",
     not validator.has_release_gate_loop_subprocess_run(external_namespace_alias_loop_target_reassignment_source),
     "validator currently accepts a namespace alias created before the TESTS loop",
+)
+expect(
+    "release gate rejects vars callable alias chains",
+    not validator.has_release_gate_loop_subprocess_run(vars_callable_alias_chain_loop_target_reassignment_source),
+    "validator currently accepts transitive aliases of vars as a namespace factory",
+)
+expect(
+    "release gate rejects globals callable alias chains",
+    not validator.has_release_gate_loop_subprocess_run(globals_callable_alias_chain_loop_target_reassignment_source),
+    "validator currently accepts transitive aliases of globals as a namespace factory",
+)
+expect(
+    "release gate rejects locals callable alias chains",
+    not validator.has_release_gate_loop_subprocess_run(locals_callable_alias_chain_loop_target_reassignment_source),
+    "validator currently accepts transitive aliases of locals as a namespace factory",
+)
+expect(
+    "release gate rejects builtin attribute namespace factory aliases",
+    not validator.has_release_gate_loop_subprocess_run(builtin_attribute_callable_alias_loop_target_reassignment_source),
+    "validator currently accepts builtins.vars as a namespace factory alias",
+)
+expect(
+    "release gate rejects builtin import namespace factory aliases",
+    not validator.has_release_gate_loop_subprocess_run(builtin_import_callable_alias_loop_target_reassignment_source),
+    "validator currently accepts a from-builtins namespace factory alias",
+)
+expect(
+    "release gate rejects builtin mapping namespace factory aliases",
+    not validator.has_release_gate_loop_subprocess_run(builtin_subscript_callable_alias_loop_target_reassignment_source),
+    "validator currently accepts __builtins__[factory] as a namespace factory alias",
+)
+expect(
+    "release gate rejects getattr namespace factory aliases",
+    not validator.has_release_gate_loop_subprocess_run(builtin_getattr_callable_alias_loop_target_reassignment_source),
+    "validator currently accepts getattr(builtins, factory) as a namespace factory alias",
 )
 expect(
     "release gate rejects break after direct subprocess.run",
