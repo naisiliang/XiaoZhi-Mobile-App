@@ -75,9 +75,13 @@ class SafeToolExecutor(private val deviceActionExecutor: DeviceActionExecutor) {
 
     private fun intArg(call: AiToolCall, name: String): Int? = when (val value = call.args[name]) {
         is Int -> value
-        is Long -> value.toInt()
-        is Double -> if (value % 1.0 == 0.0) value.toInt() else null
-        is Number -> value.toInt()
+        is Long -> value.takeIf { it in Int.MIN_VALUE.toLong()..Int.MAX_VALUE.toLong() }?.toInt()
+        is Double -> value.takeIf {
+            it.isFinite() &&
+                it >= Int.MIN_VALUE.toDouble() &&
+                it <= Int.MAX_VALUE.toDouble() &&
+                it % 1.0 == 0.0
+        }?.toInt()
         else -> null
     }
 

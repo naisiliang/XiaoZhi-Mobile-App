@@ -35,6 +35,15 @@ assert 'phone.' not in execute_block, 'SafeToolExecutor.execute must not directl
 for forbidden in ('go_home', 'delete_all_files', 'send_message', 'transfer_money', 'install_app', 'shell_command'):
     assert f'"{forbidden}"' not in safe_text, f'authority expanded with: {forbidden}'
 
+int_arg_start = safe_text.index('private fun intArg')
+int_arg_end = safe_text.index('\n    private fun mapPreferenceArg', int_arg_start)
+int_arg_text = safe_text[int_arg_start:int_arg_end]
+assert 'is Long -> value.toInt()' not in int_arg_text, 'Long values must be range-checked before conversion'
+assert 'is Number -> value.toInt()' not in int_arg_text, 'unsupported Number types must not use lossy conversion'
+assert '.isFinite()' in int_arg_text, 'floating-point validation must reject NaN and infinities'
+assert 'Int.MIN_VALUE.toDouble()' in int_arg_text, 'Double lower bound must be checked before conversion'
+assert 'Int.MAX_VALUE.toDouble()' in int_arg_text, 'Double upper bound must be checked before conversion'
+
 with tempfile.TemporaryDirectory() as td:
     td = Path(td)
     uri_stub = td / 'Uri.kt'
@@ -78,11 +87,13 @@ with tempfile.TemporaryDirectory() as td:
             data class MediaVolumeResult(val actualPercent: Int, val success: Boolean)
             var sideEffects = 0
             fun openApp(name: String): AppLauncher.AppLaunchResult { sideEffects++; return AppLauncher.AppLaunchResult.Success(name) }
+            fun openMap(preference: MapAppPreference) = MapController.MapActionResult()
             fun navigate(destination: String, preference: MapAppPreference) = MapController.MapActionResult()
             fun searchNearby(keyword: String, preference: MapAppPreference, callback: (MapController.MapActionResult) -> Unit) { sideEffects++; callback(MapController.MapActionResult()) }
             fun openBrowser(target: String): Boolean { sideEffects++; return true }
             fun mediaPlay() { sideEffects++ }
             fun mediaPause() { sideEffects++ }
+            fun mediaStop() { sideEffects++ }
             fun mediaNext() { sideEffects++ }
             fun mediaPrevious() { sideEffects++ }
             fun volumeUpVerified() = MediaVolumeResult(60, true).also { sideEffects++ }
@@ -119,12 +130,23 @@ with tempfile.TemporaryDirectory() as td:
             planned(AiToolCall("media_previous"), DeviceAction.MediaPrevious)
             planned(AiToolCall("volume_up"), DeviceAction.MediaVolumeUp)
             planned(AiToolCall("volume_down"), DeviceAction.MediaVolumeDown)
+            planned(AiToolCall("set_volume", mapOf("percent" to 0)), DeviceAction.SetMediaVolume(0))
             planned(AiToolCall("set_volume", mapOf("percent" to 70)), DeviceAction.SetMediaVolume(70))
+            planned(AiToolCall("set_volume", mapOf("percent" to 100L)), DeviceAction.SetMediaVolume(100))
+            planned(AiToolCall("set_volume", mapOf("percent" to 0.0)), DeviceAction.SetMediaVolume(0))
+            planned(AiToolCall("set_volume", mapOf("percent" to 100.0)), DeviceAction.SetMediaVolume(100))
             planned(AiToolCall("flashlight_on"), DeviceAction.SetFlashlight(true))
             planned(AiToolCall("flashlight_off"), DeviceAction.SetFlashlight(false))
             rejected(AiToolCall("open_web", mapOf("query_or_url" to "javascript:alert(1)")), "REJECTED_SCHEME")
             rejected(AiToolCall("open_web", mapOf("query_or_url" to "ftp://example.com")), "REJECTED_SCHEME")
             rejected(AiToolCall("set_volume", mapOf("percent" to 101)), "INVALID_ARGS_set_volume")
+            rejected(AiToolCall("set_volume", mapOf("percent" to 4294967296L)), "INVALID_ARGS_set_volume")
+            rejected(AiToolCall("set_volume", mapOf("percent" to 2147483648.0)), "INVALID_ARGS_set_volume")
+            rejected(AiToolCall("set_volume", mapOf("percent" to 70.5)), "INVALID_ARGS_set_volume")
+            rejected(AiToolCall("set_volume", mapOf("percent" to Double.NaN)), "INVALID_ARGS_set_volume")
+            rejected(AiToolCall("set_volume", mapOf("percent" to Double.POSITIVE_INFINITY)), "INVALID_ARGS_set_volume")
+            rejected(AiToolCall("set_volume", mapOf("percent" to Double.NEGATIVE_INFINITY)), "INVALID_ARGS_set_volume")
+            rejected(AiToolCall("set_volume", mapOf("percent" to 70f)), "INVALID_ARGS_set_volume")
             rejected(AiToolCall("open_app", mapOf("name" to "com.evil.package")), "INVALID_ARGS_open_app")
             rejected(AiToolCall("unknown_tool"), "REJECTED_NOT_ALLOWED")
             check(phone.sideEffects == 0) { "planning must not execute device commands" }
