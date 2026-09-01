@@ -57,7 +57,8 @@ class PhoneController(
     data class MediaVolumeResult(
         val requestedPercent: Int?,
         val actualPercent: Int,
-        val success: Boolean
+        val success: Boolean,
+        val resultCode: String = if (success) MediaVolumeController.RESULT_SET_OK else MediaVolumeController.RESULT_SET_ERROR
     )
 
     fun currentMediaVolumePercent(): Int = mediaVolumeController.snapshot().actualPercent
@@ -67,7 +68,8 @@ class PhoneController(
         return MediaVolumeResult(
             requestedPercent = snapshot.requestedPercent,
             actualPercent = snapshot.actualPercent,
-            success = snapshot.resultCode == MediaVolumeController.RESULT_SET_OK
+            success = snapshot.resultCode == MediaVolumeController.RESULT_SET_OK,
+            resultCode = toFeedbackResultCode(snapshot.resultCode)
         )
     }
 
@@ -76,7 +78,17 @@ class PhoneController(
         val success =
             snapshot.resultCode == MediaVolumeController.RESULT_ADJUST_OK &&
                 snapshot.afterStep > snapshot.beforeStep
-        return MediaVolumeResult(null, snapshot.actualPercent, success)
+        val resultCode = if (success) {
+            MediaVolumeController.RESULT_SET_OK
+        } else {
+            toFeedbackResultCode(snapshot.resultCode)
+        }
+        return MediaVolumeResult(
+            requestedPercent = null,
+            actualPercent = snapshot.actualPercent,
+            success = success,
+            resultCode = resultCode
+        )
     }
 
     fun volumeDownVerified(): MediaVolumeResult {
@@ -84,7 +96,17 @@ class PhoneController(
         val success =
             snapshot.resultCode == MediaVolumeController.RESULT_ADJUST_OK &&
                 snapshot.afterStep < snapshot.beforeStep
-        return MediaVolumeResult(null, snapshot.actualPercent, success)
+        val resultCode = if (success) {
+            MediaVolumeController.RESULT_SET_OK
+        } else {
+            toFeedbackResultCode(snapshot.resultCode)
+        }
+        return MediaVolumeResult(
+            requestedPercent = null,
+            actualPercent = snapshot.actualPercent,
+            success = success,
+            resultCode = resultCode
+        )
     }
 
     fun volumeUp() { volumeUpVerified() }
@@ -161,4 +183,15 @@ class PhoneController(
             false
         }
     }
+
+    private fun toFeedbackResultCode(resultCode: String): String =
+        when (resultCode) {
+            MediaVolumeController.RESULT_SET_OK,
+            MediaVolumeController.RESULT_ADJUST_OK -> MediaVolumeController.RESULT_SET_OK
+            MediaVolumeController.RESULT_SET_MISMATCH,
+            MediaVolumeController.RESULT_ADJUST_NO_CHANGE -> MediaVolumeController.RESULT_SET_MISMATCH
+            MediaVolumeController.RESULT_SET_ERROR,
+            MediaVolumeController.RESULT_ADJUST_ERROR -> MediaVolumeController.RESULT_SET_ERROR
+            else -> MediaVolumeController.RESULT_SET_ERROR
+        }
 }
