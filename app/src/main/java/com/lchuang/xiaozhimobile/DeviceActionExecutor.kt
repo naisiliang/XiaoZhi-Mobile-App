@@ -88,14 +88,19 @@ class DeviceActionExecutor(
 
     private fun volumeResult(result: PhoneController.MediaVolumeResult, code: String): DeviceExecutionResult {
         val actual = result.actualPercent.coerceIn(0, 100)
-        val text = when (actual) {
-            0 -> "媒体音量已经静音"
-            100 -> "媒体音量已经调整到最大"
-            else -> "媒体音量已经调整到${actual}%"
-        }
         return if (result.success) {
+            val text = when (actual) {
+                0 -> "媒体音量已经静音"
+                100 -> "媒体音量已经调整到最大"
+                else -> "媒体音量已经调整到约${actual}%"
+            }
             ok(code, text, "媒体音量${actual}%", actual)
         } else {
+            val text = when (actual) {
+                0 -> "媒体音量现在是静音"
+                100 -> "媒体音量现在是最大"
+                else -> "媒体音量现在约${actual}%"
+            }
             DeviceExecutionResult(false, "${code}_PARTIAL", text, "媒体音量${actual}%", CommandFailureKind.EXECUTION_FAILED, actual)
         }
     }
