@@ -16,7 +16,8 @@ with tempfile.TemporaryDirectory() as td:
                 "你先休息吧", "可以休息了", "再见", "拜拜", "今天先到这里", "暂时没别的事"
             ).forEach { check(d.classify(it) == ExitDecision.EXIT) { "expected EXIT: $it -> ${d.classify(it)}" } }
             listOf(
-                "退出微信", "退出登录", "退出当前账号", "怎么退出这个页面", "帮我关闭高德地图", "关闭微信"
+                "退出微信", "退出登录", "退出当前账号", "退出账户", "退出密码", "退出界面",
+                "怎么退出这个页面", "帮我关闭高德地图", "关闭微信"
             ).forEach { check(d.classify(it) == ExitDecision.CONTINUE) { "expected CONTINUE: $it -> ${d.classify(it)}" } }
             listOf("好了今天就这样", "你可以先忙你的了").forEach {
                 check(d.classify(it) == ExitDecision.AMBIGUOUS) { "expected AMBIGUOUS: $it -> ${d.classify(it)}" }

@@ -14,7 +14,7 @@ checks = [
     ('overlay thinking state', '正在思考' in wake),
     ('waveform follows rms', 'overlay.updateAudioLevel' in wake and 'rms' in wake),
     ('spoken text normalized', 'VoiceCommandNormalizer.normalize(rawText)' in wake),
-    ('router receives normalized command', 'router.handle(normalized)' in wake),
+    ('router plans normalized command', 'router.plan(normalized)' in wake),
     ('overlay hidden when session ends', 'overlay.hide()' in wake),
     ('overlay released on destroy', 'overlay.release()' in wake),
 ]
@@ -22,7 +22,7 @@ checks = [
 # Enforce routing order in processUtterance: normalize before router.
 try:
     normalize_i = wake.index('VoiceCommandNormalizer.normalize(rawText)')
-    router_i = wake.index('router.handle(normalized)')
+    router_i = wake.index('router.plan(normalized)')
     checks.append(('normalization occurs before router', normalize_i < router_i))
 except ValueError:
     checks.append(('normalization occurs before router', False))

@@ -20,7 +20,7 @@ class ConversationExitDetector {
         if (text.isBlank()) return ExitDecision.CONTINUE
 
         if (targetedExit.any(text::contains)) return ExitDecision.CONTINUE
-        if (Regex("(?:退出|关闭).*(?:应用|软件|页面|账号|登录|微信|qq|地图)").containsMatchIn(text)) {
+        if (Regex("(?:退出|关闭).*(?:应用|软件|页面|界面|账号|账户|密码|登录|微信|qq|地图)").containsMatchIn(text)) {
             return ExitDecision.CONTINUE
         }
         if (text.startsWith("怎么退出")) return ExitDecision.CONTINUE
