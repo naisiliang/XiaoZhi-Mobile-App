@@ -84,7 +84,11 @@ with tempfile.TemporaryDirectory() as td:
 
         @Suppress("UNUSED_PARAMETER")
         class PhoneController {
-            data class MediaVolumeResult(val actualPercent: Int, val success: Boolean)
+            data class MediaVolumeResult(
+                val actualPercent: Int,
+                val success: Boolean,
+                val resultCode: String = if (success) "SUCCESS" else "EXECUTION_FAILED"
+            )
             var sideEffects = 0
             fun openApp(name: String): AppLauncher.AppLaunchResult { sideEffects++; return AppLauncher.AppLaunchResult.Success(name) }
             fun openMap(preference: MapAppPreference) = MapController.MapActionResult()

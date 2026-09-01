@@ -47,7 +47,11 @@ with tempfile.TemporaryDirectory() as td:
         }
 
         class PhoneController {
-            data class MediaVolumeResult(val success: Boolean = true, val actualPercent: Int = 50)
+            data class MediaVolumeResult(
+                val success: Boolean = true,
+                val actualPercent: Int = 50,
+                val resultCode: String = if (success) "SUCCESS" else "EXECUTION_FAILED"
+            )
             var sideEffects = 0
             val flashlightValues = mutableListOf<Boolean>()
             fun setMediaVolumePercent(percent: Int): MediaVolumeResult { sideEffects++; return MediaVolumeResult(actualPercent = percent) }

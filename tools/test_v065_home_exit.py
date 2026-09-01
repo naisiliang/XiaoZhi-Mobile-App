@@ -60,7 +60,11 @@ with tempfile.TemporaryDirectory() as td:
             var volumeResult = MediaVolumeResult(80, true)
             val calls = mutableListOf<String>()
 
-            data class MediaVolumeResult(val actualPercent: Int, val success: Boolean)
+            data class MediaVolumeResult(
+                val actualPercent: Int,
+                val success: Boolean,
+                val resultCode: String = if (success) "SUCCESS" else "EXECUTION_FAILED"
+            )
 
             fun openApp(name: String): AppLauncher.AppLaunchResult { calls += "openApp:$name"; return appResult }
             fun openMap(preference: MapAppPreference): MapController.MapActionResult { calls += "openMap:$preference"; return mapResult }
@@ -119,7 +123,7 @@ with tempfile.TemporaryDirectory() as td:
 
             phone.volumeResult = PhoneController.MediaVolumeResult(63, true)
             val volume = run(DeviceAction.SetMediaVolume(70))
-            check(volume.success && volume.spokenResult == "媒体音量已经调整到63%")
+            check(volume.success && volume.spokenResult == "媒体音量已经调整到约63%")
             check(volume.notificationSummary == "媒体音量63%")
 
             phone.mapResult = MapController.MapActionResult(false, message = "导航没有成功打开", code = "NAVIGATION_FAILED")

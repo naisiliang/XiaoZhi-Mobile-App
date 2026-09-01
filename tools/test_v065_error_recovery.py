@@ -230,7 +230,11 @@ with tempfile.TemporaryDirectory() as temp_dir:
             }
 
             class PhoneController {
-                data class MediaVolumeResult(val success: Boolean, val actualPercent: Int)
+                data class MediaVolumeResult(
+                    val success: Boolean,
+                    val actualPercent: Int,
+                    val resultCode: String = if (success) "SUCCESS" else "EXECUTION_FAILED"
+                )
                 data class MapResult(val message: String, val success: Boolean)
 
                 fun openApp(name: String) = AppLauncher.AppLaunchResult.Success(name)

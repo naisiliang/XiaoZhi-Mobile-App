@@ -128,7 +128,11 @@ with tempfile.TemporaryDirectory() as temp_dir:
             }
 
             open class PhoneController {
-                data class MediaVolumeResult(val actualPercent: Int, val success: Boolean)
+                data class MediaVolumeResult(
+                    val actualPercent: Int,
+                    val success: Boolean,
+                    val resultCode: String = if (success) "SUCCESS" else "EXECUTION_FAILED"
+                )
                 var openAppBehavior: (String) -> AppLauncher.AppLaunchResult = { AppLauncher.AppLaunchResult.Success("pkg", it) }
                 var nearbyBehavior: ((String, MapAppPreference, (MapController.MapActionResult) -> Unit) -> Unit) = { _, _, _ -> }
 
