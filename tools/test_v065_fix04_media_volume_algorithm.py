@@ -32,6 +32,7 @@ def compile_and_run_harness() -> None:
                     val isVolumeFixed: Boolean = false,
                     private val staleReadsAfterSet: Int = 0,
                     private val ignoreSet: Boolean = false,
+                    private val maxWritableVolume: Int? = null,
                     private val throwOnSet: Boolean = false,
                 ) {
                     companion object {
@@ -77,7 +78,8 @@ def compile_and_run_harness() -> None:
                             staleReadsRemaining = 0
                             return
                         }
-                        pendingVolume = index.coerceIn(0, maxVolume)
+                        val effectiveCap = maxWritableVolume ?: maxVolume
+                        pendingVolume = index.coerceIn(0, effectiveCap.coerceIn(0, maxVolume))
                         staleReadsRemaining = staleReadBudget
                         staleReadBudget = 0
                     }
@@ -148,6 +150,30 @@ def compile_and_run_harness() -> None:
                     assertEquals(1, limitedSnapshot.retryCount, "limited retry count")
                     assertEquals(4, limitedSnapshot.afterStep, "limited after step")
                     assertEquals(MediaVolumeController.RESULT_SET_MISMATCH, limitedSnapshot.resultCode, "limited result")
+
+                    val adjacentAudio = AudioManager(
+                        maxVolume = 15,
+                        initialVolume = 4,
+                        maxWritableVolume = 7,
+                    )
+                    val adjacentController = MediaVolumeController(adjacentAudio)
+                    val adjacentSnapshot = adjacentController.setPercent(50)
+                    assertEquals(8, adjacentSnapshot.targetStep, "adjacent target step")
+                    assertEquals(7, adjacentSnapshot.afterStep, "adjacent after step")
+                    assertEquals(47, adjacentSnapshot.actualPercent, "adjacent actual percent")
+                    assertEquals(1, adjacentSnapshot.retryCount, "adjacent retry count")
+                    assertEquals(MediaVolumeController.RESULT_SET_MISMATCH, adjacentSnapshot.resultCode, "adjacent mismatch result")
+
+                    val fixedAudio = AudioManager(
+                        maxVolume = 10,
+                        initialVolume = 4,
+                        isVolumeFixed = true,
+                    )
+                    val fixedController = MediaVolumeController(fixedAudio)
+                    val fixedSnapshot = fixedController.setPercent(80)
+                    assertEquals(0, fixedSnapshot.retryCount, "fixed retry count")
+                    assertEquals(4, fixedSnapshot.afterStep, "fixed after step")
+                    assertEquals(MediaVolumeController.RESULT_SET_MISMATCH, fixedSnapshot.resultCode, "fixed result")
 
                     val failedAudio = AudioManager(
                         maxVolume = 10,

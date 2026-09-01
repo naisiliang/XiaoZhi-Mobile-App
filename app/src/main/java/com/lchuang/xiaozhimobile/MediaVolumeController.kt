@@ -1,8 +1,6 @@
 package com.lchuang.xiaozhimobile
 
 import android.media.AudioManager
-import kotlin.math.abs
-import kotlin.math.ceil
 import kotlin.math.round
 
 data class MediaVolumeSnapshot(
@@ -59,7 +57,7 @@ open class MediaVolumeController(
                 actualPercent = actualPercent,
                 isVolumeFixed = audioManager.isVolumeFixed,
                 retryCount = retryCount,
-                resultCode = classifySetResult(requestedPercent, targetStep, afterStep, maxStep)
+                resultCode = classifySetResult(targetStep, afterStep)
             )
         } catch (_: InterruptedException) {
             Thread.currentThread().interrupt()
@@ -160,14 +158,8 @@ open class MediaVolumeController(
             else -> targetStep
         }
 
-    private fun classifySetResult(requestedPercent: Int, targetStep: Int, afterStep: Int, maxStep: Int): String {
-        if (afterStep == targetStep) {
-            return RESULT_SET_OK
-        }
-        val actualPercent = toPercent(afterStep, maxStep)
-        val tolerance = ceil(100.0 / maxStep).toInt().coerceAtLeast(1)
-        return if (abs(actualPercent - requestedPercent) <= tolerance) RESULT_SET_OK else RESULT_SET_MISMATCH
-    }
+    private fun classifySetResult(targetStep: Int, afterStep: Int): String =
+        if (afterStep == targetStep) RESULT_SET_OK else RESULT_SET_MISMATCH
 
     private fun classifyAdjustResult(direction: Int, beforeStep: Int, afterStep: Int): String =
         when (direction) {
