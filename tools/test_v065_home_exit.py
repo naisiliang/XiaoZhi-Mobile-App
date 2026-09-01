@@ -123,7 +123,7 @@ with tempfile.TemporaryDirectory() as td:
 
             phone.volumeResult = PhoneController.MediaVolumeResult(63, true)
             val volume = run(DeviceAction.SetMediaVolume(70))
-            check(volume.success && volume.spokenResult == "媒体音量已经调整到63%")
+            check(volume.success && volume.spokenResult == "媒体音量已经调整到约63%")
             check(volume.notificationSummary == "媒体音量63%")
 
             phone.mapResult = MapController.MapActionResult(false, message = "导航没有成功打开", code = "NAVIGATION_FAILED")
