@@ -42,14 +42,14 @@ open class MediaVolumeController(
         val requestedPercent = percent.coerceIn(0, 100)
         val targetStep = round(requestedPercent * maxStep / 100.0).toInt().coerceIn(0, maxStep)
         return try {
-            audioManager.setStreamVolume(
-                AudioManager.STREAM_MUSIC,
-                targetStep,
-                AudioManager.FLAG_SHOW_UI
-            )
-            val afterStep = readCurrentStep(maxStep)
+            var retryCount = 0
+            var afterStep = writeAndReadBack(targetStep, maxStep)
+            if (shouldRetrySet(beforeStep, targetStep, afterStep)) {
+                retryCount = 1
+                val retryStep = fallbackStep(beforeStep, targetStep, afterStep, maxStep)
+                afterStep = writeAndReadBack(retryStep, maxStep)
+            }
             val actualPercent = toPercent(afterStep, maxStep)
-            val tolerance = ceil(100.0 / maxStep).toInt().coerceAtLeast(1)
             MediaVolumeSnapshot(
                 requestedPercent = requestedPercent,
                 beforeStep = beforeStep,
@@ -58,8 +58,21 @@ open class MediaVolumeController(
                 maxStep = maxStep,
                 actualPercent = actualPercent,
                 isVolumeFixed = audioManager.isVolumeFixed,
+                retryCount = retryCount,
+                resultCode = classifySetResult(requestedPercent, targetStep, afterStep, maxStep)
+            )
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+            MediaVolumeSnapshot(
+                requestedPercent = requestedPercent,
+                beforeStep = beforeStep,
+                targetStep = targetStep,
+                afterStep = beforeStep,
+                maxStep = maxStep,
+                actualPercent = toPercent(beforeStep, maxStep),
+                isVolumeFixed = audioManager.isVolumeFixed,
                 retryCount = 0,
-                resultCode = if (abs(actualPercent - requestedPercent) <= tolerance) RESULT_SET_OK else RESULT_SET_MISMATCH
+                resultCode = RESULT_SET_ERROR
             )
         } catch (_: Throwable) {
             MediaVolumeSnapshot(
@@ -123,8 +136,38 @@ open class MediaVolumeController(
     private fun readCurrentStep(maxStep: Int): Int =
         audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).coerceIn(0, maxStep)
 
+    private fun writeAndReadBack(targetStep: Int, maxStep: Int): Int {
+        audioManager.setStreamVolume(
+            AudioManager.STREAM_MUSIC,
+            targetStep,
+            AudioManager.FLAG_SHOW_UI
+        )
+        Thread.sleep(120L)
+        return readCurrentStep(maxStep)
+    }
+
     private fun toPercent(step: Int, maxStep: Int): Int =
         round(step * 100.0 / maxStep).toInt().coerceIn(0, 100)
+
+    private fun shouldRetrySet(beforeStep: Int, targetStep: Int, afterStep: Int): Boolean =
+        !audioManager.isVolumeFixed && afterStep != targetStep
+
+    private fun fallbackStep(beforeStep: Int, targetStep: Int, afterStep: Int, maxStep: Int): Int =
+        when {
+            afterStep == beforeStep -> targetStep
+            targetStep > afterStep -> (afterStep + 1).coerceAtMost(maxStep)
+            targetStep < afterStep -> (afterStep - 1).coerceAtLeast(0)
+            else -> targetStep
+        }
+
+    private fun classifySetResult(requestedPercent: Int, targetStep: Int, afterStep: Int, maxStep: Int): String {
+        if (afterStep == targetStep) {
+            return RESULT_SET_OK
+        }
+        val actualPercent = toPercent(afterStep, maxStep)
+        val tolerance = ceil(100.0 / maxStep).toInt().coerceAtLeast(1)
+        return if (abs(actualPercent - requestedPercent) <= tolerance) RESULT_SET_OK else RESULT_SET_MISMATCH
+    }
 
     private fun classifyAdjustResult(direction: Int, beforeStep: Int, afterStep: Int): String =
         when (direction) {
@@ -137,9 +180,9 @@ open class MediaVolumeController(
 
     companion object {
         const val RESULT_SNAPSHOT = "SNAPSHOT"
-        const val RESULT_SET_OK = "SET_OK"
-        const val RESULT_SET_MISMATCH = "SET_MISMATCH"
-        const val RESULT_SET_ERROR = "SET_ERROR"
+        const val RESULT_SET_OK = "SUCCESS"
+        const val RESULT_SET_MISMATCH = "SYSTEM_LIMITED"
+        const val RESULT_SET_ERROR = "EXECUTION_FAILED"
         const val RESULT_ADJUST_OK = "ADJUST_OK"
         const val RESULT_ADJUST_NO_CHANGE = "ADJUST_NO_CHANGE"
         const val RESULT_ADJUST_ERROR = "ADJUST_ERROR"
