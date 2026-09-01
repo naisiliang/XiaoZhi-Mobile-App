@@ -26,6 +26,9 @@ jobs:
         with:
           gradle-version: '8.9'
 
+      - name: FIX04 verified volume regression gate
+        run: python3 tools/test_v065_fix04_regression_gate.py
+
       - name: Frozen wake guard
         run: python3 tools/test_v065_frozen_baseline.py
 
