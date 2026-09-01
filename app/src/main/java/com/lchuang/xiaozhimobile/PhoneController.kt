@@ -12,11 +12,12 @@ class PhoneController(
     private val context: Context,
     val appRegistry: InstalledAppRegistry = InstalledAppRegistry(context),
     private val appLauncher: AppLauncher = AppLauncher(context),
-    val mapController: MapController = MapController(context)
+    val mapController: MapController = MapController(context),
+    private val mediaVolumeControllerOverride: MediaVolumeController? = null
 ) {
     private val settings = SettingsStore(context)
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-    private val mediaVolumeController = MediaVolumeController(audioManager)
+    private val mediaVolumeController = mediaVolumeControllerOverride ?: MediaVolumeController(audioManager)
 
     private val knownPackages = linkedMapOf(
         "微信" to "com.tencent.mm",

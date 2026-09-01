@@ -178,16 +178,348 @@ def compile_and_run_harness() -> None:
 
 
 def assert_phone_controller_mapping() -> None:
-    phone_source = PHONE.read_text(encoding="utf-8")
-    up = re.search(r"fun volumeUpVerified\(\): MediaVolumeResult \{(.*?)\n    \}", phone_source, re.S)
-    down = re.search(r"fun volumeDownVerified\(\): MediaVolumeResult \{(.*?)\n    \}", phone_source, re.S)
-    set_percent = re.search(r"fun setMediaVolumePercent\(percent: Int\): MediaVolumeResult \{(.*?)\n    \}", phone_source, re.S)
-    assert up and down and set_percent, "PhoneController media volume methods missing"
-    assert "snapshot.resultCode == MediaVolumeController.RESULT_SET_OK" in set_percent.group(1)
-    assert "snapshot.resultCode == MediaVolumeController.RESULT_ADJUST_OK" in up.group(1)
-    assert "snapshot.resultCode == MediaVolumeController.RESULT_ADJUST_OK" in down.group(1)
-    assert "MediaVolumeResult(null, snapshot.actualPercent, true)" not in up.group(1)
-    assert "MediaVolumeResult(null, snapshot.actualPercent, true)" not in down.group(1)
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp = Path(temp_dir)
+        android_content = temp / "AndroidContent.kt"
+        android_camera = temp / "AndroidCamera.kt"
+        android_media = temp / "AndroidMedia.kt"
+        android_net = temp / "AndroidNet.kt"
+        android_view = temp / "AndroidView.kt"
+        app_stubs = temp / "PhoneControllerDeps.kt"
+        harness = temp / "PhoneControllerHarness.kt"
+        jar = temp / "phone-controller-harness.jar"
+
+        android_content.write_text(
+            textwrap.dedent(
+                """
+                package android.content
+
+                open class Context {
+                    open fun getSystemService(name: String): Any = error("missing service: $name")
+                    open fun startActivity(intent: Intent) {}
+
+                    companion object {
+                        const val AUDIO_SERVICE = "audio"
+                        const val CAMERA_SERVICE = "camera"
+                    }
+                }
+
+                class Intent(val action: String, val uri: android.net.Uri? = null) {
+                    fun addFlags(flags: Int) = this
+
+                    companion object {
+                        const val ACTION_VIEW = "android.intent.action.VIEW"
+                        const val FLAG_ACTIVITY_NEW_TASK = 0x10000000.toInt()
+                    }
+                }
+                """
+            ),
+            encoding="utf-8",
+        )
+
+        android_camera.write_text(
+            textwrap.dedent(
+                """
+                package android.hardware.camera2
+
+                class CameraCharacteristics {
+                    fun <T> get(key: Key<T>): T? = null
+
+                    class Key<T>
+
+                    companion object {
+                        val FLASH_INFO_AVAILABLE = Key<Boolean>()
+                        val LENS_FACING = Key<Int>()
+                        const val LENS_FACING_BACK = 1
+                    }
+                }
+
+                open class CameraManager {
+                    open val cameraIdList: Array<String> = emptyArray()
+                    open fun getCameraCharacteristics(id: String): CameraCharacteristics = CameraCharacteristics()
+                    open fun setTorchMode(cameraId: String, enabled: Boolean) {}
+                }
+                """
+            ),
+            encoding="utf-8",
+        )
+
+        android_media.write_text(
+            textwrap.dedent(
+                """
+                package android.media
+
+                import android.view.KeyEvent
+
+                open class AudioManager(
+                    private val maxVolume: Int = 10,
+                    initialVolume: Int = 5,
+                    val isVolumeFixed: Boolean = false,
+                ) {
+                    companion object {
+                        const val STREAM_MUSIC = 3
+                        const val FLAG_SHOW_UI = 1
+                        const val ADJUST_RAISE = 1
+                        const val ADJUST_LOWER = -1
+                    }
+
+                    private var currentVolume = initialVolume.coerceIn(0, maxVolume)
+
+                    open fun getStreamMaxVolume(streamType: Int): Int = maxVolume
+
+                    open fun getStreamVolume(streamType: Int): Int = currentVolume
+
+                    open fun setStreamVolume(streamType: Int, index: Int, flags: Int) {
+                        currentVolume = index.coerceIn(0, maxVolume)
+                    }
+
+                    open fun adjustStreamVolume(streamType: Int, direction: Int, flags: Int) {
+                        currentVolume = when (direction) {
+                            ADJUST_RAISE -> (currentVolume + 1).coerceAtMost(maxVolume)
+                            ADJUST_LOWER -> (currentVolume - 1).coerceAtLeast(0)
+                            else -> currentVolume
+                        }
+                    }
+
+                    open fun dispatchMediaKeyEvent(event: KeyEvent) {}
+                }
+                """
+            ),
+            encoding="utf-8",
+        )
+
+        android_net.write_text(
+            textwrap.dedent(
+                """
+                package android.net
+
+                class Uri private constructor(private val value: String) {
+                    override fun toString(): String = value
+
+                    companion object {
+                        fun parse(value: String) = Uri(value)
+                        fun encode(value: String) = value.replace(" ", "%20")
+                    }
+                }
+                """
+            ),
+            encoding="utf-8",
+        )
+
+        android_view.write_text(
+            textwrap.dedent(
+                """
+                package android.view
+                
+                class KeyEvent(val action: Int, val code: Int) {
+                    companion object {
+                        const val ACTION_DOWN = 0
+                        const val ACTION_UP = 1
+                        const val KEYCODE_MEDIA_PLAY = 126
+                        const val KEYCODE_MEDIA_PAUSE = 127
+                        const val KEYCODE_MEDIA_NEXT = 87
+                        const val KEYCODE_MEDIA_PREVIOUS = 88
+                        const val KEYCODE_MEDIA_PLAY_PAUSE = 85
+                        const val KEYCODE_MEDIA_STOP = 86
+                    }
+                }
+                """
+            ),
+            encoding="utf-8",
+        )
+
+        app_stubs.write_text(
+            textwrap.dedent(
+                """
+                package com.lchuang.xiaozhimobile
+
+                import android.content.Context
+
+                enum class MapAppPreference {
+                    AUTO
+                }
+
+                class SettingsStore(context: Context) {
+                    val appAliases: Map<String, String> = emptyMap()
+                    val defaultMapApp: MapAppPreference = MapAppPreference.AUTO
+                }
+
+                class InstalledAppRegistry(context: Context) {
+                    data class AppEntry(
+                        val label: String,
+                        val packageName: String,
+                        val normalizedLabel: String,
+                        val launchActivities: List<String>,
+                        val source: AppDiscoverySource,
+                    )
+
+                    enum class AppDiscoverySource {
+                        KNOWN_FALLBACK
+                    }
+
+                    data class ResolutionDetailed(
+                        val entry: AppEntry?,
+                        val explanation: String,
+                    )
+
+                    fun resolveDetailed(appName: String, aliases: Map<String, String>): ResolutionDetailed =
+                        ResolutionDetailed(null, "not needed")
+
+                    fun count(): Int = 0
+                }
+
+                class AppLauncher(context: Context) {
+                    sealed class AppLaunchResult {
+                        data class Failure(val error: AppLaunchError, val reason: String) : AppLaunchResult()
+                    }
+
+                    enum class AppLaunchError {
+                        PACKAGE_NOT_INSTALLED
+                    }
+
+                    fun launch(entry: InstalledAppRegistry.AppEntry): AppLaunchResult =
+                        AppLaunchResult.Failure(AppLaunchError.PACKAGE_NOT_INSTALLED, "not needed")
+                }
+
+                class MapController(context: Context) {
+                    class MapActionResult
+                    fun openMap(preference: MapAppPreference): MapActionResult = MapActionResult()
+                    fun navigate(destination: String, preference: MapAppPreference): MapActionResult = MapActionResult()
+                    fun searchNearby(
+                        keyword: String,
+                        preference: MapAppPreference,
+                        callback: (MapActionResult) -> Unit,
+                    ) {
+                    }
+                }
+
+                object AppNameMatcher {
+                    fun extractRequestedAppName(appName: String): String = appName
+                    fun normalize(name: String): String = name
+                }
+                """
+            ),
+            encoding="utf-8",
+        )
+
+        harness.write_text(
+            textwrap.dedent(
+                """
+                package com.lchuang.xiaozhimobile
+
+                import android.content.Context
+                import android.media.AudioManager
+
+                private class FakeContext(private val audioManager: AudioManager) : Context() {
+                    override fun getSystemService(name: String): Any =
+                        when (name) {
+                            Context.AUDIO_SERVICE -> audioManager
+                            Context.CAMERA_SERVICE -> android.hardware.camera2.CameraManager()
+                            else -> error("unsupported service: $name")
+                        }
+                }
+
+                private class FakeMediaVolumeController(
+                    audioManager: AudioManager,
+                ) : MediaVolumeController(audioManager) {
+                    var snapshotResult = MediaVolumeSnapshot(
+                        requestedPercent = null,
+                        beforeStep = 4,
+                        targetStep = 4,
+                        afterStep = 4,
+                        maxStep = 10,
+                        actualPercent = 40,
+                        isVolumeFixed = false,
+                        retryCount = 0,
+                        resultCode = RESULT_SNAPSHOT,
+                    )
+                    var setResult = snapshotResult.copy(requestedPercent = 60, targetStep = 6, afterStep = 6, actualPercent = 60, resultCode = RESULT_SET_OK)
+                    var adjustRaiseResult = snapshotResult.copy(targetStep = 5, afterStep = 5, actualPercent = 50, resultCode = RESULT_ADJUST_OK)
+                    var adjustLowerResult = snapshotResult.copy(targetStep = 3, afterStep = 3, actualPercent = 30, resultCode = RESULT_ADJUST_OK)
+
+                    override fun snapshot(): MediaVolumeSnapshot = snapshotResult
+                    override fun setPercent(percent: Int): MediaVolumeSnapshot = setResult
+                    override fun adjust(direction: Int): MediaVolumeSnapshot =
+                        when (direction) {
+                            AudioManager.ADJUST_RAISE -> adjustRaiseResult
+                            AudioManager.ADJUST_LOWER -> adjustLowerResult
+                            else -> snapshotResult
+                        }
+                }
+
+                private fun assertEquals(expected: Any?, actual: Any?, label: String) {
+                    check(expected == actual) { "$label: expected=$expected actual=$actual" }
+                }
+
+                fun main() {
+                    val audioManager = AudioManager(maxVolume = 10, initialVolume = 4)
+                    val fakeController = FakeMediaVolumeController(audioManager)
+                    val phoneController = PhoneController(
+                        context = FakeContext(audioManager),
+                        mediaVolumeControllerOverride = fakeController,
+                    )
+
+                    val setOk = phoneController.setMediaVolumePercent(60)
+                    assertEquals(true, setOk.success, "set ok success")
+                    assertEquals(60, setOk.actualPercent, "set ok actual")
+
+                    fakeController.setResult = fakeController.setResult.copy(
+                        actualPercent = 40,
+                        resultCode = MediaVolumeController.RESULT_SET_MISMATCH,
+                    )
+                    val setMismatch = phoneController.setMediaVolumePercent(60)
+                    assertEquals(false, setMismatch.success, "set mismatch success")
+                    assertEquals(40, setMismatch.actualPercent, "set mismatch actual")
+
+                    val raiseOk = phoneController.volumeUpVerified()
+                    assertEquals(true, raiseOk.success, "raise ok success")
+                    assertEquals(50, raiseOk.actualPercent, "raise ok actual")
+
+                    fakeController.adjustRaiseResult = fakeController.adjustRaiseResult.copy(
+                        afterStep = 4,
+                        actualPercent = 40,
+                        resultCode = MediaVolumeController.RESULT_ADJUST_NO_CHANGE,
+                    )
+                    val raiseNoChange = phoneController.volumeUpVerified()
+                    assertEquals(false, raiseNoChange.success, "raise no-change success")
+                    assertEquals(40, raiseNoChange.actualPercent, "raise no-change actual")
+
+                    fakeController.adjustLowerResult = fakeController.adjustLowerResult.copy(
+                        afterStep = 4,
+                        actualPercent = 40,
+                        resultCode = MediaVolumeController.RESULT_ADJUST_NO_CHANGE,
+                    )
+                    val lowerNoChange = phoneController.volumeDownVerified()
+                    assertEquals(false, lowerNoChange.success, "lower no-change success")
+                    assertEquals(40, lowerNoChange.actualPercent, "lower no-change actual")
+
+                    println("PASS: FIX04 phone controller media-volume mapping")
+                }
+                """
+            ),
+            encoding="utf-8",
+        )
+
+        subprocess.run(
+            [
+                "kotlinc",
+                str(android_content),
+                str(android_camera),
+                str(android_media),
+                str(android_net),
+                str(android_view),
+                str(app_stubs),
+                str(CONTROLLER),
+                str(PHONE),
+                str(harness),
+                "-include-runtime",
+                "-d",
+                str(jar),
+            ],
+            cwd=ROOT,
+            check=True,
+        )
+        subprocess.run(["java", "-jar", str(jar)], cwd=ROOT, check=True)
 
 
 compile_and_run_harness()

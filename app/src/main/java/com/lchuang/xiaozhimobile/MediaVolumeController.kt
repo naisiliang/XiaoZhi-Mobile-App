@@ -17,10 +17,10 @@ data class MediaVolumeSnapshot(
     val resultCode: String
 )
 
-class MediaVolumeController(
+open class MediaVolumeController(
     private val audioManager: AudioManager
 ) {
-    fun snapshot(): MediaVolumeSnapshot {
+    open fun snapshot(): MediaVolumeSnapshot {
         val maxStep = readMaxStep()
         val currentStep = readCurrentStep(maxStep)
         return MediaVolumeSnapshot(
@@ -36,7 +36,7 @@ class MediaVolumeController(
         )
     }
 
-    fun setPercent(percent: Int): MediaVolumeSnapshot {
+    open fun setPercent(percent: Int): MediaVolumeSnapshot {
         val maxStep = readMaxStep()
         val beforeStep = readCurrentStep(maxStep)
         val requestedPercent = percent.coerceIn(0, 100)
@@ -76,7 +76,7 @@ class MediaVolumeController(
         }
     }
 
-    fun adjust(direction: Int): MediaVolumeSnapshot {
+    open fun adjust(direction: Int): MediaVolumeSnapshot {
         val maxStep = readMaxStep()
         val beforeStep = readCurrentStep(maxStep)
         val targetStep = when (direction) {
