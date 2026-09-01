@@ -39,9 +39,9 @@ set_percent = re.search(
 )
 assert set_percent, "setPercent block missing"
 set_block = set_percent.group(1)
-assert "writeAndReadBack(targetStep, maxStep)" in set_block
+assert "writeAndReadBack(targetStep, minStep, maxStep)" in set_block
 assert "shouldRetrySet(beforeStep, targetStep, afterStep)" in set_block
-assert "fallbackStep(beforeStep, targetStep, afterStep, maxStep)" in set_block
+assert "fallbackStep(beforeStep, targetStep, afterStep, minStep, maxStep)" in set_block
 assert "classifySetResult(targetStep, afterStep)" in set_block
 
 adjust = re.search(

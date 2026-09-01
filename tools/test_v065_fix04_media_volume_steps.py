@@ -33,6 +33,7 @@ def compile_and_run_harness() -> None:
         android_content = temp / "AndroidContent.kt"
         android_camera = temp / "AndroidCamera.kt"
         android_media = temp / "AndroidMedia.kt"
+        build = temp / "Build.kt"
         android_net = temp / "AndroidNet.kt"
         android_view = temp / "AndroidView.kt"
         app_stubs = temp / "PhoneControllerDeps.kt"
@@ -94,6 +95,25 @@ def compile_and_run_harness() -> None:
             encoding="utf-8",
         )
 
+        build.write_text(
+            textwrap.dedent(
+                """
+                package android.os
+
+                object Build {
+                    object VERSION {
+                        const val SDK_INT = 28
+                    }
+
+                    object VERSION_CODES {
+                        const val P = 28
+                    }
+                }
+                """
+            ),
+            encoding="utf-8",
+        )
+
         android_media.write_text(
             textwrap.dedent(
                 """
@@ -116,6 +136,8 @@ def compile_and_run_harness() -> None:
                     private var currentVolume = initialVolume.coerceIn(0, maxVolume)
 
                     open fun getStreamMaxVolume(streamType: Int): Int = maxVolume
+
+                    open fun getStreamMinVolume(streamType: Int): Int = 0
 
                     open fun getStreamVolume(streamType: Int): Int = currentVolume
 
@@ -366,6 +388,7 @@ def compile_and_run_harness() -> None:
                 "kotlinc",
                 str(android_content),
                 str(android_camera),
+                str(build),
                 str(android_media),
                 str(android_net),
                 str(android_view),

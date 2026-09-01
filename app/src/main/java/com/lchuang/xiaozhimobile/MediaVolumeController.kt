@@ -1,6 +1,7 @@
 package com.lchuang.xiaozhimobile
 
 import android.media.AudioManager
+import android.os.Build
 import kotlin.math.round
 
 data class MediaVolumeSnapshot(
@@ -20,14 +21,15 @@ open class MediaVolumeController(
 ) {
     open fun snapshot(): MediaVolumeSnapshot {
         val maxStep = readMaxStep()
-        val currentStep = readCurrentStep(maxStep)
+        val minStep = readMinStep(maxStep)
+        val currentStep = readCurrentStep(maxStep, minStep)
         return MediaVolumeSnapshot(
             requestedPercent = null,
             beforeStep = currentStep,
             targetStep = currentStep,
             afterStep = currentStep,
             maxStep = maxStep,
-            actualPercent = toPercent(currentStep, maxStep),
+            actualPercent = toPercent(currentStep, minStep, maxStep),
             isVolumeFixed = audioManager.isVolumeFixed,
             retryCount = 0,
             resultCode = RESULT_SNAPSHOT
@@ -36,18 +38,35 @@ open class MediaVolumeController(
 
     open fun setPercent(percent: Int): MediaVolumeSnapshot {
         val maxStep = readMaxStep()
-        val beforeStep = readCurrentStep(maxStep)
+        val minStep = readMinStep(maxStep)
+        val isVolumeFixed = audioManager.isVolumeFixed
+        val beforeStep = readCurrentStep(maxStep, minStep)
         val requestedPercent = percent.coerceIn(0, 100)
-        val targetStep = round(requestedPercent * maxStep / 100.0).toInt().coerceIn(0, maxStep)
+        val targetStep = (
+            minStep + round(requestedPercent * (maxStep - minStep) / 100.0).toInt()
+            ).coerceIn(minStep, maxStep)
+        if (isVolumeFixed) {
+            return MediaVolumeSnapshot(
+                requestedPercent = requestedPercent,
+                beforeStep = beforeStep,
+                targetStep = targetStep,
+                afterStep = beforeStep,
+                maxStep = maxStep,
+                actualPercent = toPercent(beforeStep, minStep, maxStep),
+                isVolumeFixed = true,
+                retryCount = 0,
+                resultCode = RESULT_SET_MISMATCH
+            )
+        }
         return try {
             var retryCount = 0
-            var afterStep = writeAndReadBack(targetStep, maxStep)
+            var afterStep = writeAndReadBack(targetStep, minStep, maxStep)
             if (shouldRetrySet(beforeStep, targetStep, afterStep)) {
                 retryCount = 1
-                val retryStep = fallbackStep(beforeStep, targetStep, afterStep, maxStep)
-                afterStep = writeAndReadBack(retryStep, maxStep)
+                val retryStep = fallbackStep(beforeStep, targetStep, afterStep, minStep, maxStep)
+                afterStep = writeAndReadBack(retryStep, minStep, maxStep)
             }
-            val actualPercent = toPercent(afterStep, maxStep)
+            val actualPercent = toPercent(afterStep, minStep, maxStep)
             MediaVolumeSnapshot(
                 requestedPercent = requestedPercent,
                 beforeStep = beforeStep,
@@ -55,7 +74,7 @@ open class MediaVolumeController(
                 afterStep = afterStep,
                 maxStep = maxStep,
                 actualPercent = actualPercent,
-                isVolumeFixed = audioManager.isVolumeFixed,
+                isVolumeFixed = isVolumeFixed,
                 retryCount = retryCount,
                 resultCode = classifySetResult(targetStep, afterStep)
             )
@@ -67,8 +86,8 @@ open class MediaVolumeController(
                 targetStep = targetStep,
                 afterStep = beforeStep,
                 maxStep = maxStep,
-                actualPercent = toPercent(beforeStep, maxStep),
-                isVolumeFixed = audioManager.isVolumeFixed,
+                actualPercent = toPercent(beforeStep, minStep, maxStep),
+                isVolumeFixed = isVolumeFixed,
                 retryCount = 0,
                 resultCode = RESULT_SET_ERROR
             )
@@ -79,8 +98,8 @@ open class MediaVolumeController(
                 targetStep = targetStep,
                 afterStep = beforeStep,
                 maxStep = maxStep,
-                actualPercent = toPercent(beforeStep, maxStep),
-                isVolumeFixed = audioManager.isVolumeFixed,
+                actualPercent = toPercent(beforeStep, minStep, maxStep),
+                isVolumeFixed = isVolumeFixed,
                 retryCount = 0,
                 resultCode = RESULT_SET_ERROR
             )
@@ -89,10 +108,11 @@ open class MediaVolumeController(
 
     open fun adjust(direction: Int): MediaVolumeSnapshot {
         val maxStep = readMaxStep()
-        val beforeStep = readCurrentStep(maxStep)
+        val minStep = readMinStep(maxStep)
+        val beforeStep = readCurrentStep(maxStep, minStep)
         val targetStep = when (direction) {
             AudioManager.ADJUST_RAISE -> (beforeStep + 1).coerceAtMost(maxStep)
-            AudioManager.ADJUST_LOWER -> (beforeStep - 1).coerceAtLeast(0)
+            AudioManager.ADJUST_LOWER -> (beforeStep - 1).coerceAtLeast(minStep)
             else -> beforeStep
         }
         return try {
@@ -101,6 +121,7 @@ open class MediaVolumeController(
                 direction,
                 AudioManager.FLAG_SHOW_UI
             )
+            Thread.sleep(120L)
             val afterStep = readCurrentStep(maxStep)
             MediaVolumeSnapshot(
                 requestedPercent = null,
@@ -108,7 +129,7 @@ open class MediaVolumeController(
                 targetStep = targetStep,
                 afterStep = afterStep,
                 maxStep = maxStep,
-                actualPercent = toPercent(afterStep, maxStep),
+                actualPercent = toPercent(afterStep, minStep, maxStep),
                 isVolumeFixed = audioManager.isVolumeFixed,
                 retryCount = 0,
                 resultCode = classifyAdjustResult(direction, beforeStep, afterStep)
@@ -120,7 +141,7 @@ open class MediaVolumeController(
                 targetStep = targetStep,
                 afterStep = beforeStep,
                 maxStep = maxStep,
-                actualPercent = toPercent(beforeStep, maxStep),
+                actualPercent = toPercent(beforeStep, minStep, maxStep),
                 isVolumeFixed = audioManager.isVolumeFixed,
                 retryCount = 0,
                 resultCode = RESULT_ADJUST_ERROR
@@ -131,30 +152,48 @@ open class MediaVolumeController(
     private fun readMaxStep(): Int =
         audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
 
-    private fun readCurrentStep(maxStep: Int): Int =
-        audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).coerceIn(0, maxStep)
+    private fun readMinStep(maxStep: Int): Int =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            audioManager.getStreamMinVolume(AudioManager.STREAM_MUSIC).coerceIn(0, maxStep)
+        } else {
+            // getStreamMinVolume was added in API 28; API 26-27 media streams use zero as the safe fallback.
+            0
+        }
 
-    private fun writeAndReadBack(targetStep: Int, maxStep: Int): Int {
+    private fun readCurrentStep(maxStep: Int, minStep: Int = 0): Int =
+        audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).coerceIn(minStep, maxStep)
+
+    private fun writeAndReadBack(targetStep: Int, minStep: Int, maxStep: Int): Int {
         audioManager.setStreamVolume(
             AudioManager.STREAM_MUSIC,
             targetStep,
             AudioManager.FLAG_SHOW_UI
         )
         Thread.sleep(120L)
-        return readCurrentStep(maxStep)
+        return readCurrentStep(maxStep, minStep)
     }
 
-    private fun toPercent(step: Int, maxStep: Int): Int =
-        round(step * 100.0 / maxStep).toInt().coerceIn(0, 100)
+    private fun toPercent(step: Int, minStep: Int, maxStep: Int): Int =
+        if (maxStep == minStep) {
+            0
+        } else {
+            round((step - minStep) * 100.0 / (maxStep - minStep)).toInt().coerceIn(0, 100)
+        }
 
     private fun shouldRetrySet(beforeStep: Int, targetStep: Int, afterStep: Int): Boolean =
         !audioManager.isVolumeFixed && afterStep != targetStep
 
-    private fun fallbackStep(beforeStep: Int, targetStep: Int, afterStep: Int, maxStep: Int): Int =
+    private fun fallbackStep(
+        beforeStep: Int,
+        targetStep: Int,
+        afterStep: Int,
+        minStep: Int,
+        maxStep: Int,
+    ): Int =
         when {
             afterStep == beforeStep -> targetStep
             targetStep > afterStep -> (afterStep + 1).coerceAtMost(maxStep)
-            targetStep < afterStep -> (afterStep - 1).coerceAtLeast(0)
+            targetStep < afterStep -> (afterStep - 1).coerceAtLeast(minStep)
             else -> targetStep
         }
 

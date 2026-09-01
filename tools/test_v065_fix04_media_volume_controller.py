@@ -14,8 +14,28 @@ def compile_and_run_harness() -> None:
     with tempfile.TemporaryDirectory() as temp_dir:
         temp = Path(temp_dir)
         audio_manager = temp / "AudioManager.kt"
+        build = temp / "Build.kt"
         harness = temp / "MediaVolumeControllerHarness.kt"
         jar = temp / "media-volume-controller.jar"
+
+        build.write_text(
+            textwrap.dedent(
+                """
+                package android.os
+
+                object Build {
+                    object VERSION {
+                        const val SDK_INT = 28
+                    }
+
+                    object VERSION_CODES {
+                        const val P = 28
+                    }
+                }
+                """
+            ),
+            encoding="utf-8",
+        )
 
         audio_manager.write_text(
             textwrap.dedent(
@@ -25,9 +45,11 @@ def compile_and_run_harness() -> None:
                 open class AudioManager(
                     private val maxVolume: Int = 10,
                     initialVolume: Int = 5,
+                    private val minVolume: Int = 0,
                     val isVolumeFixed: Boolean = false,
                     private val noOpAdjustDirections: Set<Int> = emptySet(),
                     private val throwOnAdjustDirections: Set<Int> = emptySet(),
+                    private val delayedAdjustMs: Long = 0L,
                 ) {
                     companion object {
                         const val STREAM_MUSIC = 3
@@ -36,7 +58,11 @@ def compile_and_run_harness() -> None:
                         const val ADJUST_LOWER = -1
                     }
 
-                    private var currentVolume = initialVolume.coerceIn(0, maxVolume)
+                    private var currentVolume = initialVolume.coerceIn(minVolume, maxVolume)
+                    private var pendingAdjustDirection: Int? = null
+                    private var adjustRequestedAtMs: Long = 0L
+                    var setStreamVolumeCalls: Int = 0
+                        private set
 
                     open fun getStreamMaxVolume(streamType: Int): Int {
                         check(streamType == STREAM_MUSIC)
@@ -45,13 +71,30 @@ def compile_and_run_harness() -> None:
 
                     open fun getStreamVolume(streamType: Int): Int {
                         check(streamType == STREAM_MUSIC)
+                        val pendingDirection = pendingAdjustDirection
+                        if (pendingDirection != null &&
+                            System.currentTimeMillis() - adjustRequestedAtMs >= delayedAdjustMs
+                        ) {
+                            currentVolume = when (pendingDirection) {
+                                ADJUST_RAISE -> (currentVolume + 1).coerceAtMost(maxVolume)
+                                ADJUST_LOWER -> (currentVolume - 1).coerceAtLeast(minVolume)
+                                else -> currentVolume
+                            }
+                            pendingAdjustDirection = null
+                        }
                         return currentVolume
+                    }
+
+                    open fun getStreamMinVolume(streamType: Int): Int {
+                        check(streamType == STREAM_MUSIC)
+                        return minVolume
                     }
 
                     open fun setStreamVolume(streamType: Int, index: Int, flags: Int) {
                         check(streamType == STREAM_MUSIC)
                         check(flags == FLAG_SHOW_UI)
-                        currentVolume = index.coerceIn(0, maxVolume)
+                        setStreamVolumeCalls++
+                        currentVolume = index.coerceIn(minVolume, maxVolume)
                     }
 
                     open fun adjustStreamVolume(streamType: Int, direction: Int, flags: Int) {
@@ -63,10 +106,15 @@ def compile_and_run_harness() -> None:
                         if (direction in noOpAdjustDirections) {
                             return
                         }
-                        currentVolume = when (direction) {
-                            ADJUST_RAISE -> (currentVolume + 1).coerceAtMost(maxVolume)
-                            ADJUST_LOWER -> (currentVolume - 1).coerceAtLeast(0)
-                            else -> currentVolume
+                        if (delayedAdjustMs == 0L) {
+                            currentVolume = when (direction) {
+                                ADJUST_RAISE -> (currentVolume + 1).coerceAtMost(maxVolume)
+                                ADJUST_LOWER -> (currentVolume - 1).coerceAtLeast(minVolume)
+                                else -> currentVolume
+                            }
+                        } else {
+                            pendingAdjustDirection = direction
+                            adjustRequestedAtMs = System.currentTimeMillis()
                         }
                     }
                 }
@@ -109,6 +157,44 @@ def compile_and_run_harness() -> None:
                     assertEquals(6, setSnapshot.targetStep, "set target step")
                     assertEquals(6, setSnapshot.afterStep, "set after step")
                     assertTrue(kotlin.math.abs(setSnapshot.actualPercent - 63) <= 10, "set tolerance")
+
+                    val delayedAdjustAudio = AudioManager(
+                        maxVolume = 10,
+                        initialVolume = 4,
+                        delayedAdjustMs = 110L,
+                    )
+                    val delayedAdjustController = MediaVolumeController(delayedAdjustAudio)
+                    val delayedStartedAt = System.currentTimeMillis()
+                    val delayedSnapshot = delayedAdjustController.adjust(AudioManager.ADJUST_RAISE)
+                    val delayedElapsedMs = System.currentTimeMillis() - delayedStartedAt
+                    assertTrue(delayedElapsedMs >= 120L, "adjust must wait for delayed readback")
+                    assertEquals(5, delayedSnapshot.afterStep, "delayed adjust after")
+                    assertEquals(MediaVolumeController.RESULT_ADJUST_OK, delayedSnapshot.resultCode, "delayed adjust result")
+
+                    val nonZeroMinimumAudio = AudioManager(
+                        maxVolume = 10,
+                        initialVolume = 3,
+                        minVolume = 3,
+                    )
+                    val nonZeroMinimumController = MediaVolumeController(nonZeroMinimumAudio)
+                    val nonZeroMinimumSnapshot = nonZeroMinimumController.setPercent(50)
+                    assertEquals(7, nonZeroMinimumSnapshot.targetStep, "non-zero minimum target")
+                    assertEquals(7, nonZeroMinimumSnapshot.afterStep, "non-zero minimum after")
+                    assertEquals(57, nonZeroMinimumSnapshot.actualPercent, "non-zero minimum actual")
+
+                    val fixedAudio = AudioManager(
+                        maxVolume = 10,
+                        initialVolume = 6,
+                        minVolume = 3,
+                        isVolumeFixed = true,
+                    )
+                    val fixedSnapshot = MediaVolumeController(fixedAudio).setPercent(80)
+                    assertEquals(9, fixedSnapshot.targetStep, "fixed target")
+                    assertEquals(6, fixedSnapshot.afterStep, "fixed after")
+                    assertEquals(43, fixedSnapshot.actualPercent, "fixed actual")
+                    assertEquals(0, fixedSnapshot.retryCount, "fixed retry count")
+                    assertEquals(MediaVolumeController.RESULT_SET_MISMATCH, fixedSnapshot.resultCode, "fixed result")
+                    assertEquals(0, fixedAudio.setStreamVolumeCalls, "fixed volume must not be written")
 
                     val raiseController = MediaVolumeController(
                         AudioManager(maxVolume = 10, initialVolume = 4)
@@ -170,7 +256,7 @@ def compile_and_run_harness() -> None:
         )
 
         subprocess.run(
-            ["kotlinc", str(audio_manager), str(CONTROLLER), str(harness), "-include-runtime", "-d", str(jar)],
+            ["kotlinc", str(build), str(audio_manager), str(CONTROLLER), str(harness), "-include-runtime", "-d", str(jar)],
             cwd=ROOT,
             check=True,
         )
@@ -185,6 +271,7 @@ def assert_phone_controller_mapping() -> None:
         android_media = temp / "AndroidMedia.kt"
         android_net = temp / "AndroidNet.kt"
         android_view = temp / "AndroidView.kt"
+        build = temp / "Build.kt"
         app_stubs = temp / "PhoneControllerDeps.kt"
         harness = temp / "PhoneControllerHarness.kt"
         jar = temp / "phone-controller-harness.jar"
@@ -244,6 +331,25 @@ def assert_phone_controller_mapping() -> None:
             encoding="utf-8",
         )
 
+        build.write_text(
+            textwrap.dedent(
+                """
+                package android.os
+
+                object Build {
+                    object VERSION {
+                        const val SDK_INT = 28
+                    }
+
+                    object VERSION_CODES {
+                        const val P = 28
+                    }
+                }
+                """
+            ),
+            encoding="utf-8",
+        )
+
         android_media.write_text(
             textwrap.dedent(
                 """
@@ -266,6 +372,8 @@ def assert_phone_controller_mapping() -> None:
                     private var currentVolume = initialVolume.coerceIn(0, maxVolume)
 
                     open fun getStreamMaxVolume(streamType: Int): Int = maxVolume
+
+                    open fun getStreamMinVolume(streamType: Int): Int = 0
 
                     open fun getStreamVolume(streamType: Int): Int = currentVolume
 
@@ -310,7 +418,7 @@ def assert_phone_controller_mapping() -> None:
             textwrap.dedent(
                 """
                 package android.view
-                
+
                 class KeyEvent(val action: Int, val code: Int) {
                     companion object {
                         const val ACTION_DOWN = 0
@@ -505,6 +613,7 @@ def assert_phone_controller_mapping() -> None:
                 "kotlinc",
                 str(android_content),
                 str(android_camera),
+                str(build),
                 str(android_media),
                 str(android_net),
                 str(android_view),

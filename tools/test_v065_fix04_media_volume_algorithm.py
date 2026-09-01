@@ -18,8 +18,28 @@ def compile_and_run_harness() -> None:
     with tempfile.TemporaryDirectory() as temp_dir:
         temp = Path(temp_dir)
         audio_manager = temp / "AudioManager.kt"
+        build = temp / "Build.kt"
         harness = temp / "MediaVolumeAlgorithmHarness.kt"
         jar = temp / "media-volume-algorithm.jar"
+
+        build.write_text(
+            textwrap.dedent(
+                """
+                package android.os
+
+                object Build {
+                    object VERSION {
+                        const val SDK_INT = 28
+                    }
+
+                    object VERSION_CODES {
+                        const val P = 28
+                    }
+                }
+                """
+            ),
+            encoding="utf-8",
+        )
 
         audio_manager.write_text(
             textwrap.dedent(
@@ -54,6 +74,8 @@ def compile_and_run_harness() -> None:
                         check(streamType == STREAM_MUSIC)
                         return maxVolume
                     }
+
+                    open fun getStreamMinVolume(streamType: Int): Int = 0
 
                     open fun getStreamVolume(streamType: Int): Int {
                         check(streamType == STREAM_MUSIC)
@@ -194,7 +216,7 @@ def compile_and_run_harness() -> None:
         )
 
         subprocess.run(
-            ["kotlinc", str(audio_manager), str(CONTROLLER), str(harness), "-include-runtime", "-d", str(jar)],
+            ["kotlinc", str(build), str(audio_manager), str(CONTROLLER), str(harness), "-include-runtime", "-d", str(jar)],
             cwd=ROOT,
             check=True,
         )
