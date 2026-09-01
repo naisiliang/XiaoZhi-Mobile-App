@@ -73,12 +73,18 @@ class PhoneController(
 
     fun volumeUpVerified(): MediaVolumeResult {
         val snapshot = mediaVolumeController.adjust(AudioManager.ADJUST_RAISE)
-        return MediaVolumeResult(null, snapshot.actualPercent, snapshot.resultCode == MediaVolumeController.RESULT_ADJUST_OK)
+        val success =
+            snapshot.resultCode == MediaVolumeController.RESULT_ADJUST_OK &&
+                snapshot.afterStep > snapshot.beforeStep
+        return MediaVolumeResult(null, snapshot.actualPercent, success)
     }
 
     fun volumeDownVerified(): MediaVolumeResult {
         val snapshot = mediaVolumeController.adjust(AudioManager.ADJUST_LOWER)
-        return MediaVolumeResult(null, snapshot.actualPercent, snapshot.resultCode == MediaVolumeController.RESULT_ADJUST_OK)
+        val success =
+            snapshot.resultCode == MediaVolumeController.RESULT_ADJUST_OK &&
+                snapshot.afterStep < snapshot.beforeStep
+        return MediaVolumeResult(null, snapshot.actualPercent, success)
     }
 
     fun volumeUp() { volumeUpVerified() }
