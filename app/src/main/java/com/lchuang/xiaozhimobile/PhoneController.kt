@@ -16,6 +16,7 @@ class PhoneController(
 ) {
     private val settings = SettingsStore(context)
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    private val mediaVolumeController = MediaVolumeController(audioManager)
 
     private val knownPackages = linkedMapOf(
         "微信" to "com.tencent.mm",
@@ -58,55 +59,25 @@ class PhoneController(
         val success: Boolean
     )
 
-    fun currentMediaVolumePercent(): Int {
-        val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
-        val current = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
-        return kotlin.math.round(current * 100.0 / max).toInt().coerceIn(0, 100)
-    }
+    fun currentMediaVolumePercent(): Int = mediaVolumeController.snapshot().actualPercent
 
     fun setMediaVolumePercent(percent: Int): MediaVolumeResult {
-        val requested = percent.coerceIn(0, 100)
-        val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
-        val target = kotlin.math.round(requested * max / 100.0).toInt().coerceIn(0, max)
-        return try {
-            audioManager.setStreamVolume(
-                AudioManager.STREAM_MUSIC,
-                target,
-                AudioManager.FLAG_SHOW_UI
-            )
-            val actualStep = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
-            val actual = kotlin.math.round(actualStep * 100.0 / max).toInt().coerceIn(0, 100)
-            val tolerance = kotlin.math.ceil(100.0 / max).toInt().coerceAtLeast(1)
-            MediaVolumeResult(requested, actual, kotlin.math.abs(actual - requested) <= tolerance)
-        } catch (_: Throwable) {
-            MediaVolumeResult(requested, currentMediaVolumePercent(), false)
-        }
+        val snapshot = mediaVolumeController.setPercent(percent)
+        return MediaVolumeResult(
+            requestedPercent = snapshot.requestedPercent,
+            actualPercent = snapshot.actualPercent,
+            success = snapshot.resultCode == MediaVolumeController.RESULT_SET_OK
+        )
     }
 
     fun volumeUpVerified(): MediaVolumeResult {
-        return try {
-            audioManager.adjustStreamVolume(
-                AudioManager.STREAM_MUSIC,
-                AudioManager.ADJUST_RAISE,
-                AudioManager.FLAG_SHOW_UI
-            )
-            MediaVolumeResult(null, currentMediaVolumePercent(), true)
-        } catch (_: Throwable) {
-            MediaVolumeResult(null, currentMediaVolumePercent(), false)
-        }
+        val snapshot = mediaVolumeController.adjust(AudioManager.ADJUST_RAISE)
+        return MediaVolumeResult(null, snapshot.actualPercent, snapshot.resultCode == MediaVolumeController.RESULT_ADJUST_OK)
     }
 
     fun volumeDownVerified(): MediaVolumeResult {
-        return try {
-            audioManager.adjustStreamVolume(
-                AudioManager.STREAM_MUSIC,
-                AudioManager.ADJUST_LOWER,
-                AudioManager.FLAG_SHOW_UI
-            )
-            MediaVolumeResult(null, currentMediaVolumePercent(), true)
-        } catch (_: Throwable) {
-            MediaVolumeResult(null, currentMediaVolumePercent(), false)
-        }
+        val snapshot = mediaVolumeController.adjust(AudioManager.ADJUST_LOWER)
+        return MediaVolumeResult(null, snapshot.actualPercent, snapshot.resultCode == MediaVolumeController.RESULT_ADJUST_OK)
     }
 
     fun volumeUp() { volumeUpVerified() }
