@@ -100,7 +100,7 @@ class MediaVolumeController(
                 actualPercent = toPercent(afterStep, maxStep),
                 isVolumeFixed = audioManager.isVolumeFixed,
                 retryCount = 0,
-                resultCode = RESULT_ADJUST_OK
+                resultCode = classifyAdjustResult(direction, beforeStep, afterStep)
             )
         } catch (_: Throwable) {
             MediaVolumeSnapshot(
@@ -126,12 +126,22 @@ class MediaVolumeController(
     private fun toPercent(step: Int, maxStep: Int): Int =
         round(step * 100.0 / maxStep).toInt().coerceIn(0, 100)
 
+    private fun classifyAdjustResult(direction: Int, beforeStep: Int, afterStep: Int): String =
+        when (direction) {
+            AudioManager.ADJUST_RAISE ->
+                if (afterStep > beforeStep) RESULT_ADJUST_OK else RESULT_ADJUST_NO_CHANGE
+            AudioManager.ADJUST_LOWER ->
+                if (afterStep < beforeStep) RESULT_ADJUST_OK else RESULT_ADJUST_NO_CHANGE
+            else -> RESULT_ADJUST_NO_CHANGE
+        }
+
     companion object {
         const val RESULT_SNAPSHOT = "SNAPSHOT"
         const val RESULT_SET_OK = "SET_OK"
         const val RESULT_SET_MISMATCH = "SET_MISMATCH"
         const val RESULT_SET_ERROR = "SET_ERROR"
         const val RESULT_ADJUST_OK = "ADJUST_OK"
+        const val RESULT_ADJUST_NO_CHANGE = "ADJUST_NO_CHANGE"
         const val RESULT_ADJUST_ERROR = "ADJUST_ERROR"
     }
 }
