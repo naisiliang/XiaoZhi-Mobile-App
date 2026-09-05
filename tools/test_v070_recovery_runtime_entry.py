@@ -57,6 +57,28 @@ def collect_missing():
         if not any(marker in body for marker in markers):
             missing.append(f"{context}: missing one of {', '.join(markers)}")
 
+    def require_block_after(source, marker, required_marker, context):
+        marker_index = source.find(marker)
+        if marker_index < 0:
+            missing.append(f"{context}: missing {marker}")
+            return
+        opening = source.find("{", marker_index + len(marker))
+        if opening < 0:
+            missing.append(f"{context}: missing block after {marker}")
+            return
+        depth = 0
+        for index in range(opening, len(source)):
+            if source[index] == "{":
+                depth += 1
+            elif source[index] == "}":
+                depth -= 1
+                if depth == 0:
+                    body = source[opening + 1:index]
+                    if required_marker not in body:
+                        missing.append(f"{context}: missing {required_marker}")
+                    return
+        missing.append(f"{context}: unbalanced block after {marker}")
+
     def require_any(source, markers, context):
         if not any(marker in source for marker in markers):
             missing.append(f"{context}: missing one of {', '.join(markers)}")
@@ -96,16 +118,10 @@ def collect_missing():
         ),
         "MainActivity shared controller access",
     )
-    require_body(
+    require_block_after(
         MAIN,
-        "requestNeededPermissions",
         "if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED)",
-        "MainActivity granted microphone branch",
-    )
-    require_body_any(
-        MAIN,
-        "requestNeededPermissions",
-        ("WakeServiceController.start(", "WakeServiceController.ensureStarted("),
+        "WakeServiceController.start(",
         "MainActivity granted microphone branch",
     )
 
