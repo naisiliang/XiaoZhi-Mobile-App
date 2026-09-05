@@ -13,6 +13,9 @@ SETTINGS_LAYOUT = ROOT / "app/src/main/res/layout/activity_settings.xml"
 def collect_missing():
     missing = []
 
+    def strip_xml_comments(source):
+        return re.sub(r"<!--.*?-->", "", source, flags=re.S)
+
     def require(source, marker, context):
         if marker not in source:
             missing.append(f"{context}: missing {marker}")
@@ -47,7 +50,7 @@ def collect_missing():
             return
         body = source[body_start:index - 1]
         for marker in markers:
-            if marker not in body:
+            if not re.search(marker, body, re.S):
                 missing.append(f"{context}: missing {marker}")
 
     def require_file(path, markers, context):
@@ -62,38 +65,57 @@ def collect_missing():
             if marker not in source:
                 missing.append(f"{context}: missing {marker}")
 
-    require_file(
+    def require_xml_tags(path, patterns, context):
+        if not path.exists():
+            missing.append(f"{context}: missing file {path.relative_to(ROOT)}")
+            return
+        source = strip_xml_comments(path.read_text("utf-8"))
+        if not source.strip():
+            missing.append(f"{context}: empty file {path.relative_to(ROOT)}")
+            return
+        for pattern in patterns:
+            if not re.search(pattern, source, re.S):
+                missing.append(f"{context}: missing xml tag matching {pattern}")
+
+    require_xml_tags(
         MAIN_LAYOUT,
-        ("RecyclerView", "EditText"),
+        (
+            r"<(?:androidx\.recyclerview\.widget\.)?RecyclerView\b",
+            r"<(?:androidx\.appcompat\.widget\.)?AppCompatEditText\b|<EditText\b",
+        ),
         "MainActivity chat layout",
     )
-    require_file(
+    require_xml_tags(
         SETTINGS_LAYOUT,
-        ("ScrollView", "LinearLayout", "android:orientation=\"vertical\""),
+        (
+            r"<ScrollView\b",
+            r"<LinearLayout\b",
+            r"android:orientation=\"vertical\"",
+        ),
         "SettingsActivity settings layout",
     )
     require_body(
         MAIN,
         "onCreate",
-        ("setContentView(R.layout.activity_main_chat)",),
+        (r"setContentView\s*\(\s*R\.layout\.activity_main_chat\s*\)",),
         "MainActivity XML inflation",
     )
     require_body(
         SETTINGS,
         "onCreate",
-        ("setContentView(R.layout.activity_settings)",),
+        (r"setContentView\s*\(\s*R\.layout\.activity_settings\s*\)",),
         "SettingsActivity XML inflation",
     )
     require_body(
         MAIN,
         "onCreate",
-        ("ViewCompat.setOnApplyWindowInsetsListener", "WindowCompat.setDecorFitsSystemWindows"),
+        (r"ViewCompat\.setOnApplyWindowInsetsListener", r"WindowCompat\.setDecorFitsSystemWindows"),
         "MainActivity insets handling",
     )
     require_body(
         SETTINGS,
         "onCreate",
-        ("ViewCompat.setOnApplyWindowInsetsListener", "WindowCompat.setDecorFitsSystemWindows"),
+        (r"ViewCompat\.setOnApplyWindowInsetsListener", r"WindowCompat\.setDecorFitsSystemWindows"),
         "SettingsActivity insets handling",
     )
     require_regex(

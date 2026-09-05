@@ -20,14 +20,17 @@ def collect_missing():
         if marker in source:
             missing.append(f"{context}: still contains {marker}")
 
-    def require_body(source, function_name, markers, context):
+    def require_regex(source, pattern, context):
+        if not re.search(pattern, source, re.S):
+            missing.append(f"{context}: missing pattern {pattern}")
+
+    def function_body(source, function_name):
         match = re.search(
-            rf"(?:private |public |internal |protected )?(?:override )?fun {function_name}\b[^{{]*\{{",
+            rf"(?:private |public |internal |protected )?(?:override )?fun {re.escape(function_name)}\b[^{{]*\{{",
             source,
         )
         if not match:
-            missing.append(f"{context}: missing function {function_name}")
-            return
+            return None
         body_start = match.end()
         depth = 1
         index = body_start
@@ -38,53 +41,45 @@ def collect_missing():
                 depth -= 1
             index += 1
         if depth != 0:
-            missing.append(f"{context}: unbalanced function {function_name}")
+            return None
+        return source[body_start:index - 1]
+
+    def require_body(source, function_name, markers, context):
+        body = function_body(source, function_name)
+        if body is None:
+            missing.append(f"{context}: missing function {function_name}")
             return
-        body = source[body_start:index - 1]
         for marker in markers:
-            if marker not in body:
+            if not re.search(marker, body, re.S):
                 missing.append(f"{context}: missing {marker}")
 
-    def require_any_function_body(source, marker, context):
-        for match in re.finditer(
-            r"(?:private |public |internal |protected )?(?:override )?fun\s+[A-Za-z_]\w*\b[^{{]*\{",
-            source,
-        ):
-            body_start = match.end()
-            depth = 1
-            index = body_start
-            while depth and index < len(source):
-                if source[index] == "{":
-                    depth += 1
-                elif source[index] == "}":
-                    depth -= 1
-                index += 1
-            if depth != 0:
-                continue
-            if marker in source[body_start:index - 1]:
+    def require_any_function_body(source, function_names, marker, context):
+        for function_name in function_names:
+            body = function_body(source, function_name)
+            if body is not None and re.search(marker, body, re.S):
                 return
         missing.append(f"{context}: missing {marker}")
 
     forbid(MAIN, "ConversationResultBridge.submitText(", "MainActivity typed submit path")
     require_any_function_body(
         MAIN,
-        "WakeServiceController.submitText(",
+        ("submitText", "onTextResult"),
+        r"WakeServiceController\s*\.\s*submitText\s*\(",
         "MainActivity text submission route",
     )
-    require_any_function_body(
-        SETTINGS,
-        "WakeServiceController.",
-        "SettingsActivity wake settings route",
-    )
-    require(WAKE, "const val ACTION_SUBMIT_TEXT", "WakeService text action constant")
-    require(WAKE, "const val EXTRA_TEXT", "WakeService text payload constant")
-    require(WAKE, "fun processAssistantInput(", "WakeService shared text processor")
+    require_regex(WAKE, r"const val ACTION_SUBMIT_TEXT\b", "WakeService text action constant")
+    require_regex(WAKE, r"const val EXTRA_TEXT\b", "WakeService text payload constant")
+    require_regex(WAKE, r"fun\s+processAssistantInput\s*\(", "WakeService shared text processor")
     require_body(
         WAKE,
         "onStartCommand",
-        ("ACTION_SUBMIT_TEXT", "EXTRA_TEXT", "processAssistantInput("),
+        (r"ACTION_SUBMIT_TEXT\b", r"EXTRA_TEXT\b", r"processAssistantInput\s*\("),
         "WakeService text service action route",
     )
+    forbid(MAIN, "processAssistantInput(", "MainActivity typed pipeline local processor")
+    forbid(SETTINGS, "processAssistantInput(", "SettingsActivity typed pipeline local processor")
+    forbid(MAIN, "DeviceActionExecutor", "MainActivity direct device executor")
+    forbid(SETTINGS, "DeviceActionExecutor", "SettingsActivity direct device executor")
 
     return missing
 

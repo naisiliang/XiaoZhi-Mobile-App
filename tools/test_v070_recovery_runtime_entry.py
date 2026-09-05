@@ -12,10 +12,10 @@ def collect_missing():
     missing = []
 
     def function_body(source, function_name):
-        match = re.search(
-            rf"(?:private |public |internal |protected )?(?:override )?fun {function_name}\b[^{{]*\{{",
-            source,
+        pattern = re.compile(
+            rf"(?:private |public |internal |protected )?(?:override )?fun {re.escape(function_name)}\b[^{{]*\{{"
         )
+        match = pattern.search(source)
         if not match:
             return None
         body_start = match.end()
@@ -35,6 +35,10 @@ def collect_missing():
         if marker not in source:
             missing.append(f"{context}: missing {marker}")
 
+    def require_regex(source, pattern, context):
+        if not re.search(pattern, source, re.S):
+            missing.append(f"{context}: missing pattern {pattern}")
+
     def require_body(source, function_name, marker, context):
         body = function_body(source, function_name)
         if body is None:
@@ -43,58 +47,13 @@ def collect_missing():
         if marker not in body:
             missing.append(f"{context}: missing {marker}")
 
-    def require_any_function_body(source, marker, context):
-        for match in re.finditer(
-            r"(?:private |public |internal |protected )?(?:override )?fun\s+[A-Za-z_]\w*\b[^{{]*\{",
-            source,
-        ):
-            body_start = match.end()
-            depth = 1
-            index = body_start
-            while depth and index < len(source):
-                if source[index] == "{":
-                    depth += 1
-                elif source[index] == "}":
-                    depth -= 1
-                index += 1
-            if depth != 0:
-                continue
-            if marker in source[body_start:index - 1]:
-                return
-        missing.append(f"{context}: missing {marker}")
-
-    def require_callback_path(source, markers, required_marker, context):
-        for marker in markers:
-            marker_index = source.find(marker)
-            if marker_index < 0:
-                continue
-            opening = source.find("{", marker_index + len(marker))
-            if opening < 0:
-                continue
-            depth = 0
-            for index in range(opening, len(source)):
-                if source[index] == "{":
-                    depth += 1
-                elif source[index] == "}":
-                    depth -= 1
-                    if depth == 0:
-                        body = source[opening + 1:index]
-                        if required_marker in body:
-                            return
-                        break
-        missing.append(
-            f"{context}: missing reachable {required_marker} inside {', '.join(markers)}"
-        )
-
-    def require_if_branch(source, condition, required_marker, context):
-        marker_index = source.find(condition)
+    def block_after_marker(source, marker):
+        marker_index = source.find(marker)
         if marker_index < 0:
-            missing.append(f"{context}: missing {condition}")
-            return
-        opening = source.find("{", marker_index + len(condition))
+            return None
+        opening = source.find("{", marker_index + len(marker))
         if opening < 0:
-            missing.append(f"{context}: missing branch body for {condition}")
-            return
+            return None
         depth = 0
         for index in range(opening, len(source)):
             if source[index] == "{":
@@ -102,43 +61,90 @@ def collect_missing():
             elif source[index] == "}":
                 depth -= 1
                 if depth == 0:
-                    body = source[opening + 1:index]
-                    if required_marker in body:
-                        return
-                    break
+                    return source[opening + 1:index]
+        return None
+
+    def require_function_body_any(source, function_names, marker, context):
+        for function_name in function_names:
+            body = function_body(source, function_name)
+            if body is not None and re.search(marker, body, re.S):
+                return
+        missing.append(f"{context}: missing {marker}")
+
+    def require_permission_branch(source, context):
+        body = function_body(source, "requestNeededPermissions")
+        if body is None:
+            missing.append(f"{context}: missing function requestNeededPermissions")
+            return
+        if "WakeServiceController.start(" not in body:
+            missing.append(f"{context}: missing WakeServiceController.start(")
+            return
+        branch_patterns = (
+            r"if\s*\(\s*checkSelfPermission\(\s*Manifest\.permission\.RECORD_AUDIO\s*\)\s*==\s*PackageManager\.PERMISSION_GRANTED\s*\)",
+            r"if\s*\(\s*PackageManager\.PERMISSION_GRANTED\s*==\s*checkSelfPermission\(\s*Manifest\.permission\.RECORD_AUDIO\s*\)\s*\)",
+            r"if\s*\(\s*checkSelfPermission\(\s*Manifest\.permission\.RECORD_AUDIO\s*\)\s*!=\s*PackageManager\.PERMISSION_GRANTED\s*\)",
+        )
+        for pattern in branch_patterns:
+            match = re.search(pattern, body, re.S)
+            if not match:
+                continue
+            opening = body.find("{", match.end())
+            if opening < 0:
+                continue
+            depth = 0
+            for index in range(opening, len(body)):
+                if body[index] == "{":
+                    depth += 1
+                elif body[index] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        branch_body = body[opening + 1:index]
+                        if re.search(r"WakeServiceController\s*\.\s*start\s*\(", branch_body, re.S):
+                            return
+                        break
         missing.append(
-            f"{context}: missing reachable {required_marker} inside {condition}"
+            f"{context}: missing reachable WakeServiceController.start( in the granted RECORD_AUDIO branch"
+        )
+
+    def require_callback_start(source, context):
+        callback_markers = (
+            "onRequestPermissionsResult(",
+            "registerForActivityResult(",
+        )
+        grant_markers = (
+            "grantResults",
+            "PackageManager.PERMISSION_GRANTED",
+            "allGranted",
+            "Manifest.permission.RECORD_AUDIO",
+        )
+        for marker in callback_markers:
+            callback_body = block_after_marker(source, marker)
+            if callback_body is None:
+                continue
+            if not re.search(r"WakeServiceController\s*\.\s*start\s*\(", callback_body, re.S):
+                continue
+            if any(grant_marker in callback_body for grant_marker in grant_markers):
+                return
+        missing.append(
+            f"{context}: missing callback/equivalent with permission-grant signal and WakeServiceController.start("
         )
 
     require(MAIN, "Manifest.permission.RECORD_AUDIO", "MainActivity microphone permission gate")
     require(MAIN, "PackageManager.PERMISSION_GRANTED", "MainActivity granted-permission branch")
-    require_any_function_body(
+    require_function_body_any(
         MAIN,
-        "WakeServiceController.submitText(",
+        ("submitText", "onTextResult"),
+        r"WakeServiceController\s*\.\s*submitText\s*\(",
         "MainActivity typed submit route",
     )
-    require_any_function_body(
+    require_function_body_any(
         SETTINGS,
-        "WakeServiceController",
+        ("saveSettings", "applyWakeSettingsIfRunning"),
+        r"WakeServiceController\b",
         "SettingsActivity wake settings route",
     )
-    require_callback_path(
-        MAIN,
-        (
-            "onRequestPermissionsResult(",
-            "registerForActivityResult(",
-            "ActivityResultContracts.RequestPermission",
-            "ActivityResultContracts.RequestMultiplePermissions",
-        ),
-        "WakeServiceController.start(",
-        "MainActivity first-install permission grant path",
-    )
-    require_if_branch(
-        MAIN,
-        "if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED)",
-        "WakeServiceController.start(",
-        "MainActivity granted microphone branch",
-    )
+    require_callback_start(MAIN, "MainActivity first-install permission grant path")
+    require_permission_branch(MAIN, "MainActivity granted microphone branch")
     return missing
 
 
