@@ -486,3 +486,96 @@ AssertionError: ui recovery contract is still missing:
 - The typed test now keeps `ConversationResultBridge.submitText(` forbidden while moving the submit contract onto `WakeServiceController` and the service-side action processor.
 - The UI test now keys off the planned `activity_main_chat.xml` filename and real layout structure markers instead of the old programmatic scaffold.
 - `SettingsActivity` wake-settings ownership remains only asserted as a controller-backed path; background wake state ownership itself is documented as Task 2-owned rather than forced into Task 1.
+
+# Fix Round 4
+
+## What changed
+
+- Reworked `tools/test_v070_recovery_runtime_entry.py` so the controller-start requirement is tied to the exact granted microphone branch and to a callback/equivalent permission-grant path, while no longer requiring `WakeService.kt` to mention `WakeServiceController`.
+- Reworked `tools/test_v070_recovery_typed_pipeline.py` so `MainActivity` must route the typed submit path through a controller submit call, `ConversationResultBridge.submitText(` remains forbidden, `SettingsActivity` is checked only for controller-backed wake settings behavior, and `WakeService` owns the `ACTION_SUBMIT_TEXT` / `EXTRA_TEXT` / `processAssistantInput` service-action contract.
+- Kept `tools/test_v070_recovery_ui_contract.py` aligned to `activity_main_chat.xml` and `activity_settings.xml`, executable inflation/insets assertions, real XML structure checks, the dynamic assistant-name title, and the `android.R.layout.simple_list_item_2` / debug-subtitle forbiddance.
+- Refreshed `.superpowers/sdd/2026-09-06-v070-full-recovery/phase0-red.md` into one canonical RED snapshot with the current script outputs only.
+
+## Verification rerun
+
+### 1) Runtime entry contract
+
+Command:
+
+```powershell
+python -X utf8 tools/test_v070_recovery_runtime_entry.py
+```
+
+Output:
+
+```text
+Traceback (most recent call last):
+  File "E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full\tools\test_v070_recovery_runtime_entry.py", line 147, in <module>
+    raise AssertionError("runtime entry recovery contract is still missing:\n- " + "\n- ".join(missing))
+AssertionError: runtime entry recovery contract is still missing:
+- MainActivity typed submit route: missing WakeServiceController.submitText(
+- SettingsActivity wake settings route: missing WakeServiceController
+- MainActivity first-install permission grant path: missing reachable WakeServiceController.start( inside onRequestPermissionsResult(, registerForActivityResult(, ActivityResultContracts.RequestPermission, ActivityResultContracts.RequestMultiplePermissions
+- MainActivity granted microphone branch: missing if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED)
+```
+
+### 2) Typed submit pipeline contract
+
+Command:
+
+```powershell
+python -X utf8 tools/test_v070_recovery_typed_pipeline.py
+```
+
+Output:
+
+```text
+Traceback (most recent call last):
+  File "E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full\tools\test_v070_recovery_typed_pipeline.py", line 94, in <module>
+    raise AssertionError("typed pipeline recovery contract is still missing:\n- " + "\n- ".join(missing))
+AssertionError: typed pipeline recovery contract is still missing:
+- MainActivity typed submit path: still contains ConversationResultBridge.submitText(
+- MainActivity text submission route: missing WakeServiceController.submitText(
+- SettingsActivity wake settings route: missing WakeServiceController.
+- WakeService text action constant: missing const val ACTION_SUBMIT_TEXT
+- WakeService text payload constant: missing const val EXTRA_TEXT
+- WakeService shared text processor: missing fun processAssistantInput(
+- WakeService text service action route: missing ACTION_SUBMIT_TEXT
+- WakeService text service action route: missing EXTRA_TEXT
+- WakeService text service action route: missing processAssistantInput(
+```
+
+### 3) UI contract
+
+Command:
+
+```powershell
+python -X utf8 tools/test_v070_recovery_ui_contract.py
+```
+
+Output:
+
+```text
+Traceback (most recent call last):
+  File "E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full\tools\test_v070_recovery_ui_contract.py", line 112, in <module>
+    raise AssertionError("ui recovery contract is still missing:\n- " + "\n- ".join(missing))
+AssertionError: ui recovery contract is still missing:
+- MainActivity chat layout: missing file app\src\main\res\layout\activity_main_chat.xml
+- SettingsActivity settings layout: missing file app\src\main\res\layout\activity_settings.xml
+- MainActivity XML inflation: missing setContentView(R.layout.activity_main_chat)
+- SettingsActivity XML inflation: missing setContentView(R.layout.activity_settings)
+- MainActivity insets handling: missing ViewCompat.setOnApplyWindowInsetsListener
+- MainActivity insets handling: missing WindowCompat.setDecorFitsSystemWindows
+- SettingsActivity insets handling: missing ViewCompat.setOnApplyWindowInsetsListener
+- SettingsActivity insets handling: missing WindowCompat.setDecorFitsSystemWindows
+- MainActivity assistant-name title: missing pattern "\$\{[^"]*assistantName[^"]*\}.*智能体"
+- ConversationAdapter scaffold row: still contains android.R.layout.simple_list_item_2
+- MainActivity debug subtitle: still contains v0.6.5：会话状态机 + 悬浮层手动退出 + 智能退出 + 自然语言媒体音量
+```
+
+## Self-review
+
+- Confirmed the task stayed test/evidence only; no production Kotlin, XML, or Gradle files were changed.
+- Confirmed the runtime test now checks the exact granted microphone branch plus a callback/equivalent permission-grant path instead of a loose token search.
+- Confirmed the typed test now forbids the bridge submit call independently and keeps the service-side action/processor contract on `WakeService`.
+- Confirmed the UI test is aligned to the planned XML layout names and still fails for the current missing scaffold.

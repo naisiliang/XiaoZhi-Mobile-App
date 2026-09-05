@@ -21,7 +21,10 @@ def collect_missing():
             missing.append(f"{context}: still contains {marker}")
 
     def require_body(source, function_name, markers, context):
-        match = re.search(rf"(?:private |public |internal |protected )?fun {function_name}\b[^{{]*\{{", source)
+        match = re.search(
+            rf"(?:private |public |internal |protected )?(?:override )?fun {function_name}\b[^{{]*\{{",
+            source,
+        )
         if not match:
             missing.append(f"{context}: missing function {function_name}")
             return
@@ -42,19 +45,35 @@ def collect_missing():
             if marker not in body:
                 missing.append(f"{context}: missing {marker}")
 
+    def require_any_function_body(source, marker, context):
+        for match in re.finditer(
+            r"(?:private |public |internal |protected )?(?:override )?fun\s+[A-Za-z_]\w*\b[^{{]*\{",
+            source,
+        ):
+            body_start = match.end()
+            depth = 1
+            index = body_start
+            while depth and index < len(source):
+                if source[index] == "{":
+                    depth += 1
+                elif source[index] == "}":
+                    depth -= 1
+                index += 1
+            if depth != 0:
+                continue
+            if marker in source[body_start:index - 1]:
+                return
+        missing.append(f"{context}: missing {marker}")
+
     forbid(MAIN, "ConversationResultBridge.submitText(", "MainActivity typed submit path")
-    require(MAIN, "WakeServiceController", "MainActivity shared controller contract")
-    require(SETTINGS, "WakeServiceController", "SettingsActivity shared controller contract")
-    require_body(
+    require_any_function_body(
         MAIN,
-        "onTextResult",
-        ("WakeServiceController.submitText(text)",),
+        "WakeServiceController.submitText(",
         "MainActivity text submission route",
     )
-    require_body(
+    require_any_function_body(
         SETTINGS,
-        "applyWakeSettingsIfRunning",
-        ("WakeServiceController.",),
+        "WakeServiceController.",
         "SettingsActivity wake settings route",
     )
     require(WAKE, "const val ACTION_SUBMIT_TEXT", "WakeService text action constant")

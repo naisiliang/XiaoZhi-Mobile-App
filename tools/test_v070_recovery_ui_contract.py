@@ -26,7 +26,10 @@ def collect_missing():
             missing.append(f"{context}: missing pattern {pattern}")
 
     def require_body(source, function_name, markers, context):
-        match = re.search(rf"(?:private |public |internal |protected )?fun {function_name}\b[^{{]*\{{", source)
+        match = re.search(
+            rf"(?:private |public |internal |protected )?(?:override )?fun {function_name}\b[^{{]*\{{",
+            source,
+        )
         if not match:
             missing.append(f"{context}: missing function {function_name}")
             return
