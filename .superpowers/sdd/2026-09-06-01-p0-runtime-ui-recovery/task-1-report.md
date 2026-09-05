@@ -579,3 +579,7 @@ AssertionError: ui recovery contract is still missing:
 - Confirmed the runtime test now checks the exact granted microphone branch plus a callback/equivalent permission-grant path instead of a loose token search.
 - Confirmed the typed test now forbids the bridge submit call independently and keeps the service-side action/processor contract on `WakeService`.
 - Confirmed the UI test is aligned to the planned XML layout names and still fails for the current missing scaffold.
+
+## Commit
+
+`f46f714d6af63f0d8b1c1a3dd2b0f8a82e3f3d8b` - `test: tighten v070 task1 recovery contracts`
