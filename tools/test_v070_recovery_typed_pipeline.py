@@ -60,6 +60,16 @@ def collect_missing():
                 return
         missing.append(f"{context}: missing {marker}")
 
+    def require_action_branch(source, context):
+        body = function_body(source, "onStartCommand")
+        if body is None:
+            missing.append(f"{context}: missing function onStartCommand")
+            return
+        pattern = r"ACTION_SUBMIT_TEXT\b[\s\S]{0,600}EXTRA_TEXT\b[\s\S]{0,600}processAssistantInput\s*\("
+        if re.search(pattern, body, re.S):
+            return
+        missing.append(f"{context}: missing coupled ACTION_SUBMIT_TEXT -> EXTRA_TEXT -> processAssistantInput route")
+
     forbid(MAIN, "ConversationResultBridge.submitText(", "MainActivity typed submit path")
     require_any_function_body(
         MAIN,
@@ -70,12 +80,7 @@ def collect_missing():
     require_regex(WAKE, r"const val ACTION_SUBMIT_TEXT\b", "WakeService text action constant")
     require_regex(WAKE, r"const val EXTRA_TEXT\b", "WakeService text payload constant")
     require_regex(WAKE, r"fun\s+processAssistantInput\s*\(", "WakeService shared text processor")
-    require_body(
-        WAKE,
-        "onStartCommand",
-        (r"ACTION_SUBMIT_TEXT\b", r"EXTRA_TEXT\b", r"processAssistantInput\s*\("),
-        "WakeService text service action route",
-    )
+    require_action_branch(WAKE, "WakeService text service action route")
     forbid(MAIN, "processAssistantInput(", "MainActivity typed pipeline local processor")
     forbid(SETTINGS, "processAssistantInput(", "SettingsActivity typed pipeline local processor")
     forbid(MAIN, "DeviceActionExecutor", "MainActivity direct device executor")

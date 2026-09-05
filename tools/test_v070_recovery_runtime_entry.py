@@ -82,7 +82,8 @@ def collect_missing():
         branch_patterns = (
             r"if\s*\(\s*checkSelfPermission\(\s*Manifest\.permission\.RECORD_AUDIO\s*\)\s*==\s*PackageManager\.PERMISSION_GRANTED\s*\)",
             r"if\s*\(\s*PackageManager\.PERMISSION_GRANTED\s*==\s*checkSelfPermission\(\s*Manifest\.permission\.RECORD_AUDIO\s*\)\s*\)",
-            r"if\s*\(\s*checkSelfPermission\(\s*Manifest\.permission\.RECORD_AUDIO\s*\)\s*!=\s*PackageManager\.PERMISSION_GRANTED\s*\)",
+            r"if\s*\(\s*ContextCompat\.checkSelfPermission\(\s*this(?:@MainActivity)?\s*,\s*Manifest\.permission\.RECORD_AUDIO\s*\)\s*==\s*PackageManager\.PERMISSION_GRANTED\s*\)",
+            r"if\s*\(\s*ContextCompat\.checkSelfPermission\(\s*this(?:@MainActivity)?\s*,\s*Manifest\.permission\.RECORD_AUDIO\s*\)\s*==\s*ContextCompat\.PERMISSION_GRANTED\s*\)",
         )
         for pattern in branch_patterns:
             match = re.search(pattern, body, re.S)

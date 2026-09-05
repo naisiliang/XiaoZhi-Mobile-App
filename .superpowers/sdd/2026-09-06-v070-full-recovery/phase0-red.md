@@ -18,7 +18,7 @@ Output:
 
 ```text
 Traceback (most recent call last):
-  File "E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full\tools\test_v070_recovery_runtime_entry.py", line 153, in <module>
+  File "E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full\tools\test_v070_recovery_runtime_entry.py", line 154, in <module>
     raise AssertionError("runtime entry recovery contract is still missing:\n- " + "\n- ".join(missing))
 AssertionError: runtime entry recovery contract is still missing:
 - MainActivity typed submit route: missing WakeServiceController\s*\.\s*submitText\s*\(
@@ -41,7 +41,7 @@ Output:
 
 ```text
 Traceback (most recent call last):
-  File "E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full\tools\test_v070_recovery_typed_pipeline.py", line 89, in <module>
+  File "E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full\tools\test_v070_recovery_typed_pipeline.py", line 94, in <module>
     raise AssertionError("typed pipeline recovery contract is still missing:\n- " + "\n- ".join(missing))
 AssertionError: typed pipeline recovery contract is still missing:
 - MainActivity typed submit path: still contains ConversationResultBridge.submitText(
@@ -49,9 +49,7 @@ AssertionError: typed pipeline recovery contract is still missing:
 - WakeService text action constant: missing pattern const val ACTION_SUBMIT_TEXT\b
 - WakeService text payload constant: missing pattern const val EXTRA_TEXT\b
 - WakeService shared text processor: missing pattern fun\s+processAssistantInput\s*\(
-- WakeService text service action route: missing ACTION_SUBMIT_TEXT\b
-- WakeService text service action route: missing EXTRA_TEXT\b
-- WakeService text service action route: missing processAssistantInput\s*\(
+- WakeService text service action route: missing coupled ACTION_SUBMIT_TEXT -> EXTRA_TEXT -> processAssistantInput route
 ```
 
 Why this is expected: the current code still terminates the typed submit path at `ConversationResultBridge.submitText(text)` and does not yet expose the shared controller/service action contract required by the plan.
