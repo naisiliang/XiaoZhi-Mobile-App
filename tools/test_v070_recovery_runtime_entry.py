@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -13,6 +14,48 @@ def collect_missing():
     def require(source, marker, context):
         if marker not in source:
             missing.append(f"{context}: missing {marker}")
+
+    def require_body(source, function_name, marker, context):
+        match = re.search(rf"(?:private |public |internal |protected )?fun {function_name}\b[^{{]*\{{", source)
+        if not match:
+            missing.append(f"{context}: missing function {function_name}")
+            return
+        body_start = match.end()
+        depth = 1
+        index = body_start
+        while depth and index < len(source):
+            if source[index] == "{":
+                depth += 1
+            elif source[index] == "}":
+                depth -= 1
+            index += 1
+        if depth != 0:
+            missing.append(f"{context}: unbalanced function {function_name}")
+            return
+        body = source[body_start:index - 1]
+        if marker not in body:
+            missing.append(f"{context}: missing {marker}")
+
+    def require_body_any(source, function_name, markers, context):
+        match = re.search(rf"(?:private |public |internal |protected )?fun {function_name}\b[^{{]*\{{", source)
+        if not match:
+            missing.append(f"{context}: missing function {function_name}")
+            return
+        body_start = match.end()
+        depth = 1
+        index = body_start
+        while depth and index < len(source):
+            if source[index] == "{":
+                depth += 1
+            elif source[index] == "}":
+                depth -= 1
+            index += 1
+        if depth != 0:
+            missing.append(f"{context}: unbalanced function {function_name}")
+            return
+        body = source[body_start:index - 1]
+        if not any(marker in body for marker in markers):
+            missing.append(f"{context}: missing one of {', '.join(markers)}")
 
     def require_any(source, markers, context):
         if not any(marker in source for marker in markers):
@@ -32,8 +75,6 @@ def collect_missing():
         (
             "WakeServiceController.start(",
             "WakeServiceController.ensureStarted(",
-            "startService(Intent(this, WakeService::class.java))",
-            "startForegroundService(Intent(this, WakeService::class.java))",
         ),
         "MainActivity reachable wake-service start path",
     )
@@ -54,6 +95,18 @@ def collect_missing():
             "WakeServiceController(",
         ),
         "MainActivity shared controller access",
+    )
+    require_body(
+        MAIN,
+        "requestNeededPermissions",
+        "if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED)",
+        "MainActivity granted microphone branch",
+    )
+    require_body_any(
+        MAIN,
+        "requestNeededPermissions",
+        ("WakeServiceController.start(", "WakeServiceController.ensureStarted("),
+        "MainActivity granted microphone branch",
     )
 
     return missing

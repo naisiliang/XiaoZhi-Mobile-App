@@ -34,7 +34,7 @@ def collect_missing():
     require_source(MAIN, "${assistantName}智能体", "MainActivity assistant-name title")
     require_source(MAIN, "WindowInsets", "MainActivity insets handling")
     require_source(SETTINGS, "WindowInsets", "SettingsActivity insets handling")
-    require_source(ADAPTER, "simple_list_item_2", "ConversationAdapter scaffold row")
+    forbid_source(ADAPTER, "android.R.layout.simple_list_item_2", "ConversationAdapter scaffold row")
     forbid_source(MAIN, "v0.6.5：会话状态机 + 悬浮层手动退出 + 智能退出 + 自然语言媒体音量", "MainActivity debug subtitle")
 
     return missing
