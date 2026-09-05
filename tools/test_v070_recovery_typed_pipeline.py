@@ -42,18 +42,29 @@ def collect_missing():
             if marker not in body:
                 missing.append(f"{context}: missing {marker}")
 
-    require(MAIN, "ACTION_SUBMIT_TEXT", "MainActivity typed submit action")
-    require(MAIN, "EXTRA_TEXT", "MainActivity typed submit payload")
-    require(MAIN, "processAssistantInput", "MainActivity shared assistant-input processor")
-    require(SETTINGS, "processAssistantInput", "SettingsActivity shared assistant-input processor")
-    require(WAKE, "processAssistantInput", "WakeService shared assistant-input processor")
-    require(BRIDGE, "fun submitText(text: String)", "ConversationResultBridge text submission entry")
     forbid(MAIN, "ConversationResultBridge.submitText(", "MainActivity typed submit path")
+    require(MAIN, "WakeServiceController", "MainActivity shared controller contract")
+    require(SETTINGS, "WakeServiceController", "SettingsActivity shared controller contract")
     require_body(
         MAIN,
         "onTextResult",
-        ("ACTION_SUBMIT_TEXT", "EXTRA_TEXT", "processAssistantInput"),
-        "MainActivity typed submit path",
+        ("WakeServiceController.submitText(text)",),
+        "MainActivity text submission route",
+    )
+    require_body(
+        SETTINGS,
+        "applyWakeSettingsIfRunning",
+        ("WakeServiceController.",),
+        "SettingsActivity wake settings route",
+    )
+    require(WAKE, "const val ACTION_SUBMIT_TEXT", "WakeService text action constant")
+    require(WAKE, "const val EXTRA_TEXT", "WakeService text payload constant")
+    require(WAKE, "fun processAssistantInput(", "WakeService shared text processor")
+    require_body(
+        WAKE,
+        "onStartCommand",
+        ("ACTION_SUBMIT_TEXT", "EXTRA_TEXT", "processAssistantInput("),
+        "WakeService text service action route",
     )
 
     return missing

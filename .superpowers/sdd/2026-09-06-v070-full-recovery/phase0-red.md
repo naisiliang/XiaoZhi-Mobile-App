@@ -80,3 +80,86 @@ AssertionError: ui recovery contract is still missing:
 ```
 
 Why this is expected: the current app still renders the chat and settings UIs programmatically, has no XML chat layouts or inset-aware layout contract yet, still uses the debug subtitle, and the conversation list still renders with `android.R.layout.simple_list_item_2`.
+
+## Current snapshot after contract tightening
+
+### 1) Runtime entry contract
+
+Command:
+
+```powershell
+python -X utf8 tools/test_v070_recovery_runtime_entry.py
+```
+
+Output:
+
+```text
+Traceback (most recent call last):
+  File "E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full\tools\test_v070_recovery_runtime_entry.py", line 94, in <module>
+    raise AssertionError("runtime entry recovery contract is still missing:\n- " + "\n- ".join(missing))
+AssertionError: runtime entry recovery contract is still missing:
+- MainActivity shared controller contract: missing WakeServiceController
+- SettingsActivity shared controller contract: missing WakeServiceController
+- MainActivity text submission route: missing WakeServiceController.submitText(text)
+- SettingsActivity wake settings route: missing WakeServiceController.
+- MainActivity granted microphone branch: missing if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED)
+- MainActivity first-install permission grant path: missing one of onRequestPermissionsResult(, registerForActivityResult(, ActivityResultContracts.RequestPermission, ActivityResultContracts.RequestMultiplePermissions
+```
+
+### 2) Typed submit pipeline contract
+
+Command:
+
+```powershell
+python -X utf8 tools/test_v070_recovery_typed_pipeline.py
+```
+
+Output:
+
+```text
+Traceback (most recent call last):
+  File "E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full\tools\test_v070_recovery_typed_pipeline.py", line 75, in <module>
+    raise AssertionError("typed pipeline recovery contract is still missing:\n- " + "\n- ".join(missing))
+AssertionError: typed pipeline recovery contract is still missing:
+- MainActivity typed submit path: still contains ConversationResultBridge.submitText(
+- MainActivity shared controller contract: missing WakeServiceController
+- SettingsActivity shared controller contract: missing WakeServiceController
+- MainActivity text submission route: missing WakeServiceController.submitText(text)
+- SettingsActivity wake settings route: missing WakeServiceController.
+- WakeService text action constant: missing const val ACTION_SUBMIT_TEXT
+- WakeService text payload constant: missing const val EXTRA_TEXT
+- WakeService shared text processor: missing fun processAssistantInput(
+- WakeService text service action route: missing ACTION_SUBMIT_TEXT
+- WakeService text service action route: missing EXTRA_TEXT
+- WakeService text service action route: missing processAssistantInput(
+```
+
+### 3) UI contract
+
+Command:
+
+```powershell
+python -X utf8 tools/test_v070_recovery_ui_contract.py
+```
+
+Output:
+
+```text
+Traceback (most recent call last):
+  File "E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full\tools\test_v070_recovery_ui_contract.py", line 109, in <module>
+    raise AssertionError("ui recovery contract is still missing:\n- " + "\n- ".join(missing))
+AssertionError: ui recovery contract is still missing:
+- MainActivity chat layout: missing file app\src\main\res\layout\activity_main_chat.xml
+- SettingsActivity settings layout: missing file app\src\main\res\layout\activity_settings.xml
+- MainActivity XML inflation: missing setContentView(R.layout.activity_main_chat)
+- SettingsActivity XML inflation: missing setContentView(R.layout.activity_settings)
+- MainActivity insets handling: missing ViewCompat.setOnApplyWindowInsetsListener
+- MainActivity insets handling: missing WindowCompat.setDecorFitsSystemWindows
+- SettingsActivity insets handling: missing ViewCompat.setOnApplyWindowInsetsListener
+- SettingsActivity insets handling: missing WindowCompat.setDecorFitsSystemWindows
+- MainActivity assistant-name title: missing pattern "\$\{[^"]*assistantName[^"]*\}.*智能体"
+- ConversationAdapter scaffold row: still contains android.R.layout.simple_list_item_2
+- MainActivity debug subtitle: still contains v0.6.5：会话状态机 + 悬浮层手动退出 + 智能退出 + 自然语言媒体音量
+```
+
+Why this is expected: the current app still uses the old programmatic UI scaffold, the planned chat/settings layouts do not exist yet, and the debug subtitle and scaffold row remain in the source.

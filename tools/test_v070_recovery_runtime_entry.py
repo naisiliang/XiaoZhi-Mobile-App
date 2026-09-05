@@ -36,27 +36,6 @@ def collect_missing():
         if marker not in body:
             missing.append(f"{context}: missing {marker}")
 
-    def require_body_any(source, function_name, markers, context):
-        match = re.search(rf"(?:private |public |internal |protected )?fun {function_name}\b[^{{]*\{{", source)
-        if not match:
-            missing.append(f"{context}: missing function {function_name}")
-            return
-        body_start = match.end()
-        depth = 1
-        index = body_start
-        while depth and index < len(source):
-            if source[index] == "{":
-                depth += 1
-            elif source[index] == "}":
-                depth -= 1
-            index += 1
-        if depth != 0:
-            missing.append(f"{context}: unbalanced function {function_name}")
-            return
-        body = source[body_start:index - 1]
-        if not any(marker in body for marker in markers):
-            missing.append(f"{context}: missing one of {', '.join(markers)}")
-
     def require_block_after(source, marker, required_marker, context):
         marker_index = source.find(marker)
         if marker_index < 0:
@@ -83,46 +62,28 @@ def collect_missing():
         if not any(marker in source for marker in markers):
             missing.append(f"{context}: missing one of {', '.join(markers)}")
 
-    for label, source in (
-        ("MainActivity.kt", MAIN),
-        ("SettingsActivity.kt", SETTINGS),
-        ("WakeService.kt", WAKE),
-    ):
-        require(source, "WakeServiceController", f"{label} shared wake controller")
+    require(MAIN, "WakeServiceController", "MainActivity shared controller contract")
+    require(SETTINGS, "WakeServiceController", "SettingsActivity shared controller contract")
 
     require(MAIN, "Manifest.permission.RECORD_AUDIO", "MainActivity microphone permission gate")
     require(MAIN, "PackageManager.PERMISSION_GRANTED", "MainActivity granted-permission branch")
-    require_any(
-        MAIN,
-        (
-            "WakeServiceController.start(",
-            "WakeServiceController.ensureStarted(",
-        ),
-        "MainActivity reachable wake-service start path",
-    )
-    require_any(
-        SETTINGS,
-        (
-            "WakeServiceController.shared(",
-            "WakeServiceController.getInstance(",
-            "WakeServiceController(",
-        ),
-        "SettingsActivity shared controller access",
-    )
-    require_any(
-        MAIN,
-        (
-            "WakeServiceController.shared(",
-            "WakeServiceController.getInstance(",
-            "WakeServiceController(",
-        ),
-        "MainActivity shared controller access",
-    )
+    require_body(MAIN, "onTextResult", "WakeServiceController.submitText(text)", "MainActivity text submission route")
+    require_body(SETTINGS, "applyWakeSettingsIfRunning", "WakeServiceController.", "SettingsActivity wake settings route")
     require_block_after(
         MAIN,
         "if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED)",
         "WakeServiceController.start(",
         "MainActivity granted microphone branch",
+    )
+    require_any(
+        MAIN,
+        (
+            "onRequestPermissionsResult(",
+            "registerForActivityResult(",
+            "ActivityResultContracts.RequestPermission",
+            "ActivityResultContracts.RequestMultiplePermissions",
+        ),
+        "MainActivity first-install permission grant path",
     )
 
     return missing

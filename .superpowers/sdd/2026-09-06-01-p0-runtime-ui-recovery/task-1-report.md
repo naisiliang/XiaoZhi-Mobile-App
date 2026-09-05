@@ -389,3 +389,100 @@ AssertionError: ui recovery contract is still missing:
 - The runtime assertion is now branch-structural, not just token-based.
 - The UI and typed-pipeline assertions remain unchanged apart from earlier round-1 fixes.
 - No production Kotlin, XML, or Gradle files were modified.
+
+# Fix Round 3
+
+## What changed
+
+- Updated `tools/test_v070_recovery_runtime_entry.py` so the shared-controller contract is tied to `MainActivity.onTextResult`, `SettingsActivity.applyWakeSettingsIfRunning`, the exact granted microphone branch, and a flexible first-install permission-grant callback/equivalent path.
+- Updated `tools/test_v070_recovery_typed_pipeline.py` so `MainActivity` must route text through `WakeServiceController.submitText(...)`, `SettingsActivity` must still stay on the shared-controller wake-settings path, and `WakeService` must own `ACTION_SUBMIT_TEXT`/`EXTRA_TEXT`/`processAssistantInput`.
+- Replaced `tools/test_v070_recovery_ui_contract.py` so it uses the planned `activity_main_chat.xml` filename, asserts executable `setContentView(...)` and insets paths, and reads the XML layouts for real chat/settings structure markers.
+- Kept the task tests-only; no production Kotlin/XML/Gradle files were changed.
+
+## Verification rerun
+
+### 1) Runtime entry contract
+
+Command:
+
+```powershell
+python -X utf8 tools/test_v070_recovery_runtime_entry.py
+```
+
+Output:
+
+```text
+Traceback (most recent call last):
+  File "E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full\tools\test_v070_recovery_runtime_entry.py", line 94, in <module>
+    raise AssertionError("runtime entry recovery contract is still missing:\n- " + "\n- ".join(missing))
+AssertionError: runtime entry recovery contract is still missing:
+- MainActivity shared controller contract: missing WakeServiceController
+- SettingsActivity shared controller contract: missing WakeServiceController
+- MainActivity text submission route: missing WakeServiceController.submitText(text)
+- SettingsActivity wake settings route: missing WakeServiceController.
+- MainActivity granted microphone branch: missing if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED)
+- MainActivity first-install permission grant path: missing one of onRequestPermissionsResult(, registerForActivityResult(, ActivityResultContracts.RequestPermission, ActivityResultContracts.RequestMultiplePermissions
+```
+
+### 2) Typed submit pipeline contract
+
+Command:
+
+```powershell
+python -X utf8 tools/test_v070_recovery_typed_pipeline.py
+```
+
+Output:
+
+```text
+Traceback (most recent call last):
+  File "E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full\tools\test_v070_recovery_typed_pipeline.py", line 75, in <module>
+    raise AssertionError("typed pipeline recovery contract is still missing:\n- " + "\n- ".join(missing))
+AssertionError: typed pipeline recovery contract is still missing:
+- MainActivity typed submit path: still contains ConversationResultBridge.submitText(
+- MainActivity shared controller contract: missing WakeServiceController
+- SettingsActivity shared controller contract: missing WakeServiceController
+- MainActivity text submission route: missing WakeServiceController.submitText(text)
+- SettingsActivity wake settings route: missing WakeServiceController.
+- WakeService text action constant: missing const val ACTION_SUBMIT_TEXT
+- WakeService text payload constant: missing const val EXTRA_TEXT
+- WakeService shared text processor: missing fun processAssistantInput(
+- WakeService text service action route: missing ACTION_SUBMIT_TEXT
+- WakeService text service action route: missing EXTRA_TEXT
+- WakeService text service action route: missing processAssistantInput(
+```
+
+### 3) UI contract
+
+Command:
+
+```powershell
+python -X utf8 tools/test_v070_recovery_ui_contract.py
+```
+
+Output:
+
+```text
+Traceback (most recent call last):
+  File "E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full\tools\test_v070_recovery_ui_contract.py", line 109, in <module>
+    raise AssertionError("ui recovery contract is still missing:\n- " + "\n- ".join(missing))
+AssertionError: ui recovery contract is still missing:
+- MainActivity chat layout: missing file app\src\main\res\layout\activity_main_chat.xml
+- SettingsActivity settings layout: missing file app\src\main\res\layout\activity_settings.xml
+- MainActivity XML inflation: missing setContentView(R.layout.activity_main_chat)
+- SettingsActivity XML inflation: missing setContentView(R.layout.activity_settings)
+- MainActivity insets handling: missing ViewCompat.setOnApplyWindowInsetsListener
+- MainActivity insets handling: missing WindowCompat.setDecorFitsSystemWindows
+- SettingsActivity insets handling: missing ViewCompat.setOnApplyWindowInsetsListener
+- SettingsActivity insets handling: missing WindowCompat.setDecorFitsSystemWindows
+- MainActivity assistant-name title: missing pattern "\$\{[^"]*assistantName[^"]*\}.*智能体"
+- ConversationAdapter scaffold row: still contains android.R.layout.simple_list_item_2
+- MainActivity debug subtitle: still contains v0.6.5：会话状态机 + 悬浮层手动退出 + 智能退出 + 自然语言媒体音量
+```
+
+## Self-review
+
+- The runtime test now expresses the grant-path structure and the first-install callback/equivalent requirement without shared/getInstance/constructor assertions.
+- The typed test now keeps `ConversationResultBridge.submitText(` forbidden while moving the submit contract onto `WakeServiceController` and the service-side action processor.
+- The UI test now keys off the planned `activity_main_chat.xml` filename and real layout structure markers instead of the old programmatic scaffold.
+- `SettingsActivity` wake-settings ownership remains only asserted as a controller-backed path; background wake state ownership itself is documented as Task 2-owned rather than forced into Task 1.
