@@ -11,7 +11,13 @@ WAKE = (ROOT / "app/src/main/java/com/lchuang/xiaozhimobile/WakeService.kt").rea
 def collect_missing():
     missing = []
 
+    def strip_comments(source):
+        source = re.sub(r"/\*.*?\*/", "", source, flags=re.S)
+        source = re.sub(r"(?m)//.*$", "", source)
+        return source
+
     def function_body(source, function_name):
+        source = strip_comments(source)
         pattern = re.compile(
             rf"(?:private |public |internal |protected )?(?:override )?fun {re.escape(function_name)}\b[^{{]*\{{"
         )
@@ -61,7 +67,7 @@ def collect_missing():
             elif source[index] == "}":
                 depth -= 1
                 if depth == 0:
-                    return source[opening + 1:index]
+                    return strip_comments(source[opening + 1:index])
         return None
 
     def require_function_body_any(source, function_names, marker, context):
@@ -76,6 +82,7 @@ def collect_missing():
         if body is None:
             missing.append(f"{context}: missing function requestNeededPermissions")
             return
+        body = strip_comments(body)
         if "WakeServiceController.start(" not in body:
             missing.append(f"{context}: missing WakeServiceController.start(")
             return
@@ -122,10 +129,33 @@ def collect_missing():
             callback_body = block_after_marker(source, marker)
             if callback_body is None:
                 continue
+            callback_body = strip_comments(callback_body)
             if not re.search(r"WakeServiceController\s*\.\s*start\s*\(", callback_body, re.S):
                 continue
-            if any(grant_marker in callback_body for grant_marker in grant_markers):
-                return
+            success_patterns = (
+                r"if\s*\(\s*[^)]*grantResults[^)]*==[^)]*PackageManager\.PERMISSION_GRANTED[^)]*\)\s*\{",
+                r"if\s*\(\s*allGranted\s*\)\s*\{",
+                r"if\s*\(\s*[^)]*ContextCompat\.checkSelfPermission[^)]*==[^)]*PackageManager\.PERMISSION_GRANTED[^)]*\)\s*\{",
+                r"if\s*\(\s*[^)]*ContextCompat\.checkSelfPermission[^)]*==[^)]*ContextCompat\.PERMISSION_GRANTED[^)]*\)\s*\{",
+            )
+            for pattern in success_patterns:
+                match = re.search(pattern, callback_body, re.S)
+                if not match:
+                    continue
+                opening = callback_body.find("{", match.end())
+                if opening < 0:
+                    continue
+                depth = 0
+                for index in range(opening, len(callback_body)):
+                    if callback_body[index] == "{":
+                        depth += 1
+                    elif callback_body[index] == "}":
+                        depth -= 1
+                        if depth == 0:
+                            success_body = callback_body[opening + 1:index]
+                            if re.search(r"WakeServiceController\s*\.\s*start\s*\(", success_body, re.S):
+                                return
+                            break
         missing.append(
             f"{context}: missing callback/equivalent with permission-grant signal and WakeServiceController.start("
         )
