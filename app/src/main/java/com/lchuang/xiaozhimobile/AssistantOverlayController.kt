@@ -7,8 +7,14 @@ import android.os.Looper
 import android.provider.Settings
 import android.view.Gravity
 import android.view.WindowManager
+import com.lchuang.xiaozhimobile.conversation.AssistantState
+import com.lchuang.xiaozhimobile.conversation.AssistantStateStore
+import com.lchuang.xiaozhimobile.conversation.AssistantStateStoreProvider
 
-class AssistantOverlayController(context: Context) {
+class AssistantOverlayController(
+    context: Context,
+    val stateStore: AssistantStateStore = AssistantStateStoreProvider.instance(),
+) {
     private val appContext = context.applicationContext
     private val windowManager = appContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -16,7 +22,12 @@ class AssistantOverlayController(context: Context) {
 
     @Volatile private var overlayView: AssistantOverlayView? = null
     @Volatile private var onExitRequested: (() -> Unit)? = null
-    @Volatile private var conversationState: ConversationState = ConversationState.IDLE_WAKE
+    private val stateObserver: (AssistantState) -> Unit = { state ->
+        mainHandler.post { overlayView?.let { renderAssistantState(it, state) } }
+    }
+    init {
+        stateStore.addObserver(stateObserver)
+    }
 
     fun canDraw(): Boolean = Settings.canDrawOverlays(appContext)
 
@@ -35,7 +46,7 @@ class AssistantOverlayController(context: Context) {
             val view = AssistantOverlayView(appContext) {
                 onExitRequested?.invoke()
             }
-            view.setConversationState(conversationState)
+            renderAssistantState(view, stateStore.current)
             val params = WindowManager.LayoutParams(
                 panelWidth,
                 panelHeight,
@@ -67,8 +78,8 @@ class AssistantOverlayController(context: Context) {
     }
 
     fun updateState(state: ConversationState) {
-        conversationState = state
-        mainHandler.post { overlayView?.setConversationState(state) }
+        val viewState = stateStore.applyLegacyOverlayState(state)
+        mainHandler.post { overlayView?.setConversationState(viewState) }
     }
 
     fun updateAudioLevel(level: Float) {
@@ -90,9 +101,49 @@ class AssistantOverlayController(context: Context) {
     }
 
     fun release() {
+        stateStore.removeObserver(stateObserver)
         hide()
         onExitRequested = null
     }
 
     private fun dp(value: Float): Float = value * density
+}
+
+internal sealed interface AssistantOverlayRender {
+    data class LegacyState(val state: ConversationState) : AssistantOverlayRender
+    data object Confirmation : AssistantOverlayRender {
+        val legacyState: ConversationState = ConversationState.IDLE_WAKE
+    }
+}
+
+internal fun AssistantState.toOverlayRender(): AssistantOverlayRender = when (this) {
+    AssistantState.WAITING_WAKE -> AssistantOverlayRender.LegacyState(ConversationState.IDLE_WAKE)
+    AssistantState.LISTENING -> AssistantOverlayRender.LegacyState(ConversationState.LISTENING)
+    AssistantState.RECOGNIZING -> AssistantOverlayRender.LegacyState(ConversationState.RECOGNIZING)
+    AssistantState.EXECUTING -> AssistantOverlayRender.LegacyState(ConversationState.EXECUTING)
+    AssistantState.SPEAKING -> AssistantOverlayRender.LegacyState(ConversationState.SPEAKING)
+    AssistantState.WAITING_CONFIRMATION -> AssistantOverlayRender.Confirmation
+}
+
+private fun renderAssistantState(view: AssistantOverlayView, state: AssistantState) {
+    when (val render = state.toOverlayRender()) {
+        is AssistantOverlayRender.LegacyState -> view.setConversationState(render.state)
+        AssistantOverlayRender.Confirmation -> {
+            view.setConversationState(AssistantOverlayRender.Confirmation.legacyState)
+            view.setContent(title = "需要你的确认", status = "等待确认…")
+        }
+    }
+}
+
+internal fun AssistantStateStore.applyLegacyOverlayState(state: ConversationState): ConversationState {
+    when (state) {
+        ConversationState.IDLE_WAKE -> onConversationEnded()
+        ConversationState.LISTENING -> onAudioCaptureStarted()
+        ConversationState.RECOGNIZING -> onAudioCaptureStopped()
+        ConversationState.EXECUTING -> onExecutionStarted()
+        ConversationState.SPEAKING -> onTtsStarted()
+        ConversationState.READY_TO_LISTEN -> onWakeDetected()
+        ConversationState.EXITING -> Unit
+    }
+    return state
 }

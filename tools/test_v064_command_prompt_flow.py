@@ -38,6 +38,9 @@ assert 'setOnUtteranceProgressListener' not in speak_progress.group(1)
 assert wake.count('setOnUtteranceProgressListener') == 1
 assert 'speakWithProgress(text, onDone = done)' in wake
 assert 'router.plan(normalized)' in wake
-assert 'safeToolExecutor.plan(outcome.call)' in wake
+assert 'toolDispatcher.dispatch(' in wake
+assert 'ToolInvocation(outcome.call.tool, outcome.call.args)' in wake
+assert 'safeToolExecutor.execute(' in wake
+assert 'safeToolExecutor.plan(outcome.call)' not in wake
 assert wake.count('executeDeviceAction(rawText, normalized') >= 2
 print('PASS: command completion -> guarded real listening flow')

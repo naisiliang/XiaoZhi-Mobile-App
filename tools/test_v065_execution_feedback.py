@@ -110,26 +110,23 @@ assert "executeDeviceAction(rawText, normalized" in planned
 assert "return" in planned, "a planned local action must remain handled even when execution fails"
 
 tool_branch = process[process.index("is AiOutcome.Tool ->") :]
-safe_plan = tool_branch.find("safeToolExecutor.plan(outcome.call)")
-allowed = tool_branch.find("is SafeToolPlan.Allowed")
-same_funnel = tool_branch.find("executeDeviceAction(rawText, normalized", allowed)
-rejected = tool_branch.find("is SafeToolPlan.Rejected")
-assert 0 <= safe_plan < allowed < same_funnel, "AI tools must plan then use executeDeviceAction"
-assert rejected >= 0 and "SAFETY_REJECTED" in tool_branch[rejected:], (
-    "rejected AI tools must report SAFETY_REJECTED"
+dispatcher_call = tool_branch.find("toolDispatcher.dispatch(")
+invocation = tool_branch.find("ToolInvocation(outcome.call.tool, outcome.call.args)")
+handler = tool_branch.find("handleAiToolResult(rawText, normalized, heard, result)")
+assert 0 <= dispatcher_call < invocation < handler, (
+    "AI tools must enter the production dispatcher with a ToolInvocation and result callback"
 )
-rejected_block = braced_block(tool_branch, "is SafeToolPlan.Rejected ->")
-rejected_feedback_call = "reportRejectedToolFeedback(toolPlan, commandResultNotifier)"
-assert rejected_feedback_call in rejected_block, (
-    "rejected AI tools must delegate production feedback handling"
+assert "safeToolExecutor.plan" not in tool_branch, "AI tools must not plan outside the registered executor"
+assert "safeToolExecutor.execute" not in tool_branch, "AI tools must not execute outside the registered executor"
+assert "isSafetyToolResult(result)" in wake, "dispatcher rejection results need a safety recovery path"
+assert "reportRejectedToolFeedback(SafeToolPlan.Rejected(result)" in wake, (
+    "dispatcher rejection results must use retained production feedback"
 )
-assert "commandResultNotifier.failure" not in rejected_block, (
-    "rejected AI tools must not duplicate production feedback handling"
+tool_executors = function_body("createAiToolExecutors")
+assert "safeToolExecutor.execute" in tool_executors, (
+    "SafeToolExecutor must remain the registered AI tool executor"
 )
-assert "updateNotification(" not in rejected_block, (
-    "rejected AI tools must use retained failure feedback, not a transient notification"
-)
-assert "safeToolExecutor.execute" not in tool_branch, "AI tools must never bypass SafeToolExecutor.plan"
+assert "callback" in tool_executors, "registered AI tool executor must return its actual result"
 
 utterance = function_body("processUtterance")
 planned_exit_index = utterance.find("val localPlan = router.plan(normalized)")

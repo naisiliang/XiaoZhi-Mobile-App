@@ -1,0 +1,8 @@
+RED command:
+JAVA_HOME=C:/Users/ASUS/.jdks/openjdk-20.0.2 ANDROID_SDK_ROOT=C:/Users/ASUS/AppData/Local/Temp/xiaozhi-android-sdk ANDROID_HOME=C:/Users/ASUS/AppData/Local/Temp/xiaozhi-android-sdk C:/Users/ASUS/AppData/Local/Temp/xiaozhi-gradle-8.9-complete/gradle-8.9/bin/gradle.bat :app:testDebugUnitTest --tests com.lchuang.xiaozhimobile.diagnostics.DiagnosticEventTest --no-daemon
+
+RED result:
+DiagnosticEventTest > generic keys remove labeled sensitive assignments but preserve safe metadata FAILED
+DiagnosticEventTest > generic metadata keeps ordinary values and rejects only valid payment card numbers FAILED
+4 tests completed, 2 failed
+BUILD FAILED

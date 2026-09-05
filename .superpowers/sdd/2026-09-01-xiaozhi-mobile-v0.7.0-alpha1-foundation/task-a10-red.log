@@ -1,0 +1,11 @@
+Command:
+$env:JAVA_HOME='C:/Users/ASUS/.jdks/openjdk-20.0.2'; $env:ANDROID_SDK_ROOT='C:/Users/ASUS/AppData/Local/Temp/xiaozhi-android-sdk'; $env:ANDROID_HOME='C:/Users/ASUS/AppData/Local/Temp/xiaozhi-android-sdk'; $env:PATH='C:/Users/ASUS/AppData/Local/Temp/codex-kotlinc;'+$env:PATH; C:/Users/ASUS/AppData/Local/Temp/xiaozhi-gradle-8.9-complete/gradle-8.9/bin/gradle.bat :app:testDebugUnitTest --tests com.lchuang.xiaozhimobile.tasks.TaskProgressTrackerTest --no-daemon
+
+Observed output:
+TaskProgressTrackerTest > every terminal state rejects later updates and transitions FAILED
+
+    java.lang.AssertionError at TaskProgressTrackerTest.kt:107
+8 tests completed, 1 failed
+
+BUILD FAILED in 16s
+EXIT_CODE=1

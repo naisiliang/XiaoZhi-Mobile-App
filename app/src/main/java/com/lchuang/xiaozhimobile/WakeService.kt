@@ -17,6 +17,15 @@ import com.k2fsa.sherpa.onnx.OfflineRecognizerConfig
 import com.k2fsa.sherpa.onnx.OnlineModelConfig
 import com.k2fsa.sherpa.onnx.OnlineStream
 import com.k2fsa.sherpa.onnx.OnlineTransducerModelConfig
+import com.lchuang.xiaozhimobile.conversation.ConversationSessionManager
+import com.lchuang.xiaozhimobile.conversation.ConversationSessionStore
+import com.lchuang.xiaozhimobile.conversation.AssistantStateStore
+import com.lchuang.xiaozhimobile.conversation.AssistantStateStoreProvider
+import com.lchuang.xiaozhimobile.safety.CentralSafetyPolicyEngine
+import com.lchuang.xiaozhimobile.safety.PermissionBroker
+import com.lchuang.xiaozhimobile.safety.ToolInvocation
+import com.lchuang.xiaozhimobile.tools.ResultToolExecutor
+import com.lchuang.xiaozhimobile.tools.ToolDispatcher
 import java.util.ArrayDeque
 import java.util.Locale
 import java.util.UUID
@@ -73,6 +82,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         }
     )
     private val session = SessionController()
+    private lateinit var conversationSessionManager: ConversationSessionManager
     private val audioEnhancementManager = AudioEnhancementManager()
 
     private lateinit var settings: SettingsStore
@@ -90,6 +100,8 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
     private lateinit var ai: AiClient
     private lateinit var aiOrchestrator: AiOrchestrator
     private lateinit var safeToolExecutor: SafeToolExecutor
+    private lateinit var toolDispatcher: ToolDispatcher
+    private lateinit var assistantStateStore: AssistantStateStore
     private lateinit var memory: AiConversationMemory
     private lateinit var overlay: AssistantOverlayController
     private lateinit var exitDetector: ConversationExitDetector
@@ -147,8 +159,15 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         ai = AiClient(settings)
         aiOrchestrator = AiOrchestrator(settings, ai)
         safeToolExecutor = SafeToolExecutor(deviceActionExecutor)
+        toolDispatcher = ToolDispatcher(
+            permissionBroker = PermissionBroker { true },
+            policyEvaluator = CentralSafetyPolicyEngine()::evaluate,
+            resultExecutors = createAiToolExecutors()
+        )
+        assistantStateStore = AssistantStateStoreProvider.instance()
+        conversationSessionManager = ConversationSessionStore.manager(this)
         memory = AiConversationMemory(maxTurns = 8)
-        overlay = AssistantOverlayController(this)
+        overlay = AssistantOverlayController(this, assistantStateStore)
         exitDetector = ConversationExitDetector()
         overlay.setOnExitRequested {
             mainHandler.post { requestConversationExit("好的，有需要再叫我") }
@@ -375,10 +394,12 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         lastDeviceCommandAtMs = 0L
         memory.startSession()
         session.start(settings.sessionTimeoutSeconds)
+        conversationSessionManager.startWakeSession()
         updateNotification("已唤醒 · 连续会话已开启")
         overlay.show()
         setConversationState(ConversationState.SPEAKING)
         val wakeReply = settings.wakeReply.ifBlank { "我在" }
+        conversationSessionManager.appendAssistant(wakeReply)
         speakThen(wakeReply) {
             continueConversationSession(immediate = true)
         }
@@ -646,6 +667,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
             return
         }
         val heard = "我听到：$rawText"
+        conversationSessionManager.appendUser(rawText)
         setConversationState(ConversationState.EXECUTING, heard)
         val localPlan = router.plan(normalized)
         if (localPlan is DeviceCommandPlan.Planned &&
@@ -720,6 +742,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                     is AiOutcome.Reply -> {
                         val answer = outcome.text.replace(Regex("[\r\n]+"), " ").take(800)
                         val spoken = buildAiContinuation(answer)
+                        conversationSessionManager.appendAssistant(answer)
                         conversationTurns += 1
                         commandRecognitionAttempts = 0
                         setConversationState(ConversationState.SPEAKING, heard)
@@ -733,24 +756,94 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                     is AiOutcome.Tool -> {
                         setConversationState(ConversationState.EXECUTING, heard)
                         overlay.update("你好，有什么可以帮你？", "正在执行安全手机操作…", heard)
-                        when (val toolPlan = safeToolExecutor.plan(outcome.call)) {
-                            is SafeToolPlan.Allowed -> {
-                                executeDeviceAction(rawText, normalized, toolPlan.action, heard)
-                            }
-                            is SafeToolPlan.Rejected -> {
-                                val failureKind = CommandFailureKind.SAFETY_REJECTED
-                                conversationTurns += 1
-                                memory.addTurn(rawText, "执行失败：${failureKind.name}:${toolPlan.result.debugCode}")
-                                reportRejectedToolFeedback(toolPlan, commandResultNotifier) { recoverKind ->
-                                    check(recoverKind == failureKind)
-                                    recoverRecognitionFailure(failureKind)
-                                }
+                        toolDispatcher.dispatch(
+                            ToolInvocation(outcome.call.tool, outcome.call.args)
+                        ) { result ->
+                            mainHandler.post {
+                                if (!conversationActive || exitInProgress) return@post
+                                handleAiToolResult(rawText, normalized, heard, result)
                             }
                         }
                     }
                 }
             }
         }
+    }
+
+    private fun createAiToolExecutors(): Map<String, ResultToolExecutor> {
+        return listOf(
+            "open_app", "navigate", "search_nearby", "open_web",
+            "media_play", "media_pause", "media_next", "media_previous",
+            "volume_up", "volume_down", "set_volume", "flashlight_on", "flashlight_off"
+        ).associateWith {
+            { invocation: ToolInvocation, callback: (ToolExecutionResult) -> Unit ->
+                safeToolExecutor.execute(
+                    AiToolCall(invocation.name, invocation.arguments),
+                    callback
+                )
+            }
+        }
+    }
+
+    private fun handleAiToolResult(
+        rawText: String,
+        normalized: String,
+        heard: String,
+        result: ToolExecutionResult
+    ) {
+        if (result.debugCode == "CONFIRMATION_REQUIRED") {
+            val confirmationText = result.spokenText.ifBlank { "需要你的确认才能执行" }
+            conversationTurns += 1
+            commandRecognitionAttempts = 0
+            memory.addTurn(rawText, confirmationText)
+            conversationSessionManager.appendConfirmation(confirmationText)
+            assistantStateStore.onConfirmationRequired()
+            overlay.update("需要你的确认", "等待确认…", heard)
+            updateNotificationRaw("等待用户确认 · $confirmationText")
+            return
+        }
+
+        if (isSafetyToolResult(result)) {
+            val failureKind = CommandFailureKind.SAFETY_REJECTED
+            conversationTurns += 1
+            memory.addTurn(rawText, "执行失败：${failureKind.name}:${result.debugCode}")
+            reportRejectedToolFeedback(SafeToolPlan.Rejected(result), commandResultNotifier) { recoverKind ->
+                check(recoverKind == failureKind)
+                recoverRecognitionFailure(failureKind)
+            }
+            return
+        }
+
+        conversationTurns += 1
+        commandRecognitionAttempts = 0
+        memory.addTurn(
+            rawText,
+            if (result.success) "已执行：${result.spokenText}" else "执行失败：${result.debugCode}:${result.spokenText}"
+        )
+        conversationSessionManager.appendSystemResult(result.spokenText)
+        conversationSessionManager.appendAssistant(result.spokenText)
+        val continuation = if (result.success) {
+            if (successfulDeviceActions == 0) "你有什么需求请说？" else "请继续说。"
+        } else "请再试一次。"
+        if (result.success) successfulDeviceActions += 1
+        val spoken = "${result.spokenText}$continuation"
+        setConversationState(ConversationState.SPEAKING, heard)
+        val generation = sessionGeneration
+        speakThen(spoken) {
+            if (generation == sessionGeneration && !exitInProgress) {
+                continueConversationSession(immediate = true)
+            }
+        }
+    }
+
+    private fun isSafetyToolResult(result: ToolExecutionResult): Boolean {
+        return result.debugCode == "PERMISSION_DENIED" ||
+            result.debugCode == "CONFIRMATION_REQUIRED" ||
+            result.debugCode == "UNKNOWN_TOOL" ||
+            result.debugCode == "RESTRICTED_TOOL" ||
+            result.debugCode == "MISSING_EXECUTOR" ||
+            result.debugCode.startsWith("INVALID_ARGS_") ||
+            result.debugCode.startsWith("REJECTED_")
     }
 
     private fun executeDeviceAction(
@@ -777,6 +870,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         }
 
         commandRecognitionAttempts = 0
+        conversationSessionManager.appendSystemAction(executionFormatter.announcement(action))
         setConversationState(ConversationState.EXECUTING, heard)
         overlay.update("你好，有什么可以帮你？", "正在执行安全手机操作…", heard)
         val generation = sessionGeneration
@@ -802,6 +896,8 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                 rawText,
                 if (result.success) "已执行：${result.spokenResult}" else "执行失败：${result.code}:${result.spokenResult}"
             )
+            conversationSessionManager.appendSystemResult(result.spokenResult)
+            conversationSessionManager.appendAssistant(result.spokenResult)
             if (result.success) {
                 successfulDeviceActions += 1
             }
@@ -873,6 +969,8 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         try { audioRecord?.stop() } catch (_: Throwable) {}
         releaseAudioRecord()
         memory.clear()
+        conversationSessionManager.appendConfirmation(spokenText.ifBlank { "好的，有需要再叫我" })
+        conversationSessionManager.endSession("conversation_exit")
         session.stop()
         overlay.update("好的，有需要再叫我", ConversationState.EXITING.statusText())
         updateNotification("正在退出当前会话 · 即将恢复唤醒待机")
@@ -1041,6 +1139,8 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         running.set(false)
         kwsListening.set(false)
         commandListening.set(false)
+        conversationSessionManager.endSession("service_destroyed")
+        assistantStateStore.onConversationEnded()
         session.stop()
         pendingListenRunnable?.let(mainHandler::removeCallbacks)
         pendingListenRunnable = null

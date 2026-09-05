@@ -124,13 +124,18 @@ assert "executeDeviceAction(rawText, normalized" in planned
 assert "return" in planned, "local Android failure must not fall through to AI"
 
 tool_branch = process[process.index("is AiOutcome.Tool ->") :]
-allowed = braced_block(tool_branch, "is SafeToolPlan.Allowed ->")
-rejected = braced_block(tool_branch, "is SafeToolPlan.Rejected ->")
-assert "executeDeviceAction(rawText, normalized" in allowed
-assert "executeDeviceAction(" not in rejected, "safety rejection must perform no device operation"
-assert "CommandFailureKind.SAFETY_REJECTED" in rejected
-assert "recoverRecognitionFailure(failureKind)" in rejected
-assert "UNKNOWN_COMMAND_REPLY" not in rejected
+assert "toolDispatcher.dispatch(" in tool_branch
+assert "ToolInvocation(outcome.call.tool, outcome.call.args)" in tool_branch
+assert "handleAiToolResult(rawText, normalized, heard, result)" in tool_branch
+assert "safeToolExecutor.plan" not in tool_branch
+assert "safeToolExecutor.execute" not in tool_branch
+tool_factory = function_body("createAiToolExecutors")
+assert "safeToolExecutor.execute" in tool_factory
+assert "callback" in tool_factory
+assert "isSafetyToolResult(result)" in wake
+assert "SafeToolPlan.Rejected(result)" in wake
+assert "CommandFailureKind.SAFETY_REJECTED" in wake
+assert "recoverRecognitionFailure(failureKind)" in wake
 assert "recoverRecognitionFailure(CommandFailureKind.AI_UNAVAILABLE)" in process
 
 # Every worker-thread terminal callback must reject stale sessions before it

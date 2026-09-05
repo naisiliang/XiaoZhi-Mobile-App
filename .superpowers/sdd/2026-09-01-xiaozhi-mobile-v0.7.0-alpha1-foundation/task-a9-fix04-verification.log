@@ -1,0 +1,7 @@
+Command:
+$env:JAVA_HOME='C:/Users/ASUS/.jdks/openjdk-20.0.2'; $env:ANDROID_SDK_ROOT='C:/Users/ASUS/AppData/Local/Temp/xiaozhi-android-sdk'; $env:ANDROID_HOME='C:/Users/ASUS/AppData/Local/Temp/xiaozhi-android-sdk'; $env:PATH='C:/Users/ASUS/AppData/Local/Temp/codex-kotlinc;'+$env:PATH; python tools/test_v065_fix04_regression_gate.py
+
+PASS output:
+PASS: v0.6.5 release gate
+PASS: FIX04 regression gate
+Exit code: 0

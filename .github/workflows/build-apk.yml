@@ -2,6 +2,11 @@ name: Build XiaoZhi Mobile APK
 
 on:
   workflow_dispatch:
+    inputs:
+      reviewed_ref:
+        description: Exact 40-character commit SHA to build for the Alpha1 checkpoint
+        required: true
+        type: string
   push:
     branches: [ main, master ]
 
@@ -10,7 +15,38 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - name: Validate Alpha1 reviewed SHA
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        env:
+          REVIEWED_SHA: ${{ inputs.reviewed_ref }}
+        run: |
+          if [[ ! "$REVIEWED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "reviewed_ref must be a 40-character commit SHA" >&2
+            exit 1
+          fi
+
+      - name: Checkout reviewed ref for Alpha1
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.reviewed_ref }}
+
+      - name: Checkout push commit
+        if: ${{ github.event_name == 'push' }}
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Verify Alpha1 checkout SHA
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        env:
+          REVIEWED_SHA: ${{ inputs.reviewed_ref }}
+        run: |
+          actual_sha="$(git rev-parse HEAD)"
+          if [[ "$actual_sha" != "$REVIEWED_SHA" ]]; then
+            echo "Checked out $actual_sha, expected $REVIEWED_SHA" >&2
+            exit 1
+          fi
 
       - uses: actions/setup-java@v4
         with:
@@ -32,12 +68,28 @@ jobs:
       - name: Frozen wake guard
         run: python3 tools/test_v065_frozen_baseline.py
 
+      - name: Alpha1 conversation session gate
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: python3 tools/test_v070_alpha1_session_wiring.py
+
+      - name: Alpha1 foundation gates
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: |
+          python3 tools/test_v070_alpha1_settings_migration.py
+          python3 tools/test_v070_alpha1_chat_home_contract.py
+
+      - name: Alpha1 focused unit tests
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: gradle :app:testDebugUnitTest --stacktrace
+
       - name: Historical regression
         run: |
           python3 tools/test_v031_behavior.py
           python3 tools/test_v040_voice_flow.py
           python3 tools/test_v050_session.py
           python3 tools/test_v050_voice_flow.py
+          python3 tools/test_v060_ui_source.py
+          python3 tools/test_v060_tts_settings_action.py
           python3 tools/test_v060_security.py
           python3 tools/test_v063_custom_wake_ppinyin.py
           python3 tools/test_v063_wake_error_diagnostics.py
@@ -71,6 +123,18 @@ jobs:
       - name: Rename APK
         run: cp app/build/outputs/apk/debug/app-debug.apk XiaoZhi-Mobile-v0.6.5-debug.apk
 
+      - name: Rename Alpha1 APK
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: cp app/build/outputs/apk/debug/app-debug.apk XiaoZhi-Mobile-Alpha1-debug.apk
+
+      - name: Upload Alpha1 APK
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: XiaoZhi-Mobile-Alpha1-APK
+          path: XiaoZhi-Mobile-Alpha1-debug.apk
+          if-no-files-found: error
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
@@ -97,6 +161,54 @@ jobs:
           name: XiaoZhi-Mobile-APK
           path: artifact-verification
 
+      - name: Download Alpha1 APK artifact
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: XiaoZhi-Mobile-Alpha1-APK
+          path: alpha1-artifact-verification
+
+      - name: Verify downloaded Alpha1 APK
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: |
+          mkdir -p alpha1-apk-validation
+          cp alpha1-artifact-verification/XiaoZhi-Mobile-Alpha1-debug.apk \
+            alpha1-apk-validation/XiaoZhi-Mobile-v0.6.5-debug.apk
+          cmp --silent \
+            artifact-verification/XiaoZhi-Mobile-v0.6.5-debug.apk \
+            alpha1-artifact-verification/XiaoZhi-Mobile-Alpha1-debug.apk
+          python3 tools/validate_v065_apk.py \
+            --artifact-dir alpha1-apk-validation \
+            --report "$RUNNER_TEMP/xiaozhi-alpha1-apk-verification.json"
+          python3 - <<PY
+          import hashlib
+          import json
+          from pathlib import Path
+
+          alpha1_path = Path("alpha1-artifact-verification/XiaoZhi-Mobile-Alpha1-debug.apk")
+          generic_path = Path("artifact-verification/XiaoZhi-Mobile-v0.6.5-debug.apk")
+          alpha1_bytes = alpha1_path.read_bytes()
+          generic_bytes = generic_path.read_bytes()
+          if alpha1_bytes != generic_bytes:
+              raise SystemExit("Alpha1 artifact bytes differ from generic artifact")
+
+          report_path = Path("$RUNNER_TEMP/xiaozhi-alpha1-apk-verification.json")
+          report = json.loads(report_path.read_text(encoding="utf-8"))
+          report.update(
+              {
+                  "artifact_name": "XiaoZhi-Mobile-Alpha1-APK",
+                  "downloaded_apk_filename": alpha1_path.name,
+                  "downloaded_apk_sha256": hashlib.sha256(alpha1_bytes).hexdigest(),
+                  "byte_match_with_generic_artifact": True,
+              }
+          )
+          report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          print(
+              "PASS: XiaoZhi-Mobile-Alpha1-APK bytes match generic artifact; "
+              f"sha256={report['downloaded_apk_sha256']}"
+          )
+          PY
+
       - name: Download APK integrity ZIP
         uses: actions/download-artifact@v4
         with:
@@ -108,7 +220,15 @@ jobs:
           python3 tools/validate_v065_apk.py \
             --artifact-zip artifact-zip-verification/XiaoZhi-Mobile-v0.6.5-debug.apk.zip \
             --artifact-dir artifact-verification \
-            --report "$RUNNER_TEMP/xiaozhi-v065-apk-verification.json"
+          --report "$RUNNER_TEMP/xiaozhi-v065-apk-verification.json"
+
+      - name: Upload Alpha1 APK verification report
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: XiaoZhi-Mobile-Alpha1-APK-verification
+          path: ${{ runner.temp }}/xiaozhi-alpha1-apk-verification.json
+          if-no-files-found: error
 
       - name: Upload APK verification report
         uses: actions/upload-artifact@v4

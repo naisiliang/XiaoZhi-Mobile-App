@@ -1,0 +1,12 @@
+Review round: narrow forbidden exact-key labels
+
+RED command:
+JAVA_HOME=C:/Users/ASUS/.jdks/openjdk-20.0.2 ANDROID_SDK_ROOT=C:/Users/ASUS/AppData/Local/Temp/xiaozhi-android-sdk ANDROID_HOME=C:/Users/ASUS/AppData/Local/Temp/xiaozhi-android-sdk C:/Users/ASUS/AppData/Local/Temp/xiaozhi-gradle-8.9-complete/gradle-8.9/bin/gradle.bat :app:testDebugUnitTest --tests com.lchuang.xiaozhimobile.diagnostics.DiagnosticEventTest --no-daemon
+
+Observed RED result:
+DiagnosticEventTest > construction removes direct raw screenshot metadata FAILED
+DiagnosticEventTest > benign values under formerly broad exact keys remain safe metadata FAILED
+8 tests completed, 2 failed
+BUILD FAILED
+
+The output records test names and counts only; no secret values are included.
