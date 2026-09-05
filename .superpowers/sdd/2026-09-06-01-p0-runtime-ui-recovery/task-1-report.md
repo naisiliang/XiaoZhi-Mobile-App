@@ -101,3 +101,7 @@ Why this is expected: the planned chat/settings XML layouts do not exist yet, th
 - Confirmed the runtime test now checks the granted microphone branch and the first-install callback/equivalent path structurally, instead of a brittle exact string.
 - Confirmed the typed test keeps `ConversationResultBridge.submitText(` forbidden, scopes the controller submit route to the typed submit path, and keeps the service-side action/processor contract on `WakeService`.
 - Confirmed the UI test ignores XML comments and matches real opening tags plus executable `onCreate` / insets paths.
+
+## Commit
+
+`ff6729e30ee220b6310589273c81ab9dfd76c65a` - `test: tighten v070 task1 recovery evidence`
