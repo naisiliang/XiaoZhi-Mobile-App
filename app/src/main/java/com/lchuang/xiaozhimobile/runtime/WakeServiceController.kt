@@ -15,13 +15,19 @@ object WakeServiceController {
     }
 
     fun stop(context: Context) {
-        context.applicationContext.startService(
+        val appContext = context.applicationContext
+        appContext.stopService(
             Intent(context, WakeService::class.java).setAction(WakeService.ACTION_STOP),
+        )
+        WakeRuntimeStatusStoreProvider.instance().publish(
+            WakeRuntimeStatus.STOPPED,
+            "stop requested",
         )
     }
 
     fun applyWakeSettings(context: Context) {
-        context.applicationContext.startService(
+        dispatchCommand(
+            context,
             Intent(context, WakeService::class.java).setAction(WakeService.ACTION_APPLY_WAKE_SETTINGS),
         )
     }
@@ -68,6 +74,10 @@ object WakeServiceController {
     }
 
     private fun dispatchStart(context: Context, intent: Intent) {
+        dispatchCommand(context, intent)
+    }
+
+    private fun dispatchCommand(context: Context, intent: Intent) {
         val appContext = context.applicationContext
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             ContextCompat.startForegroundService(appContext, intent)

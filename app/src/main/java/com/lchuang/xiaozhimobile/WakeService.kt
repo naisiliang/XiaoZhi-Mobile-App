@@ -64,6 +64,8 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
     }
 
     private val running = AtomicBoolean(false)
+    private val serviceDestroyed = AtomicBoolean(false)
+    private val runtimeLifecycleLock = Any()
     private val kwsListening = AtomicBoolean(false)
     private val commandListening = AtomicBoolean(false)
     private val ttsSpeaking = AtomicBoolean(false)
@@ -137,6 +139,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
 
     override fun onCreate() {
         super.onCreate()
+        serviceDestroyed.set(false)
         settings = SettingsStore(this)
         installedAppRegistry = InstalledAppRegistry(this)
         appLauncher = AppLauncher(this)
@@ -195,42 +198,53 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
             return START_NOT_STICKY
         }
         if (intent?.action == ACTION_APPLY_WAKE_SETTINGS && running.get()) {
+            startForeground(NOTIFY_ID, notification("正在应用离线唤醒设置…"))
             WakeRuntimeStatusStoreProvider.instance().publish(
                 WakeRuntimeStatus.STARTING,
                 "applying wake settings",
             )
-            Thread {
-                try {
-                    val requested = settings.wakePhrase.trim().ifBlank { DEFAULT_WAKE_PHRASE }
-                    stopKwsCapture()
-                    val applied = if (requested == DEFAULT_WAKE_PHRASE) {
-                        wakePhraseManager.applyBundledPhrase(DEFAULT_WAKE_PHRASE)
-                    } else {
-                        updateNotification("正在应用自定义唤醒词（3/3）· “$requested”")
-                        wakePhraseManager.applyPhrase(requested)
+            Thread({
+                synchronized(runtimeLifecycleLock) {
+                    if (running.get() && !serviceDestroyed.get()) {
+                        try {
+                            val requested = settings.wakePhrase.trim().ifBlank { DEFAULT_WAKE_PHRASE }
+                            stopKwsCapture()
+                            val applied = if (requested == DEFAULT_WAKE_PHRASE) {
+                                wakePhraseManager.applyBundledPhrase(DEFAULT_WAKE_PHRASE)
+                            } else {
+                                updateNotification("正在应用自定义唤醒词（3/3）· “$requested”")
+                                wakePhraseManager.applyPhrase(requested)
+                            }
+                            stream = wakePhraseManager.currentStream()
+                            val active = wakePhraseManager.activePhrase()
+                            settings.activeWakePhrase = active
+                            val applyMessage = if (applied.isSuccess) {
+                                "全离线语音已开启 · 说“$active”"
+                            } else {
+                                val reason = applied.exceptionOrNull()?.message
+                                    ?: applied.exceptionOrNull()?.javaClass?.simpleName
+                                    ?: "UNKNOWN"
+                                "唤醒词应用失败：$reason · 继续监听“$active”"
+                            }
+                            updateNotification(applyMessage)
+                            mainHandler.postDelayed({ startKwsCapture() }, 250L)
+                        } catch (e: Throwable) {
+                            val shouldReport = running.get() && !serviceDestroyed.get()
+                            running.set(false)
+                            kwsListening.set(false)
+                            if (wakeLock?.isHeld == true) wakeLock?.release()
+                            if (shouldReport) {
+                                val detail = e.message ?: e.javaClass.simpleName
+                                WakeRuntimeStatusStoreProvider.instance().publish(
+                                    WakeRuntimeStatus.ERROR,
+                                    detail,
+                                )
+                                updateNotification("唤醒设置应用失败：$detail")
+                            }
+                        }
                     }
-                    stream = wakePhraseManager.currentStream()
-                    val active = wakePhraseManager.activePhrase()
-                    settings.activeWakePhrase = active
-                    val applyMessage = if (applied.isSuccess) {
-                        "全离线语音已开启 · 说“$active”"
-                    } else {
-                        val reason = applied.exceptionOrNull()?.message
-                            ?: applied.exceptionOrNull()?.javaClass?.simpleName
-                            ?: "UNKNOWN"
-                        "唤醒词应用失败：$reason · 继续监听“$active”"
-                    }
-                    updateNotification(applyMessage)
-                    mainHandler.postDelayed({ startKwsCapture() }, 250L)
-                } catch (e: Throwable) {
-                    val detail = e.message ?: e.javaClass.simpleName
-                    WakeRuntimeStatusStoreProvider.instance().publish(
-                        WakeRuntimeStatus.ERROR,
-                        detail,
-                    )
-                    updateNotification("唤醒设置应用失败：$detail")
                 }
-            }.start()
+            }, "xiaozhi-wake-settings").start()
             return START_STICKY
         }
 
@@ -241,38 +255,48 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                 "starting offline wake runtime",
             )
             if (wakeLock?.isHeld != true) wakeLock?.acquire()
-            Thread {
-                try {
-                    updateNotification("正在加载离线唤醒模型（1/3）")
-                    initKeywordSpotter()
-                    updateNotification("正在加载离线语音识别模型（2/3）")
-                    initOfflineAsr()
+            Thread({
+                synchronized(runtimeLifecycleLock) {
+                    if (running.get() && !serviceDestroyed.get()) {
+                        try {
+                            updateNotification("正在加载离线唤醒模型（1/3）")
+                            initKeywordSpotter()
+                            updateNotification("正在加载离线语音识别模型（2/3）")
+                            initOfflineAsr()
 
-                    val requested = settings.wakePhrase.trim().ifBlank { DEFAULT_WAKE_PHRASE }
-                    if (settings.wakePhrase != DEFAULT_WAKE_PHRASE && requested != DEFAULT_WAKE_PHRASE) {
-                        updateNotification("正在应用自定义唤醒词（3/3）· “$requested”")
-                        val applied = wakePhraseManager.applyPhrase(requested)
-                        if (applied.isFailure) {
-                            val reason = applied.exceptionOrNull()?.message
-                                ?: applied.exceptionOrNull()?.javaClass?.simpleName
-                                ?: "UNKNOWN"
-                            updateNotification("自定义唤醒词应用失败：$reason · 已回退“小智小智”")
+                            val requested = settings.wakePhrase.trim().ifBlank { DEFAULT_WAKE_PHRASE }
+                            if (settings.wakePhrase != DEFAULT_WAKE_PHRASE && requested != DEFAULT_WAKE_PHRASE) {
+                                updateNotification("正在应用自定义唤醒词（3/3）· “$requested”")
+                                val applied = wakePhraseManager.applyPhrase(requested)
+                                if (applied.isFailure) {
+                                    val reason = applied.exceptionOrNull()?.message
+                                        ?: applied.exceptionOrNull()?.javaClass?.simpleName
+                                        ?: "UNKNOWN"
+                                    updateNotification("自定义唤醒词应用失败：$reason · 已回退“小智小智”")
+                                }
+                                stream = wakePhraseManager.currentStream()
+                            }
+
+                            settings.activeWakePhrase = wakePhraseManager.activePhrase()
+                            updateNotification("全离线语音已开启 · 说“${wakePhraseManager.activePhrase()}”")
+                            startKwsCapture()
+                        } catch (e: Throwable) {
+                            val shouldReport = running.get() && !serviceDestroyed.get()
+                            running.set(false)
+                            kwsListening.set(false)
+                            if (wakeLock?.isHeld == true) wakeLock?.release()
+                            if (shouldReport) {
+                                val detail = e.message ?: e.javaClass.simpleName
+                                WakeRuntimeStatusStoreProvider.instance().publish(
+                                    WakeRuntimeStatus.ERROR,
+                                    detail,
+                                )
+                                updateNotification("本地语音启动失败：$detail")
+                            }
                         }
-                        stream = wakePhraseManager.currentStream()
                     }
-
-                    settings.activeWakePhrase = wakePhraseManager.activePhrase()
-                    updateNotification("全离线语音已开启 · 说“${wakePhraseManager.activePhrase()}”")
-                    startKwsCapture()
-                } catch (e: Throwable) {
-                    val detail = e.message ?: e.javaClass.simpleName
-                    WakeRuntimeStatusStoreProvider.instance().publish(
-                        WakeRuntimeStatus.ERROR,
-                        detail,
-                    )
-                    updateNotification("本地语音启动失败：$detail")
                 }
-            }.start()
+            }, "xiaozhi-startup").start()
         }
         return START_STICKY
     }
@@ -346,7 +370,14 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
     private fun startKwsCapture() {
         if (!running.get() || kwsListening.get() || commandListening.get()) return
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            updateNotification("缺少麦克风权限，请打开 App 授权")
+            running.set(false)
+            if (!serviceDestroyed.get()) {
+                WakeRuntimeStatusStoreProvider.instance().publish(
+                    WakeRuntimeStatus.ERROR,
+                    "RECORD_AUDIO permission is not granted",
+                )
+                updateNotification("缺少麦克风权限，请打开 App 授权")
+            }
             return
         }
         kwsListening.set(true)
@@ -390,7 +421,9 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                 }
             } catch (e: Throwable) {
                 kwsListening.set(false)
-                if (running.get()) {
+                val shouldReport = running.get() && !serviceDestroyed.get()
+                running.set(false)
+                if (shouldReport) {
                     val detail = e.message ?: e.javaClass.simpleName
                     WakeRuntimeStatusStoreProvider.instance().publish(
                         WakeRuntimeStatus.ERROR,
@@ -1186,6 +1219,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
     }
 
     override fun onDestroy() {
+        serviceDestroyed.set(true)
         if (::memory.isInitialized) memory.clear()
         if (::executionCoordinator.isInitialized) executionCoordinator.cancelPending()
         ttsProgressRegistry.cancelPending()

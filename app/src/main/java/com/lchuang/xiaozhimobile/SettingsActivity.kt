@@ -1,6 +1,8 @@
 package com.lchuang.xiaozhimobile
 
+import android.Manifest
 import android.app.Activity
+import android.content.pm.PackageManager
 import android.graphics.Color
 import android.os.Bundle
 import android.text.InputType
@@ -223,7 +225,7 @@ class SettingsActivity : Activity() {
             if (WakeServiceController.isRunning(this)) {
                 WakeServiceController.applyWakeSettings(this)
             } else {
-                WakeServiceController.start(this)
+                startWakeService()
             }
         } else {
             WakeServiceController.stop(this)
@@ -257,6 +259,10 @@ class SettingsActivity : Activity() {
     }
 
     private fun startWakeService() {
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQUEST_AUDIO_PERMISSION)
+            return
+        }
         backgroundWakeEnabled.isChecked = true
         WakeServiceController.setBackgroundWakeEnabled(this, true)
         WakeServiceController.start(this)
@@ -266,6 +272,27 @@ class SettingsActivity : Activity() {
         backgroundWakeEnabled.isChecked = false
         WakeServiceController.setBackgroundWakeEnabled(this, false)
         WakeServiceController.stop(this)
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != REQUEST_AUDIO_PERMISSION) return
+        val audioPermissionIndex = permissions.indexOf(Manifest.permission.RECORD_AUDIO)
+        val granted = audioPermissionIndex in grantResults.indices &&
+            grantResults[audioPermissionIndex] == PackageManager.PERMISSION_GRANTED
+        if (granted) {
+            backgroundWakeEnabled.isChecked = true
+            WakeServiceController.setBackgroundWakeEnabled(this, true)
+            WakeServiceController.start(this)
+        } else {
+            backgroundWakeEnabled.isChecked = false
+            WakeServiceController.setBackgroundWakeEnabled(this, false)
+            Toast.makeText(this, "需要麦克风权限才能启动唤醒服务", Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun renderRuntimeStatus(status: WakeRuntimeStatus) {
@@ -294,5 +321,9 @@ class SettingsActivity : Activity() {
         editText.gravity = Gravity.TOP or Gravity.START
         editText.setSingleLine(false)
         root.addView(editText, LinearLayout.LayoutParams(-1, -2))
+    }
+
+    companion object {
+        private const val REQUEST_AUDIO_PERMISSION = 101
     }
 }
