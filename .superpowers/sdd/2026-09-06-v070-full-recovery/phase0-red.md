@@ -42,7 +42,7 @@ Output:
 
 ```text
 Traceback (most recent call last):
-  File "E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full\tools\test_v070_recovery_typed_pipeline.py", line 484, in <module>
+  File "E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full\tools\test_v070_recovery_typed_pipeline.py", line 488, in <module>
     raise AssertionError("typed pipeline recovery contract is still missing:\n- " + "\n- ".join(missing))
 AssertionError: typed pipeline recovery contract is still missing:
 - MainActivity typed submit path: still contains pattern ConversationResultBridge\s*\.\s*submitText\s*\(

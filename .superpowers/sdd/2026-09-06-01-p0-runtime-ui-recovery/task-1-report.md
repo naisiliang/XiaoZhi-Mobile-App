@@ -55,7 +55,7 @@ Output:
 
 ```text
 Traceback (most recent call last):
-  File "E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full\tools\test_v070_recovery_typed_pipeline.py", line 484, in <module>
+  File "E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full\tools\test_v070_recovery_typed_pipeline.py", line 488, in <module>
     raise AssertionError("typed pipeline recovery contract is still missing:\n- " + "\n- ".join(missing))
 AssertionError: typed pipeline recovery contract is still missing:
 - MainActivity typed submit path: still contains pattern ConversationResultBridge\s*\.\s*submitText\s*\(
@@ -107,7 +107,8 @@ At commit `b4f3c1536cf966490022bc6095ace58b1c4f9625` (before the evidence-only h
 - `git diff --name-status 954998eb054fef67a63bcfb6ea67a16c3fd059bd -- app/src` returned `PRODUCTION_DIFF_EMPTY`.
 - `git status --short` was empty and `git rev-parse HEAD` returned the commit above.
 
-The subsequent evidence-only hardening patch was syntax-checked and its three RED contracts reproduced the same missing production capabilities at current HEAD before this report refresh; the final review package includes that patch.
+The subsequent evidence-only hardening patches were syntax-checked and their three RED contracts reproduced the same missing production capabilities at current HEAD before this report refresh; the final review package includes those patches.
+- The standalone scanner separation check returned `PASS: Kotlin source scanner literal/comment separation` and `SCANNER_EXIT=0`.
 
 ## Self-review
 
