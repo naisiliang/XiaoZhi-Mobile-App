@@ -2,9 +2,34 @@ package com.lchuang.xiaozhimobile.screen
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class ScreenContextStoreTest {
+    @Test
+    fun `screen node defensively copies source children`() {
+        val originalChild = ScreenNode(id = "child-a")
+        val sourceChildren = mutableListOf(originalChild)
+
+        val node = ScreenNode(id = "root", children = sourceChildren)
+        sourceChildren += ScreenNode(id = "child-b")
+
+        assertEquals(listOf(originalChild), node.children)
+    }
+
+    @Test
+    fun `screen node children reject external mutation`() {
+        val node = ScreenNode(
+            id = "root",
+            children = mutableListOf(ScreenNode(id = "child-a")),
+        )
+
+        assertThrows(UnsupportedOperationException::class.java) {
+            (node.children as MutableList<ScreenNode>) += ScreenNode(id = "child-b")
+        }
+        assertEquals(listOf(ScreenNode(id = "child-a")), node.children)
+    }
+
     @Test
     fun `published generations increase monotonically`() {
         var now = 1_000L
