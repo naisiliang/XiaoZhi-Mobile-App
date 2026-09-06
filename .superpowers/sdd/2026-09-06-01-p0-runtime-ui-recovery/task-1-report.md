@@ -31,7 +31,7 @@ Output:
 
 ```text
 Traceback (most recent call last):
-  File "E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full\tools\test_v070_recovery_runtime_entry.py", line 433, in <module>
+  File "E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full\tools\test_v070_recovery_runtime_entry.py", line 401, in <module>
     raise AssertionError("runtime entry recovery contract is still missing:\n- " + "\n- ".join(missing))
 AssertionError: runtime entry recovery contract is still missing:
 - MainActivity typed submit route: missing WakeServiceController\s*\.\s*submitText\s*\(
@@ -55,7 +55,7 @@ Output:
 
 ```text
 Traceback (most recent call last):
-  File "E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full\tools\test_v070_recovery_typed_pipeline.py", line 488, in <module>
+  File "E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full\tools\test_v070_recovery_typed_pipeline.py", line 487, in <module>
     raise AssertionError("typed pipeline recovery contract is still missing:\n- " + "\n- ".join(missing))
 AssertionError: typed pipeline recovery contract is still missing:
 - MainActivity typed submit path: still contains pattern ConversationResultBridge\s*\.\s*submitText\s*\(
@@ -96,28 +96,26 @@ AssertionError: ui recovery contract is still missing:
 
 Why this is expected: the planned chat XML layout does not exist yet, MainActivity still uses the old programmatic scaffold, the MainActivity Insets hooks and assistant-name title binding are absent, and the scaffold conversation row plus debug subtitle are still present. Settings XML remains owned by the later Settings parity task.
 
-## Verification before final review
+## Final verification snapshot
 
-At commit `b4f3c1536cf966490022bc6095ace58b1c4f9625` (before the evidence-only hardening patch):
+At commit `f98e34b881648cca96a7e457917cc5644d5d8fd2`:
 
-- All three RED contract commands above returned `EXIT=1` with the expected missing-contract assertions.
+- All three RED contract commands returned `EXIT=1` with the expected missing-contract assertions; the recorded traceback lines are 401, 487, and 152 respectively.
 - Python AST parsing for all three contracts and `tools/v070_source_contract_utils.py` returned `PASS: AST` and `EXIT=0`.
+- The standalone scanner separation check returned `PASS: Kotlin source scanner literal/comment separation` and `SCANNER_EXIT=0`.
 - `git diff --check` returned `EXIT=0`.
 - `python -B -X utf8 tools/test_v065_frozen_baseline.py` returned `FROZEN_EXIT=0` with all v0.6.3/v0.6.4/v0.6.5 frozen checks passing, using the verified JDK 17/Kotlin toolchain on PATH.
 - `git diff --name-status 954998eb054fef67a63bcfb6ea67a16c3fd059bd -- app/src` returned `PRODUCTION_DIFF_EMPTY`.
-- `git status --short` was empty and `git rev-parse HEAD` returned the commit above.
-
-The subsequent evidence-only hardening patches were syntax-checked and their three RED contracts reproduced the same missing production capabilities at current HEAD before this report refresh; the final review package includes those patches.
-- The standalone scanner separation check returned `PASS: Kotlin source scanner literal/comment separation` and `SCANNER_EXIT=0`.
+- `git status --short` was empty and `git rev-parse HEAD` returned `f98e34b881648cca96a7e457917cc5644d5d8fd2`.
 
 ## Self-review
 
 - Confirmed the task stayed test/evidence only; no production Kotlin, XML, or Gradle files were changed.
 - Confirmed the runtime test now checks a reachable granted-microphone start branch, rejects starts in the denied branch, validates both legacy and `RequestPermission()` grant callbacks, scopes Settings calls to `onCreate` reachability, and checks the shared controller source.
-- Confirmed the typed test keeps the bridge submit call forbidden, couples the controller implementation to `ACTION_SUBMIT_TEXT`/`EXTRA_TEXT` in the same Intent receiver or explicit Intent variable, checks the service-side `processAssistantInput` data flow or an intent-carrying helper, and forbids known direct device execution classes/APIs from Activities.
+- Confirmed the typed test keeps the bridge submit call forbidden, requires an explicit `WakeService` Intent carrying a submitted text parameter and `AssistantRequestSource.TEXT`, checks the service-side `processAssistantInput` data flow or an intent-carrying helper, and forbids known direct device classes/APIs, implicit Intents, and service/broadcast dispatch from Activities.
 - Confirmed the UI test parses the MainActivity XML, matches real opening tags, scopes the assistant title to code reachable from `onCreate`, checks the Insets path, and leaves Settings XML to the later parity task.
 - Confirmed the shared Kotlin source scanner preserves literals while removing comments, including comment markers inside normal/raw strings, character literals, and backtick identifiers.
 
 ## Commit
 
-Pending final evidence refresh and fresh spec/code-quality review.
+Test/evidence commits through `f98e34b881648cca96a7e457917cc5644d5d8fd2`; this report is refreshed after the final review snapshot.
