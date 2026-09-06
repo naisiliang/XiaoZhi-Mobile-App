@@ -6,7 +6,6 @@ ROOT = Path(__file__).resolve().parents[1]
 MAIN = (ROOT / "app/src/main/java/com/lchuang/xiaozhimobile/MainActivity.kt").read_text("utf-8")
 SETTINGS = (ROOT / "app/src/main/java/com/lchuang/xiaozhimobile/SettingsActivity.kt").read_text("utf-8")
 WAKE = (ROOT / "app/src/main/java/com/lchuang/xiaozhimobile/WakeService.kt").read_text("utf-8")
-BRIDGE = (ROOT / "app/src/main/java/com/lchuang/xiaozhimobile/conversation/ConversationAdapter.kt").read_text("utf-8")
 
 
 def collect_missing():
@@ -28,13 +27,13 @@ def collect_missing():
     SETTINGS_CLEAN = strip_kotlin_literals(SETTINGS)
     WAKE_CLEAN = strip_kotlin_literals(WAKE)
 
-    def require(source, marker, context):
-        if marker not in source:
-            missing.append(f"{context}: missing {marker}")
-
     def forbid(source, marker, context):
         if marker in source:
             missing.append(f"{context}: still contains {marker}")
+
+    def forbid_regex(source, pattern, context):
+        if re.search(pattern, source, re.S):
+            missing.append(f"{context}: still contains pattern {pattern}")
 
     def require_regex(source, pattern, context):
         if not re.search(pattern, source, re.S):
@@ -82,15 +81,6 @@ def collect_missing():
             return None
         return extract_braced_block(container, match.end() - 1)
 
-    def require_body(source, function_name, markers, context):
-        body = function_body(source, function_name)
-        if body is None:
-            missing.append(f"{context}: missing function {function_name}")
-            return
-        for marker in markers:
-            if not re.search(marker, body, re.S):
-                missing.append(f"{context}: missing {marker}")
-
     def require_any_function_body(source, function_names, marker, context):
         for function_name in function_names:
             body = function_body(source, function_name)
@@ -106,16 +96,16 @@ def collect_missing():
         body = strip_kotlin_literals(body)
 
         def has_text_processor(container):
-            container = strip_comments(container)
+            container = strip_kotlin_literals(container)
             extraction_patterns = (
-                r"(?:intent\?\.\s*|intent\.\s*|extras\?\.\s*)?(?:getStringExtra|getCharSequenceExtra|getString|getParcelableExtra)\s*\(\s*EXTRA_TEXT\s*\)",
+                r"(?:[A-Za-z_]\w*(?:\?\.)?\s*)?(?:getStringExtra|getCharSequenceExtra|getString|getParcelableExtra)\s*\(\s*EXTRA_TEXT\s*\)",
                 r"EXTRA_TEXT\s*=\s*",
             )
             if not any(re.search(pattern, container, re.S) for pattern in extraction_patterns):
                 return False
 
             assignment_patterns = (
-                r"(?:val|var)\s+([A-Za-z_]\w*)\s*=\s*(?:intent\?\.\s*|intent\.\s*|extras\?\.\s*)?(?:getStringExtra|getCharSequenceExtra|getString|getParcelableExtra)\s*\(\s*EXTRA_TEXT\s*\)",
+                r"(?:val|var)\s+([A-Za-z_]\w*)\s*=\s*(?:[A-Za-z_]\w*(?:\?\.)?\s*)?(?:getStringExtra|getCharSequenceExtra|getString|getParcelableExtra)\s*\(\s*EXTRA_TEXT\s*\)",
                 r"(?:val|var)\s+([A-Za-z_]\w*)\s*=\s*[^\n;]*EXTRA_TEXT\s*\)",
             )
             for assignment in assignment_patterns:
@@ -132,7 +122,7 @@ def collect_missing():
                         return True
 
             inline_extraction = (
-                r"(?:intent\?\.\s*|intent\.\s*|extras\?\.\s*)?(?:getStringExtra|getCharSequenceExtra|getString|getParcelableExtra)\s*\(\s*EXTRA_TEXT\s*\)",
+                r"(?:[A-Za-z_]\w*(?:\?\.)?\s*)?(?:getStringExtra|getCharSequenceExtra|getString|getParcelableExtra)\s*\(\s*EXTRA_TEXT\s*\)",
             )
             return any(
                 re.search(
@@ -150,8 +140,11 @@ def collect_missing():
                 "true", "false", "null",
             }
             seen = []
-            for helper_name in re.findall(r"\b([A-Za-z_]\w*)\s*\(", branch_text):
+            for call in re.finditer(r"\b([A-Za-z_]\w*)\s*\(([^()\n]*)\)", branch_text):
+                helper_name = call.group(1)
                 if helper_name in stop_names or helper_name in seen:
+                    continue
+                if not re.search(r"\bintent\b", call.group(2)):
                     continue
                 seen.append(helper_name)
                 helper_body = local_function_body(whole_text, helper_name)
@@ -201,7 +194,11 @@ def collect_missing():
 
         missing.append(f"{context}: missing coupled ACTION_SUBMIT_TEXT -> EXTRA_TEXT -> processAssistantInput route")
 
-    forbid(MAIN_CLEAN, "ConversationResultBridge.submitText(", "MainActivity typed submit path")
+    forbid_regex(
+        MAIN_CLEAN,
+        r"ConversationResultBridge\s*\.\s*submitText\s*\(",
+        "MainActivity typed submit path",
+    )
     require_any_function_body(
         MAIN_CLEAN,
         ("submitText", "onTextResult"),
@@ -212,10 +209,18 @@ def collect_missing():
     require_regex(WAKE_CLEAN, r"const val EXTRA_TEXT\b", "WakeService text payload constant")
     require_regex(WAKE_CLEAN, r"fun\s+processAssistantInput\s*\(", "WakeService shared text processor")
     require_action_branch(WAKE_CLEAN, "WakeService text service action route")
-    forbid(MAIN_CLEAN, "processAssistantInput(", "MainActivity typed pipeline local processor")
-    forbid(SETTINGS_CLEAN, "processAssistantInput(", "SettingsActivity typed pipeline local processor")
-    forbid(MAIN_CLEAN, "DeviceActionExecutor", "MainActivity direct device executor")
-    forbid(SETTINGS_CLEAN, "DeviceActionExecutor", "SettingsActivity direct device executor")
+    forbid_regex(
+        MAIN_CLEAN,
+        r"\bprocessAssistantInput\s*\(",
+        "MainActivity typed pipeline local processor",
+    )
+    forbid_regex(
+        SETTINGS_CLEAN,
+        r"\bprocessAssistantInput\s*\(",
+        "SettingsActivity typed pipeline local processor",
+    )
+    forbid_regex(MAIN_CLEAN, r"\bDeviceActionExecutor\b", "MainActivity direct device executor")
+    forbid_regex(SETTINGS_CLEAN, r"\bDeviceActionExecutor\b", "SettingsActivity direct device executor")
 
     return missing
 

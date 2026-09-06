@@ -22,20 +22,19 @@ def collect_missing():
         source = re.sub(r"(?m)//.*$", "", source)
         return source
 
+    def strip_kotlin_literals(source):
+        source = strip_kotlin_comments(source)
+        source = re.sub(r'""".*?"""', "", source, flags=re.S)
+        source = re.sub(r'"(?:\\.|[^"\\])*"', '""', source, flags=re.S)
+        source = re.sub(r"'(?:\\.|[^'\\])*'", "''", source, flags=re.S)
+        return source
+
     MAIN_CLEAN = strip_kotlin_comments(MAIN)
     SETTINGS_CLEAN = strip_kotlin_comments(SETTINGS)
-
-    def require(source, marker, context):
-        if marker not in source:
-            missing.append(f"{context}: missing {marker}")
 
     def forbid(source, marker, context):
         if marker in source:
             missing.append(f"{context}: still contains {marker}")
-
-    def require_regex(source, pattern, context):
-        if not re.search(pattern, source, re.S):
-            missing.append(f"{context}: missing pattern {pattern}")
 
     def require_body(source, function_name, markers, context):
         match = re.search(
@@ -62,17 +61,63 @@ def collect_missing():
             if not re.search(marker, body, re.S):
                 missing.append(f"{context}: missing {marker}")
 
-    def require_file(path, markers, context):
+    def extract_braced_block(source, opening_index):
+        depth = 0
+        for index in range(opening_index, len(source)):
+            if source[index] == "{":
+                depth += 1
+            elif source[index] == "}":
+                depth -= 1
+                if depth == 0:
+                    return source[opening_index + 1:index]
+        return None
+
+    def ui_entry_function_bodies(source):
+        source = strip_kotlin_comments(source)
+        pattern = re.compile(
+            r"(?:private |public |internal |protected )?(?:override )?fun\s+([A-Za-z_]\w*)\b[^{{]*\{{"
+        )
+        bodies = {}
+        for match in pattern.finditer(source):
+            body = extract_braced_block(source, match.end() - 1)
+            if body is not None:
+                bodies[match.group(1)] = body
+        return bodies
+
+    def require_marker_in_ui_entry(source, marker, context):
+        bodies = ui_entry_function_bodies(source)
+        pending = ["onCreate"]
+        visited = set()
+        while pending:
+            function_name = pending.pop()
+            if function_name in visited:
+                continue
+            visited.add(function_name)
+            body = bodies.get(function_name)
+            if body is None:
+                continue
+            if re.search(marker, body, re.S):
+                return
+            pending.extend(
+                name for name in re.findall(r"\b([A-Za-z_]\w*)\s*\(", body)
+                if name in bodies and name not in visited
+            )
+        missing.append(f"{context}: missing reachable UI binding in onCreate or a function it invokes")
+
+    def require_vertical_linear_layout(path, context):
         if not path.exists():
-            missing.append(f"{context}: missing file {path.relative_to(ROOT)}")
             return
-        source = path.read_text("utf-8")
-        if not source.strip():
-            missing.append(f"{context}: empty file {path.relative_to(ROOT)}")
+        source = strip_xml_comments(path.read_text("utf-8"))
+        try:
+            root = ET.fromstring(source)
+        except ET.ParseError:
             return
-        for marker in markers:
-            if marker not in source:
-                missing.append(f"{context}: missing {marker}")
+        orientation_key = "{http://schemas.android.com/apk/res/android}orientation"
+        for element in root.iter():
+            tag_name = element.tag.rsplit("}", 1)[-1]
+            if tag_name == "LinearLayout" and element.attrib.get(orientation_key) == "vertical":
+                return
+        missing.append(f"{context}: no LinearLayout with android:orientation=vertical")
 
     def require_xml_tags(path, patterns, context):
         if not path.exists():
@@ -108,6 +153,7 @@ def collect_missing():
         ),
         "SettingsActivity settings layout",
     )
+    require_vertical_linear_layout(SETTINGS_LAYOUT, "SettingsActivity settings layout")
     require_body(
         MAIN_CLEAN,
         "onCreate",
@@ -132,13 +178,18 @@ def collect_missing():
         (r"ViewCompat\.setOnApplyWindowInsetsListener", r"WindowCompat\.setDecorFitsSystemWindows"),
         "SettingsActivity insets handling",
     )
-    require_regex(
+    require_marker_in_ui_entry(
         MAIN_CLEAN,
-        r'"\$\{[^"]*assistantName[^"]*\}.*智能体"',
+        r'(?:\btext\s*=|\bsetText\s*\(|\bsetTitle\s*\()[^\n;]*"\$\{[^"]*assistantName[^"]*\}[^"\n]*智能体"',
         "MainActivity assistant-name title",
     )
-    forbid(strip_kotlin_comments(ADAPTER), "android.R.layout.simple_list_item_2", "ConversationAdapter scaffold row")
-    forbid(MAIN_CLEAN, "v0.6.5：会话状态机 + 悬浮层手动退出 + 智能退出 + 自然语言媒体音量", "MainActivity debug subtitle")
+    forbid(strip_kotlin_literals(ADAPTER), "android.R.layout.simple_list_item_2", "ConversationAdapter scaffold row")
+    if re.search(
+        r'["\'][^"\']*(?:v0\.6\.5|会话状态机|悬浮层手动退出|自然语言媒体音量)[^"\']*["\']',
+        MAIN_CLEAN,
+        re.S,
+    ):
+        missing.append("MainActivity debug subtitle: still contains a v0.6.5/debug status literal")
 
     return missing
 

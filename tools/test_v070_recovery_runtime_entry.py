@@ -84,6 +84,34 @@ def collect_missing():
                 return
         missing.append(f"{context}: missing {marker}")
 
+    def require_marker_in_reachable_functions(source, entry_names, marker, context):
+        clean_source = strip_kotlin_literals(source)
+        functions = {}
+        for match in re.finditer(
+            r"(?:private |public |internal |protected )?(?:override )?fun\s+([A-Za-z_]\w*)\b[^{{]*\{{",
+            clean_source,
+        ):
+            body = extract_block(clean_source, match.end() - 1)
+            if body is not None:
+                functions[match.group(1)] = body
+        pending = list(entry_names)
+        visited = set()
+        while pending:
+            function_name = pending.pop()
+            if function_name in visited:
+                continue
+            visited.add(function_name)
+            body = functions.get(function_name)
+            if body is None:
+                continue
+            if re.search(marker, body, re.S):
+                return
+            pending.extend(
+                name for name in re.findall(r"\b([A-Za-z_]\w*)\s*\(", body)
+                if name in functions and name not in visited
+            )
+        missing.append(f"{context}: missing reachable {marker}")
+
     def require_permission_branch(source, context):
         body = function_body(source, "requestNeededPermissions")
         if body is None:
@@ -130,8 +158,13 @@ def collect_missing():
                             ):
                                 continue
                     return
-            elif re.match(r"WakeServiceController\s*\.\s*start\s*\(", tail.lstrip()):
-                return
+            else:
+                tail_statement = tail.lstrip()
+                start_match = re.match(r"WakeServiceController\s*\.\s*start\s*\(", tail_statement)
+                if start_match:
+                    else_match = re.search(r"\belse\b", tail_statement, re.S)
+                    if else_match is None or start_match.end() <= else_match.start():
+                        return
         missing.append(
             f"{context}: missing reachable WakeServiceController.start( in the granted RECORD_AUDIO branch"
         )
@@ -142,11 +175,22 @@ def collect_missing():
             "registerForActivityResult(",
         )
         success_patterns = (
-            r"if\s*\(\s*[^{}]*grantResults[^{}]*==[^{}]*PackageManager\.PERMISSION_GRANTED[^{}]*\)\s*\{",
-            r"if\s*\(\s*[^{}]*\[[^\]]*Manifest\.permission\.RECORD_AUDIO[^\]]*\]\s*==\s*true[^{}]*\)\s*\{",
-            r"if\s*\(\s*[^{}]*allGranted[^{}]*\)\s*\{",
-            r"if\s*\(\s*[^{}]*ContextCompat\.checkSelfPermission[^{}]*==[^{}]*PackageManager\.PERMISSION_GRANTED[^{}]*\)\s*\{",
-            r"if\s*\(\s*[^{}]*ContextCompat\.checkSelfPermission[^{}]*==[^{}]*ContextCompat\.PERMISSION_GRANTED[^{}]*\)\s*\{",
+            (
+                r"if\s*\(\s*[^{}]*grantResults[^{}]*==[^{}]*PackageManager\.PERMISSION_GRANTED[^{}]*\)\s*\{",
+                True,
+            ),
+            (
+                r"if\s*\(\s*[^{}]*\[[^\]]*Manifest\.permission\.RECORD_AUDIO[^\]]*\]\s*==\s*true[^{}]*\)\s*\{",
+                False,
+            ),
+            (
+                r"if\s*\(\s*[^{}]*ContextCompat\.checkSelfPermission[^{}]*Manifest\.permission\.RECORD_AUDIO[^{}]*==[^{}]*PackageManager\.PERMISSION_GRANTED[^{}]*\)\s*\{",
+                False,
+            ),
+            (
+                r"if\s*\(\s*[^{}]*ContextCompat\.checkSelfPermission[^{}]*Manifest\.permission\.RECORD_AUDIO[^{}]*==[^{}]*ContextCompat\.PERMISSION_GRANTED[^{}]*\)\s*\{",
+                False,
+            ),
         )
         for marker in callback_markers:
             callback_body = block_after_marker(source, marker)
@@ -158,9 +202,15 @@ def collect_missing():
                 re.S,
             ):
                 continue
-            for pattern in success_patterns:
+            for pattern, requires_request_code in success_patterns:
                 match = re.search(pattern, callback_body, re.S)
                 if not match:
+                    continue
+                if requires_request_code and not re.search(
+                    r"\bREQUEST_PERMISSIONS\b",
+                    callback_body[:match.end()],
+                    re.S,
+                ):
                     continue
                 opening = match.end() - 1
                 success_body = extract_block(callback_body, opening)
@@ -191,9 +241,9 @@ def collect_missing():
         r"WakeServiceController\s*\.\s*submitText\s*\(",
         "MainActivity typed submit route",
     )
-    require_function_body_any(
+    require_marker_in_reachable_functions(
         SETTINGS,
-        ("saveSettings", "applyWakeSettingsIfRunning"),
+        ("onCreate", "saveSettings", "applyWakeSettingsIfRunning"),
         r"WakeServiceController\s*\.\s*(?:start|stop|applyWakeSettings)\s*\(",
         "SettingsActivity wake settings route",
     )

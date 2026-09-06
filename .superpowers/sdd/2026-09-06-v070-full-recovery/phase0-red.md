@@ -18,11 +18,11 @@ Output:
 
 ```text
 Traceback (most recent call last):
-  File "E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full\tools\test_v070_recovery_runtime_entry.py", line 207, in <module>
+  File "E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full\tools\test_v070_recovery_runtime_entry.py", line 257, in <module>
     raise AssertionError("runtime entry recovery contract is still missing:\n- " + "\n- ".join(missing))
 AssertionError: runtime entry recovery contract is still missing:
 - MainActivity typed submit route: missing WakeServiceController\s*\.\s*submitText\s*\(
-- SettingsActivity wake settings route: missing WakeServiceController\s*\.\s*(?:start|stop|applyWakeSettings)\s*\(
+- SettingsActivity wake settings route: missing reachable WakeServiceController\s*\.\s*(?:start|stop|applyWakeSettings)\s*\(
 - MainActivity first-install permission grant path: missing callback/equivalent with permission-grant signal and WakeServiceController.start(
 - MainActivity granted microphone branch: missing reachable WakeServiceController.start( in the granted RECORD_AUDIO branch
 ```
@@ -41,7 +41,7 @@ Output:
 
 ```text
 Traceback (most recent call last):
-  File "E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full\tools\test_v070_recovery_typed_pipeline.py", line 225, in <module>
+  File "E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full\tools\test_v070_recovery_typed_pipeline.py", line 230, in <module>
     raise AssertionError("typed pipeline recovery contract is still missing:\n- " + "\n- ".join(missing))
 AssertionError: typed pipeline recovery contract is still missing:
 - MainActivity typed submit path: still contains ConversationResultBridge.submitText(
@@ -66,7 +66,7 @@ Output:
 
 ```text
 Traceback (most recent call last):
-  File "E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full\tools\test_v070_recovery_ui_contract.py", line 148, in <module>
+  File "E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full\tools\test_v070_recovery_ui_contract.py", line 199, in <module>
     raise AssertionError("ui recovery contract is still missing:\n- " + "\n- ".join(missing))
 AssertionError: ui recovery contract is still missing:
 - MainActivity chat layout: missing file app\src\main\res\layout\activity_main_chat.xml
@@ -77,9 +77,9 @@ AssertionError: ui recovery contract is still missing:
 - MainActivity insets handling: missing WindowCompat\.setDecorFitsSystemWindows
 - SettingsActivity insets handling: missing ViewCompat\.setOnApplyWindowInsetsListener
 - SettingsActivity insets handling: missing WindowCompat\.setDecorFitsSystemWindows
-- MainActivity assistant-name title: missing pattern "\$\{[^"]*assistantName[^"]*\}.*智能体"
+- MainActivity assistant-name title: missing reachable UI binding in onCreate or a function it invokes
 - ConversationAdapter scaffold row: still contains android.R.layout.simple_list_item_2
-- MainActivity debug subtitle: still contains v0.6.5：会话状态机 + 悬浮层手动退出 + 智能退出 + 自然语言媒体音量
+- MainActivity debug subtitle: still contains a v0.6.5/debug status literal
 ```
 
 Why this is expected: the planned chat/settings XML layouts do not exist yet, the activities still use the old programmatic scaffold, insets hooks are absent, the assistant-name title marker is absent, and the scaffold conversation row plus debug subtitle are still present.
