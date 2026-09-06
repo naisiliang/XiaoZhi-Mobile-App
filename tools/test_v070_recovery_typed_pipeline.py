@@ -109,6 +109,15 @@ def collect_missing():
             return None
         return extract_braced_block(container, match.end() - 1)
 
+    def forbid_unscoped_intents(source, context):
+        for constructor in re.finditer(r"\bIntent\s*\(", source, re.S):
+            closing = extract_delimited_block(source, constructor.end() - 1)
+            if closing is None:
+                continue
+            arguments = source[constructor.end():closing]
+            if not re.search(r"::class\s*\.\s*java\b", arguments, re.S):
+                missing.append(f"{context}: unscoped Intent may dispatch a device action")
+
     def require_any_function_body(source, function_names, marker, context):
         for function_name in function_names:
             body = function_body(source, function_name)
@@ -119,6 +128,31 @@ def collect_missing():
     def require_controller_submit_route():
         if not CONTROLLER:
             missing.append(f"WakeServiceController submit route: missing {CONTROLLER_PATH.relative_to(ROOT)}")
+            return
+        controller_clean = strip_kotlin_literals(CONTROLLER)
+        submit_signature = re.search(
+            r"\bfun\s+submitText\s*\(([^)]*)\)",
+            controller_clean,
+            re.S,
+        )
+        if submit_signature is None:
+            missing.append("WakeServiceController submit route: missing submitText parameters")
+            return
+        text_parameter_names = set()
+        for parameter in submit_signature.group(1).split(","):
+            parameter_match = re.match(
+                r"\s*(?:vararg\s+)?([A-Za-z_]\w*)\s*:\s*([^=]+)",
+                parameter,
+                re.S,
+            )
+            if parameter_match and re.search(
+                r"\b(?:String|CharSequence)\b",
+                parameter_match.group(2),
+                re.S,
+            ):
+                text_parameter_names.add(parameter_match.group(1))
+        if not text_parameter_names:
+            missing.append("WakeServiceController submit route: submitText has no text parameter")
             return
         body = function_body(CONTROLLER, "submitText")
         if body is None:
@@ -141,6 +175,19 @@ def collect_missing():
             end = intent_declarations[index + 1].start() if index + 1 < len(intent_declarations) else len(body)
             route = body[declaration.end():end]
             assignment_route = body[declaration.start():end]
+            constructor = re.search(
+                r"=\s*(?:(?:[A-Za-z_]\w*)\.)*Intent\s*\(",
+                assignment_route,
+                re.S,
+            )
+            if constructor is None:
+                continue
+            constructor_end = extract_delimited_block(assignment_route, constructor.end() - 1)
+            if constructor_end is None:
+                continue
+            constructor_args = assignment_route[constructor.end():constructor_end]
+            if not re.search(r"\bWakeService\b", constructor_args, re.S):
+                continue
             receiver_scope = intent_receiver_scope(assignment_route, variable_name_text)
             action_on_intent = re.search(
                 rf"\b{variable_name}\s*\.\s*(?:setAction\s*\(\s*|\baction\s*=\s*)"
@@ -154,15 +201,39 @@ def collect_missing():
                 receiver_scope,
                 re.S,
             )
-            extra_on_intent = re.search(
-                rf"\b{variable_name}\s*\.\s*putExtra\s*\(\s*WakeService\s*\.\s*EXTRA_TEXT\b",
-                route,
-                re.S,
-            )
-            extra_in_scope = receiver_scope is not None and re.search(
-                r"\bputExtra\s*\(\s*WakeService\s*\.\s*EXTRA_TEXT\b",
-                receiver_scope,
-                re.S,
+            payload_names = set(text_parameter_names)
+            for _ in range(2):
+                for alias in re.finditer(
+                    r"\b(?:val|var)\s+([A-Za-z_]\w*)\s*=\s*([^\n;]+)",
+                    assignment_route,
+                    re.S,
+                ):
+                    if any(
+                        re.search(rf"\b{re.escape(name)}\b", alias.group(2), re.S)
+                        for name in payload_names
+                    ):
+                        payload_names.add(alias.group(1))
+
+            def extra_carries_payload(container, receiver=None):
+                receiver_prefix = rf"\b{receiver}\s*\.\s*" if receiver else r"\b"
+                return next(
+                    (
+                        match
+                        for match in re.finditer(
+                            receiver_prefix
+                            + r"putExtra\s*\(\s*WakeService\s*\.\s*EXTRA_TEXT\s*,\s*"
+                            r"([A-Za-z_]\w*)\b",
+                            container,
+                            re.S,
+                        )
+                        if match.group(1) in payload_names
+                    ),
+                    None,
+                )
+
+            extra_on_intent = extra_carries_payload(route, variable_name_text)
+            extra_in_scope = (
+                receiver_scope is not None and extra_carries_payload(receiver_scope)
             )
             coupled_configuration = (
                 (action_on_intent is not None and extra_on_intent is not None)
@@ -170,9 +241,20 @@ def collect_missing():
             )
             if not coupled_configuration:
                 continue
+            configuration_end = 0
+            if action_on_intent is not None and extra_on_intent is not None:
+                configuration_end = max(action_on_intent.end(), extra_on_intent.end())
+            else:
+                scope_start = route.find(receiver_scope)
+                if scope_start < 0 or action_in_scope is None or extra_in_scope is None:
+                    continue
+                configuration_end = scope_start + max(
+                    action_in_scope.end(),
+                    extra_in_scope.end(),
+                )
             if not re.search(
                 rf"\b(?:startService|startForegroundService)\s*\([^)]*\b{variable_name}\b[^)]*\)",
-                route,
+                route[configuration_end:],
                 re.S,
             ):
                 continue
@@ -197,6 +279,8 @@ def collect_missing():
             )
             if not any(re.search(pattern, container, re.S) for pattern in extraction_patterns):
                 return False
+            if not re.search(r"\bAssistantRequestSource\.TEXT\b", container, re.S):
+                return False
 
             assignment_patterns = (
                 r"(?:val|var)\s+([A-Za-z_]\w*)\s*=\s*(?:[A-Za-z_]\w*(?:\?\.)?\s*)?(?:getStringExtra|getCharSequenceExtra|getString|getParcelableExtra)\s*\(\s*EXTRA_TEXT\s*\)",
@@ -206,10 +290,17 @@ def collect_missing():
                 for match in re.finditer(assignment, container, re.S):
                     value_name = re.escape(match.group(1))
                     tail = container[match.end():]
-                    if re.search(rf"processAssistantInput\s*\(\s*{value_name}\b", tail, re.S):
+                    if re.search(
+                        rf"processAssistantInput\s*\(\s*{value_name}\b[^;)]*"
+                        r"\bAssistantRequestSource\.TEXT\b",
+                        tail,
+                        re.S,
+                    ):
                         return True
                     if re.search(
-                        rf"{value_name}\s*\?\.\s*let\s*\{{[\s\S]*?processAssistantInput\s*\(\s*it\b",
+                        rf"{value_name}\s*\?\.\s*let\s*\{{[\s\S]*?"
+                        r"processAssistantInput\s*\(\s*it\b[^;)]*"
+                        r"\bAssistantRequestSource\.TEXT\b",
                         tail,
                         re.S,
                     ):
@@ -220,7 +311,8 @@ def collect_missing():
             )
             return any(
                 re.search(
-                    rf"processAssistantInput\s*\(\s*[^\n;]*{pattern}",
+                    rf"processAssistantInput\s*\(\s*[^\n;]*{pattern}[^;)]*"
+                    r"\bAssistantRequestSource\.TEXT\b",
                     container,
                     re.S,
                 )
@@ -302,7 +394,11 @@ def collect_missing():
     require_controller_submit_route()
     require_regex(WAKE_CLEAN, r"const val ACTION_SUBMIT_TEXT\b", "WakeService text action constant")
     require_regex(WAKE_CLEAN, r"const val EXTRA_TEXT\b", "WakeService text payload constant")
-    require_regex(WAKE_CLEAN, r"fun\s+processAssistantInput\s*\(", "WakeService shared text processor")
+    require_regex(
+        WAKE_CLEAN,
+        r"fun\s+processAssistantInput\s*\([^)]*\b(?:source|requestSource)\b[^)]*\)",
+        "WakeService shared text processor with request source",
+    )
     require_action_branch(WAKE_CLEAN, "WakeService text service action route")
     forbid_regex(
         MAIN_CLEAN,
@@ -324,6 +420,18 @@ def collect_missing():
         r"TorchController",
         r"CommandRouter",
         r"ToolDispatcher",
+        r"SafeToolExecutor",
+        r"AppExitController",
+        r"DeviceAction",
+        r"DeviceExecutionResult",
+        r"ExecutionFeedbackCoordinator",
+        r"AudioManager",
+        r"CameraManager",
+        r"LocationManager",
+        r"MediaPlayer",
+        r"MediaSession",
+        r"Vibrator",
+        r"PowerManager",
     )
     direct_device_calls = (
         r"openApp",
@@ -335,6 +443,8 @@ def collect_missing():
         r"mediaPause",
         r"setTorchMode",
         r"setFlashlight",
+        r"setStreamVolume",
+        r"adjustVolume",
         r"executeCommand",
         r"executeAction",
         r"dispatchTool",
@@ -346,6 +456,25 @@ def collect_missing():
     )
     forbid_regex(MAIN_CLEAN, direct_device_pattern, "MainActivity direct device execution")
     forbid_regex(SETTINGS_CLEAN, direct_device_pattern, "SettingsActivity direct device execution")
+    activity_direct_dispatch_pattern = (
+        r"\b(?:startService|startForegroundService|sendBroadcast|sendOrderedBroadcast|"
+        r"startActivityForResult)\s*\("
+        r"|\b(?:ContextCompat\s*\.\s*)?startForegroundService\s*\("
+        r"|\b(?:Intent|Uri)\s*\([^\n;]*(?:ACTION_VIEW|ACTION_CALL|ACTION_DIAL|"
+        r"ACTION_SEND|ACTION_MEDIA_BUTTON)"
+    )
+    forbid_regex(
+        MAIN_CLEAN,
+        activity_direct_dispatch_pattern,
+        "MainActivity direct device dispatch",
+    )
+    forbid_regex(
+        SETTINGS_CLEAN,
+        activity_direct_dispatch_pattern,
+        "SettingsActivity direct device dispatch",
+    )
+    forbid_unscoped_intents(MAIN_CLEAN, "MainActivity direct device dispatch")
+    forbid_unscoped_intents(SETTINGS_CLEAN, "SettingsActivity direct device dispatch")
 
     return missing
 

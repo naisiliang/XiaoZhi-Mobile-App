@@ -24,14 +24,14 @@ Base commit verified before changes:
 Command:
 
 ```powershell
-python -X utf8 tools/test_v070_recovery_runtime_entry.py
+python -B -X utf8 tools/test_v070_recovery_runtime_entry.py
 ```
 
 Output:
 
 ```text
 Traceback (most recent call last):
-  File "E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full\tools\test_v070_recovery_runtime_entry.py", line 428, in <module>
+  File "E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full\tools\test_v070_recovery_runtime_entry.py", line 433, in <module>
     raise AssertionError("runtime entry recovery contract is still missing:\n- " + "\n- ".join(missing))
 AssertionError: runtime entry recovery contract is still missing:
 - MainActivity typed submit route: missing WakeServiceController\s*\.\s*submitText\s*\(
@@ -48,14 +48,14 @@ Why this is expected: the current source still has no shared-controller submit p
 Command:
 
 ```powershell
-python -X utf8 tools/test_v070_recovery_typed_pipeline.py
+python -B -X utf8 tools/test_v070_recovery_typed_pipeline.py
 ```
 
 Output:
 
 ```text
 Traceback (most recent call last):
-  File "E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full\tools\test_v070_recovery_typed_pipeline.py", line 346, in <module>
+  File "E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full\tools\test_v070_recovery_typed_pipeline.py", line 484, in <module>
     raise AssertionError("typed pipeline recovery contract is still missing:\n- " + "\n- ".join(missing))
 AssertionError: typed pipeline recovery contract is still missing:
 - MainActivity typed submit path: still contains pattern ConversationResultBridge\s*\.\s*submitText\s*\(
@@ -63,8 +63,9 @@ AssertionError: typed pipeline recovery contract is still missing:
 - WakeServiceController submit route: missing app\src\main\java\com\lchuang\xiaozhimobile\runtime\WakeServiceController.kt
 - WakeService text action constant: missing pattern const val ACTION_SUBMIT_TEXT\b
 - WakeService text payload constant: missing pattern const val EXTRA_TEXT\b
-- WakeService shared text processor: missing pattern fun\s+processAssistantInput\s*\(
+- WakeService shared text processor with request source: missing pattern fun\s+processAssistantInput\s*\([^)]*\b(?:source|requestSource)\b[^)]*\)
 - WakeService text service action route: missing coupled ACTION_SUBMIT_TEXT -> EXTRA_TEXT -> processAssistantInput route
+- SettingsActivity direct device dispatch: still contains pattern \b(?:startService|startForegroundService|sendBroadcast|sendOrderedBroadcast|startActivityForResult)\s*\(|\b(?:ContextCompat\s*\.\s*)?startForegroundService\s*\(|\b(?:Intent|Uri)\s*\([^\n;]*(?:ACTION_VIEW|ACTION_CALL|ACTION_DIAL|ACTION_SEND|ACTION_MEDIA_BUTTON)
 ```
 
 Why this is expected: the current code still terminates the typed submit path at `ConversationResultBridge.submitText(text)` and does not yet expose the shared controller/service action contract required by the plan.
@@ -74,7 +75,7 @@ Why this is expected: the current code still terminates the typed submit path at
 Command:
 
 ```powershell
-python -X utf8 tools/test_v070_recovery_ui_contract.py
+python -B -X utf8 tools/test_v070_recovery_ui_contract.py
 ```
 
 Output:
@@ -97,7 +98,7 @@ Why this is expected: the planned chat XML layout does not exist yet, MainActivi
 
 ## Verification before final review
 
-At commit `b4f3c1536cf966490022bc6095ace58b1c4f9625`:
+At commit `b4f3c1536cf966490022bc6095ace58b1c4f9625` (before the evidence-only hardening patch):
 
 - All three RED contract commands above returned `EXIT=1` with the expected missing-contract assertions.
 - Python AST parsing for all three contracts and `tools/v070_source_contract_utils.py` returned `PASS: AST` and `EXIT=0`.
@@ -105,6 +106,8 @@ At commit `b4f3c1536cf966490022bc6095ace58b1c4f9625`:
 - `python -B -X utf8 tools/test_v065_frozen_baseline.py` returned `FROZEN_EXIT=0` with all v0.6.3/v0.6.4/v0.6.5 frozen checks passing, using the verified JDK 17/Kotlin toolchain on PATH.
 - `git diff --name-status 954998eb054fef67a63bcfb6ea67a16c3fd059bd -- app/src` returned `PRODUCTION_DIFF_EMPTY`.
 - `git status --short` was empty and `git rev-parse HEAD` returned the commit above.
+
+The subsequent evidence-only hardening patch was syntax-checked and its three RED contracts reproduced the same missing production capabilities at current HEAD before this report refresh; the final review package includes that patch.
 
 ## Self-review
 

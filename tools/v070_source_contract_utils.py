@@ -4,28 +4,6 @@ def strip_kotlin_comments(source):
     index = 0
     length = len(source)
     while index < length:
-        if source.startswith("//", index):
-            newline = source.find("\n", index + 2)
-            if newline < 0:
-                break
-            output.append("\n")
-            index = newline + 1
-            continue
-        if source.startswith("/*", index):
-            depth = 1
-            index += 2
-            while index < length and depth:
-                if source.startswith("/*", index):
-                    depth += 1
-                    index += 2
-                elif source.startswith("*/", index):
-                    depth -= 1
-                    index += 2
-                else:
-                    if source[index] == "\n":
-                        output.append("\n")
-                    index += 1
-            continue
         if source[index] == chr(96):
             end = index + 1
             while end < length:
@@ -60,6 +38,28 @@ def strip_kotlin_comments(source):
                     end += 1
             output.append(source[index:end])
             index = end
+            continue
+        if source.startswith("//", index):
+            newline = source.find("\n", index + 2)
+            if newline < 0:
+                break
+            output.append("\n")
+            index = newline + 1
+            continue
+        if source.startswith("/*", index):
+            depth = 1
+            index += 2
+            while index < length and depth:
+                if source.startswith("/*", index):
+                    depth += 1
+                    index += 2
+                elif source.startswith("*/", index):
+                    depth -= 1
+                    index += 2
+                else:
+                    if source[index] == "\n":
+                        output.append("\n")
+                    index += 1
             continue
         output.append(source[index])
         index += 1

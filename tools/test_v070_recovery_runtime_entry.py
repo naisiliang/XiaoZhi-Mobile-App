@@ -269,6 +269,7 @@ def collect_missing():
         )
 
         clean_source = strip_kotlin_literals(source)
+        permission_request_body = function_body(clean_source, "requestNeededPermissions")
         single_permission_pattern = re.compile(
             r"(?:\b(?:private|public|internal|protected|lateinit|final|override)\s+)*"
             r"(?:val|var)\s+([A-Za-z_]\w*)"
@@ -279,9 +280,13 @@ def collect_missing():
         )
         for single_permission in single_permission_pattern.finditer(clean_source):
             launcher_name = re.escape(single_permission.group(1))
-            if not re.search(
-                rf"\b{launcher_name}\s*\.\s*launch\s*\(\s*Manifest\.permission\.RECORD_AUDIO\s*\)",
-                clean_source,
+            launch_pattern = (
+                rf"\b{launcher_name}\s*\.\s*launch\s*\(\s*"
+                r"Manifest\.permission\.RECORD_AUDIO\s*\)"
+            )
+            if permission_request_body is None or not re.search(
+                launch_pattern,
+                permission_request_body,
                 re.S,
             ):
                 continue
