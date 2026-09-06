@@ -98,7 +98,11 @@ Why this is expected: the planned chat XML layout does not exist yet, MainActivi
 
 ## Final verification snapshot
 
-At commit `f98e34b881648cca96a7e457917cc5644d5d8fd2`:
+Executable/test verification commit: `f98e34b881648cca96a7e457917cc5644d5d8fd2`.
+
+The final spec-review target was `3f61b32b2f680661490c6e4d4a85a5742a1f2eca`. The only changes from the verification commit to that review target were the two evidence documents (`phase0-red.md` and this report); no production or test implementation files changed.
+
+At the executable/test verification commit:
 
 - All three RED contract commands returned `EXIT=1` with the expected missing-contract assertions; the recorded traceback lines are 401, 487, and 152 respectively.
 - Python AST parsing for all three contracts and `tools/v070_source_contract_utils.py` returned `PASS: AST` and `EXIT=0`.
