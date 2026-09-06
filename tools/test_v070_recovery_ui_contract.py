@@ -1,5 +1,6 @@
 from pathlib import Path
 import re
+import xml.etree.ElementTree as ET
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -81,6 +82,11 @@ def collect_missing():
         if not source.strip():
             missing.append(f"{context}: empty file {path.relative_to(ROOT)}")
             return
+        try:
+            ET.fromstring(source)
+        except ET.ParseError as error:
+            missing.append(f"{context}: malformed XML ({error})")
+            return
         for pattern in patterns:
             if not re.search(pattern, source, re.S):
                 missing.append(f"{context}: missing xml tag matching {pattern}")
@@ -88,17 +94,17 @@ def collect_missing():
     require_xml_tags(
         MAIN_LAYOUT,
         (
-            r"<(?:androidx\.recyclerview\.widget\.)?RecyclerView\b",
-            r"<(?:androidx\.appcompat\.widget\.)?AppCompatEditText\b|<EditText\b",
+            r"<(?:[A-Za-z_]\w*\.)*RecyclerView\b",
+            r"<(?:[A-Za-z_]\w*\.)*(?:AppCompatEditText|TextInputEditText|EditText)\b",
         ),
         "MainActivity chat layout",
     )
     require_xml_tags(
         SETTINGS_LAYOUT,
         (
-            r"<ScrollView\b",
-            r"<LinearLayout\b",
-            r"android:orientation=\"vertical\"",
+            r"<(?:[A-Za-z_]\w*\.)*ScrollView\b",
+            r"<(?:[A-Za-z_]\w*\.)*LinearLayout\b",
+            r"android:orientation\s*=\s*[\"']vertical[\"']",
         ),
         "SettingsActivity settings layout",
     )
@@ -131,7 +137,7 @@ def collect_missing():
         r'"\$\{[^"]*assistantName[^"]*\}.*智能体"',
         "MainActivity assistant-name title",
     )
-    forbid(ADAPTER, "android.R.layout.simple_list_item_2", "ConversationAdapter scaffold row")
+    forbid(strip_kotlin_comments(ADAPTER), "android.R.layout.simple_list_item_2", "ConversationAdapter scaffold row")
     forbid(MAIN_CLEAN, "v0.6.5：会话状态机 + 悬浮层手动退出 + 智能退出 + 自然语言媒体音量", "MainActivity debug subtitle")
 
     return missing

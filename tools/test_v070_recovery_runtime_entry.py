@@ -5,7 +5,6 @@ import re
 ROOT = Path(__file__).resolve().parents[1]
 MAIN = (ROOT / "app/src/main/java/com/lchuang/xiaozhimobile/MainActivity.kt").read_text("utf-8")
 SETTINGS = (ROOT / "app/src/main/java/com/lchuang/xiaozhimobile/SettingsActivity.kt").read_text("utf-8")
-WAKE = (ROOT / "app/src/main/java/com/lchuang/xiaozhimobile/WakeService.kt").read_text("utf-8")
 
 
 def collect_missing():
@@ -16,8 +15,15 @@ def collect_missing():
         source = re.sub(r"(?m)//.*$", "", source)
         return source
 
-    def function_body(source, function_name):
+    def strip_kotlin_literals(source):
         source = strip_comments(source)
+        source = re.sub(r'""".*?"""', "", source, flags=re.S)
+        source = re.sub(r'"(?:\\.|[^"\\])*"', '""', source, flags=re.S)
+        source = re.sub(r"'(?:\\.|[^'\\])*'", "''", source, flags=re.S)
+        return source
+
+    def function_body(source, function_name):
+        source = strip_kotlin_literals(source)
         pattern = re.compile(
             rf"(?:private |public |internal |protected )?(?:override )?fun {re.escape(function_name)}\b[^{{]*\{{"
         )
@@ -54,7 +60,7 @@ def collect_missing():
             missing.append(f"{context}: missing {marker}")
 
     def block_after_marker(source, marker):
-        source = strip_comments(source)
+        source = strip_kotlin_literals(source)
         marker_index = source.find(marker)
         if marker_index < 0:
             return None
@@ -83,7 +89,7 @@ def collect_missing():
         if body is None:
             missing.append(f"{context}: missing function requestNeededPermissions")
             return
-        body = strip_comments(body)
+        body = strip_kotlin_literals(body)
         branch_patterns = (
             r"if\s*\(\s*checkSelfPermission\(\s*Manifest\.permission\.RECORD_AUDIO\s*\)\s*==\s*PackageManager\.PERMISSION_GRANTED\s*\)",
             r"if\s*\(\s*PackageManager\.PERMISSION_GRANTED\s*==\s*checkSelfPermission\(\s*Manifest\.permission\.RECORD_AUDIO\s*\)\s*\)",
@@ -102,6 +108,27 @@ def collect_missing():
                 if branch_body is None:
                     continue
                 if re.search(r"WakeServiceController\s*\.\s*start\s*\(", branch_body, re.S):
+                    closing = opening
+                    depth = 0
+                    while closing < len(body):
+                        if body[closing] == "{":
+                            depth += 1
+                        elif body[closing] == "}":
+                            depth -= 1
+                            if depth == 0:
+                                break
+                        closing += 1
+                    after_branch = body[closing + 1:].lstrip() if closing < len(body) else ""
+                    if after_branch.startswith("else"):
+                        else_opening = after_branch.find("{")
+                        if else_opening >= 0:
+                            else_body = extract_block(after_branch, else_opening)
+                            if else_body is not None and re.search(
+                                r"WakeServiceController\s*\.\s*start\s*\(",
+                                else_body,
+                                re.S,
+                            ):
+                                continue
                     return
             elif re.match(r"WakeServiceController\s*\.\s*start\s*\(", tail.lstrip()):
                 return
@@ -124,6 +151,12 @@ def collect_missing():
         for marker in callback_markers:
             callback_body = block_after_marker(source, marker)
             if callback_body is None:
+                continue
+            if not re.search(
+                r"Manifest\.permission\.RECORD_AUDIO|REQUEST_PERMISSIONS",
+                callback_body,
+                re.S,
+            ):
                 continue
             for pattern in success_patterns:
                 match = re.search(pattern, callback_body, re.S)

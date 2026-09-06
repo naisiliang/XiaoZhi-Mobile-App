@@ -17,9 +17,16 @@ def collect_missing():
         source = re.sub(r"(?m)//.*$", "", source)
         return source
 
-    MAIN_CLEAN = strip_comments(MAIN)
-    SETTINGS_CLEAN = strip_comments(SETTINGS)
-    WAKE_CLEAN = strip_comments(WAKE)
+    def strip_kotlin_literals(source):
+        source = strip_comments(source)
+        source = re.sub(r'""".*?"""', "", source, flags=re.S)
+        source = re.sub(r'"(?:\\.|[^"\\])*"', '""', source, flags=re.S)
+        source = re.sub(r"'(?:\\.|[^'\\])*'", "''", source, flags=re.S)
+        return source
+
+    MAIN_CLEAN = strip_kotlin_literals(MAIN)
+    SETTINGS_CLEAN = strip_kotlin_literals(SETTINGS)
+    WAKE_CLEAN = strip_kotlin_literals(WAKE)
 
     def require(source, marker, context):
         if marker not in source:
@@ -34,7 +41,7 @@ def collect_missing():
             missing.append(f"{context}: missing pattern {pattern}")
 
     def function_body(source, function_name):
-        source = strip_comments(source)
+        source = strip_kotlin_literals(source)
         match = re.search(
             rf"(?:private |public |internal |protected )?(?:override )?fun {re.escape(function_name)}\b[^{{]*\{{",
             source,
@@ -66,7 +73,7 @@ def collect_missing():
         return None
 
     def local_function_body(container, function_name):
-        container = strip_comments(container)
+        container = strip_kotlin_literals(container)
         match = re.search(
             rf"(?:private |public |internal |protected )?(?:override )?fun {re.escape(function_name)}\b[^{{]*\{{",
             container,
@@ -96,7 +103,7 @@ def collect_missing():
         if body is None:
             missing.append(f"{context}: missing function onStartCommand")
             return
-        body = strip_comments(body)
+        body = strip_kotlin_literals(body)
 
         def has_text_processor(container):
             container = strip_comments(container)
@@ -157,30 +164,25 @@ def collect_missing():
             if has_text_processor(branch_text):
                 return True
             for _, helper_body in candidate_helpers(branch_text, body):
-                helper_body = strip_comments(helper_body)
+                helper_body = strip_kotlin_literals(helper_body)
                 if has_text_processor(helper_body):
                     return True
             return False
 
         branch_openers = (
-            r"if\s*\(\s*[^{}]*(?:intent\?\.action|action|intent\.action|this\.action)\s*==\s*ACTION_SUBMIT_TEXT[^{}]*\)\s*\{",
-            r"if\s*\(\s*ACTION_SUBMIT_TEXT\s*==\s*[^{}]*(?:intent\?\.action|action|intent\.action|this\.action)[^{}]*\)\s*\{",
+            r"if\s*\(\s*[^{}]*(?:intent\?\.\s*action|intent\.\s*action|this\.\s*action)\s*==\s*ACTION_SUBMIT_TEXT[^{}]*\)\s*\{",
+            r"if\s*\(\s*ACTION_SUBMIT_TEXT\s*==\s*[^{}]*(?:intent\?\.\s*action|intent\.\s*action|this\.\s*action)[^{}]*\)\s*\{",
         )
         branch_bodies = []
         for opener in branch_openers:
-            match = re.search(opener, body, re.S)
-            if not match:
-                continue
-            opening = body.find("{", match.end() - 1)
-            if opening < 0:
-                continue
-            branch_body = extract_braced_block(body, opening)
-            if branch_body is None:
-                continue
-            branch_bodies.append(strip_comments(branch_body))
+            for match in re.finditer(opener, body, re.S):
+                opening = match.end() - 1
+                branch_body = extract_braced_block(body, opening)
+                if branch_body is not None:
+                    branch_bodies.append(strip_kotlin_literals(branch_body))
 
-        when_match = re.search(r"when\s*\([^{}]*\)\s*\{", body, re.S)
-        if when_match:
+        when_pattern = r"when\s*\(\s*[^{}]*(?:intent\?\.\s*action|intent\.\s*action)[^{}]*\)\s*\{"
+        for when_match in re.finditer(when_pattern, body, re.S):
             when_body = extract_braced_block(body, when_match.end() - 1)
             if when_body is not None:
                 case_match = re.search(r"\bACTION_SUBMIT_TEXT\s*->", when_body, re.S)
@@ -191,7 +193,7 @@ def collect_missing():
                     else:
                         case_body = case_tail.splitlines()[0]
                     if case_body is not None:
-                        branch_bodies.append(strip_comments(case_body))
+                        branch_bodies.append(strip_kotlin_literals(case_body))
 
         for branch_body in branch_bodies:
             if branch_satisfies(branch_body):
