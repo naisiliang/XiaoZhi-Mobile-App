@@ -28,6 +28,8 @@ def collect_missing():
         return source
 
     MAIN_CLEAN = strip_kotlin_comments(MAIN)
+    MAIN_STRUCTURE = strip_kotlin_literals(MAIN)
+
     def forbid(source, marker, context):
         if marker in source:
             missing.append(f"{context}: still contains {marker}")
@@ -126,13 +128,13 @@ def collect_missing():
         "MainActivity chat layout",
     )
     require_body(
-        MAIN_CLEAN,
+        MAIN_STRUCTURE,
         "onCreate",
         (r"setContentView\s*\(\s*R\.layout\.activity_main_chat\s*\)",),
         "MainActivity XML inflation",
     )
     require_body(
-        MAIN_CLEAN,
+        MAIN_STRUCTURE,
         "onCreate",
         (r"ViewCompat\.setOnApplyWindowInsetsListener", r"WindowCompat\.setDecorFitsSystemWindows"),
         "MainActivity insets handling",

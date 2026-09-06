@@ -98,13 +98,35 @@ def collect_missing():
         if body is None:
             missing.append("WakeServiceController submit route: missing function submitText")
             return
-        for marker in (
-            r"\bIntent\s*\(",
-            r"\bWakeService\s*\.\s*ACTION_SUBMIT_TEXT\b",
-            r"\bWakeService\s*\.\s*EXTRA_TEXT\b",
-        ):
-            if not re.search(marker, body, re.S):
-                missing.append(f"WakeServiceController submit route: missing {marker}")
+        intent_declarations = list(
+            re.finditer(r"\b(?:val|var)\s+([A-Za-z_]\w*)\s*=\s*Intent\s*\(", body, re.S)
+        )
+        if not intent_declarations:
+            missing.append("WakeServiceController submit route: missing an assigned Intent")
+            return
+        for index, declaration in enumerate(intent_declarations):
+            variable_name = re.escape(declaration.group(1))
+            end = intent_declarations[index + 1].start() if index + 1 < len(intent_declarations) else len(body)
+            route = body[declaration.end():end]
+            if not re.search(
+                rf"(?:\bsetAction\s*\(\s*|\baction\s*=\s*)\s*WakeService\s*\.\s*ACTION_SUBMIT_TEXT\b",
+                route,
+                re.S,
+            ):
+                continue
+            if not re.search(r"\bputExtra\s*\(\s*WakeService\s*\.\s*EXTRA_TEXT\b", route, re.S):
+                continue
+            if not re.search(
+                rf"\b(?:startService|startForegroundService)\s*\([^)]*\b{variable_name}\b[^)]*\)",
+                route,
+                re.S,
+            ):
+                continue
+            return
+        missing.append(
+            "WakeServiceController submit route: assigned Intent is not configured with "
+            "ACTION_SUBMIT_TEXT/EXTRA_TEXT and dispatched"
+        )
 
     def require_action_branch(source, context):
         body = function_body(source, "onStartCommand")

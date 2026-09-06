@@ -119,15 +119,23 @@ def collect_missing():
             missing.append(f"{context}: missing {CONTROLLER_PATH.relative_to(ROOT)}")
             return
         controller_clean = strip_kotlin_literals(CONTROLLER)
+        if not re.search(r"^\s*package\s+com\.lchuang\.xiaozhimobile\.runtime\b", CONTROLLER, re.M):
+            missing.append(f"{context}: controller package is not com.lchuang.xiaozhimobile.runtime")
         if not re.search(r"\b(?:object|class)\s+WakeServiceController\b", controller_clean):
             missing.append(f"{context}: missing WakeServiceController declaration")
+        for method_name in ("start", "stop", "applyWakeSettings", "submitText", "isRunning"):
+            if not re.search(rf"\bfun\s+{method_name}\s*\(", controller_clean):
+                missing.append(f"{context}: missing WakeServiceController.{method_name} definition")
         shared_reference = (
-            r"(?:import\s+com\.lchuang\.xiaozhimobile\.runtime\.WakeServiceController\b|"
+            r"(?:^\s*import\s+com\.lchuang\.xiaozhimobile\.runtime\.WakeServiceController\b|"
             r"\bcom\.lchuang\.xiaozhimobile\.runtime\.WakeServiceController\b)"
         )
         for source, source_name in ((MAIN, "MainActivity"), (SETTINGS, "SettingsActivity")):
-            if not re.search(shared_reference, strip_kotlin_comments(source), re.S):
+            source_clean = strip_kotlin_comments(source)
+            if not re.search(shared_reference, source_clean, re.M):
                 missing.append(f"{context}: {source_name} does not reference the shared runtime controller")
+            if re.search(r"\b(?:object|class)\s+WakeServiceController\b", strip_kotlin_literals(source)):
+                missing.append(f"{context}: {source_name} declares a local controller shadow")
 
     def require_permission_branch(source, context):
         body = function_body(source, "requestNeededPermissions")
@@ -195,18 +203,27 @@ def collect_missing():
             (
                 r"if\s*\(\s*[^{}]*grantResults[^{}]*==[^{}]*PackageManager\.PERMISSION_GRANTED[^{}]*\)\s*\{",
                 True,
+                True,
+            ),
+            (
+                r"if\s*\(\s*[^{}]*grantResults[^{}]*Manifest\.permission\.RECORD_AUDIO[^{}]*==[^{}]*PackageManager\.PERMISSION_GRANTED[^{}]*\)\s*\{",
+                False,
+                True,
             ),
             (
                 r"if\s*\(\s*[^{}]*\[[^\]]*Manifest\.permission\.RECORD_AUDIO[^\]]*\]\s*==\s*true[^{}]*\)\s*\{",
                 False,
+                True,
             ),
             (
                 r"if\s*\(\s*[^{}]*ContextCompat\.checkSelfPermission[^{}]*Manifest\.permission\.RECORD_AUDIO[^{}]*==[^{}]*PackageManager\.PERMISSION_GRANTED[^{}]*\)\s*\{",
                 False,
+                True,
             ),
             (
                 r"if\s*\(\s*[^{}]*ContextCompat\.checkSelfPermission[^{}]*Manifest\.permission\.RECORD_AUDIO[^{}]*==[^{}]*ContextCompat\.PERMISSION_GRANTED[^{}]*\)\s*\{",
                 False,
+                True,
             ),
         )
         for marker in callback_markers:
@@ -219,12 +236,18 @@ def collect_missing():
                 re.S,
             ):
                 continue
-            for pattern, requires_request_code in success_patterns:
+            for pattern, requires_request_code, requires_audio in success_patterns:
                 match = re.search(pattern, callback_body, re.S)
                 if not match:
                     continue
                 if requires_request_code and not re.search(
                     r"\bREQUEST_PERMISSIONS\b",
+                    callback_body[:match.end()],
+                    re.S,
+                ):
+                    continue
+                if requires_audio and not re.search(
+                    r"\bManifest\.permission\.RECORD_AUDIO\b",
                     callback_body[:match.end()],
                     re.S,
                 ):
