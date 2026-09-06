@@ -21,6 +21,8 @@ import com.lchuang.xiaozhimobile.conversation.ConversationSessionManager
 import com.lchuang.xiaozhimobile.conversation.ConversationSessionStore
 import com.lchuang.xiaozhimobile.conversation.AssistantStateStore
 import com.lchuang.xiaozhimobile.conversation.AssistantStateStoreProvider
+import com.lchuang.xiaozhimobile.runtime.WakeRuntimeStatus
+import com.lchuang.xiaozhimobile.runtime.WakeRuntimeStatusStoreProvider
 import com.lchuang.xiaozhimobile.safety.CentralSafetyPolicyEngine
 import com.lchuang.xiaozhimobile.safety.PermissionBroker
 import com.lchuang.xiaozhimobile.safety.ToolInvocation
@@ -39,6 +41,8 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         const val NOTIFY_ID = 1001
         const val ACTION_STOP = "com.lchuang.xiaozhimobile.STOP"
         const val ACTION_APPLY_WAKE_SETTINGS = "com.lchuang.xiaozhimobile.APPLY_WAKE_SETTINGS"
+        const val ACTION_SUBMIT_TEXT = "com.lchuang.xiaozhimobile.SUBMIT_TEXT"
+        const val EXTRA_TEXT = "com.lchuang.xiaozhimobile.EXTRA_TEXT"
         private const val SAMPLE_RATE = 16000
         private const val KWS_MODEL_DIR = "sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20"
         private const val ASR_MODEL_DIR = "sherpa-onnx-paraformer-zh-small-2024-03-09"
@@ -183,38 +187,59 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
+            WakeRuntimeStatusStoreProvider.instance().publish(
+                WakeRuntimeStatus.STOPPED,
+                "stopped by user",
+            )
             stopSelf()
             return START_NOT_STICKY
         }
         if (intent?.action == ACTION_APPLY_WAKE_SETTINGS && running.get()) {
+            WakeRuntimeStatusStoreProvider.instance().publish(
+                WakeRuntimeStatus.STARTING,
+                "applying wake settings",
+            )
             Thread {
-                val requested = settings.wakePhrase.trim().ifBlank { DEFAULT_WAKE_PHRASE }
-                stopKwsCapture()
-                val applied = if (requested == DEFAULT_WAKE_PHRASE) {
-                    wakePhraseManager.applyBundledPhrase(DEFAULT_WAKE_PHRASE)
-                } else {
-                    updateNotification("正在应用自定义唤醒词（3/3）· “$requested”")
-                    wakePhraseManager.applyPhrase(requested)
+                try {
+                    val requested = settings.wakePhrase.trim().ifBlank { DEFAULT_WAKE_PHRASE }
+                    stopKwsCapture()
+                    val applied = if (requested == DEFAULT_WAKE_PHRASE) {
+                        wakePhraseManager.applyBundledPhrase(DEFAULT_WAKE_PHRASE)
+                    } else {
+                        updateNotification("正在应用自定义唤醒词（3/3）· “$requested”")
+                        wakePhraseManager.applyPhrase(requested)
+                    }
+                    stream = wakePhraseManager.currentStream()
+                    val active = wakePhraseManager.activePhrase()
+                    settings.activeWakePhrase = active
+                    val applyMessage = if (applied.isSuccess) {
+                        "全离线语音已开启 · 说“$active”"
+                    } else {
+                        val reason = applied.exceptionOrNull()?.message
+                            ?: applied.exceptionOrNull()?.javaClass?.simpleName
+                            ?: "UNKNOWN"
+                        "唤醒词应用失败：$reason · 继续监听“$active”"
+                    }
+                    updateNotification(applyMessage)
+                    mainHandler.postDelayed({ startKwsCapture() }, 250L)
+                } catch (e: Throwable) {
+                    val detail = e.message ?: e.javaClass.simpleName
+                    WakeRuntimeStatusStoreProvider.instance().publish(
+                        WakeRuntimeStatus.ERROR,
+                        detail,
+                    )
+                    updateNotification("唤醒设置应用失败：$detail")
                 }
-                stream = wakePhraseManager.currentStream()
-                val active = wakePhraseManager.activePhrase()
-                settings.activeWakePhrase = active
-                val applyMessage = if (applied.isSuccess) {
-                    "全离线语音已开启 · 说“$active”"
-                } else {
-                    val reason = applied.exceptionOrNull()?.message
-                        ?: applied.exceptionOrNull()?.javaClass?.simpleName
-                        ?: "UNKNOWN"
-                    "唤醒词应用失败：$reason · 继续监听“$active”"
-                }
-                updateNotification(applyMessage)
-                mainHandler.postDelayed({ startKwsCapture() }, 250L)
             }.start()
             return START_STICKY
         }
 
         startForeground(NOTIFY_ID, notification("准备启动本地语音…"))
         if (running.compareAndSet(false, true)) {
+            WakeRuntimeStatusStoreProvider.instance().publish(
+                WakeRuntimeStatus.STARTING,
+                "starting offline wake runtime",
+            )
             if (wakeLock?.isHeld != true) wakeLock?.acquire()
             Thread {
                 try {
@@ -240,7 +265,12 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                     updateNotification("全离线语音已开启 · 说“${wakePhraseManager.activePhrase()}”")
                     startKwsCapture()
                 } catch (e: Throwable) {
-                    updateNotification("本地语音启动失败：${e.message ?: e.javaClass.simpleName}")
+                    val detail = e.message ?: e.javaClass.simpleName
+                    WakeRuntimeStatusStoreProvider.instance().publish(
+                        WakeRuntimeStatus.ERROR,
+                        detail,
+                    )
+                    updateNotification("本地语音启动失败：$detail")
                 }
             }.start()
         }
@@ -329,6 +359,13 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                     throw IllegalStateException("AudioRecord 初始化失败")
                 }
                 record.startRecording()
+                if (record.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
+                    throw IllegalStateException("AudioRecord 未进入录音状态")
+                }
+                WakeRuntimeStatusStoreProvider.instance().publish(
+                    WakeRuntimeStatus.KWS_LISTENING,
+                    "listening for wake phrase",
+                )
                 val shorts = ShortArray(1600) // 100 ms
                 while (running.get() && kwsListening.get()) {
                     val n = record.read(shorts, 0, shorts.size)
@@ -352,7 +389,15 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                     }
                 }
             } catch (e: Throwable) {
-                if (running.get()) updateNotification("唤醒监听异常：${e.message ?: e.javaClass.simpleName}")
+                kwsListening.set(false)
+                if (running.get()) {
+                    val detail = e.message ?: e.javaClass.simpleName
+                    WakeRuntimeStatusStoreProvider.instance().publish(
+                        WakeRuntimeStatus.ERROR,
+                        detail,
+                    )
+                    updateNotification("唤醒监听异常：$detail")
+                }
             } finally {
                 releaseAudioRecord()
                 if (running.get() && wakeDetected) {
@@ -387,6 +432,10 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         sessionGeneration += 1
         commandRecognitionAttempts = 0
         conversationActive = true
+        WakeRuntimeStatusStoreProvider.instance().publish(
+            WakeRuntimeStatus.SESSION_ACTIVE,
+            "wake phrase detected",
+        )
         conversationTurns = 0
         exitInProgress = false
         successfulDeviceActions = 0
@@ -1007,6 +1056,10 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         conversationState = ConversationState.IDLE_WAKE
         overlay.updateState(ConversationState.IDLE_WAKE)
         commandResultNotifier.clearRetention()
+        WakeRuntimeStatusStoreProvider.instance().publish(
+            WakeRuntimeStatus.STARTING,
+            "restoring wake listener",
+        )
         updateNotificationRaw("全离线语音已开启 · 说“${wakePhraseManager.activePhrase()}”")
         mainHandler.postDelayed({ startKwsCapture() }, 500)
     }
@@ -1137,6 +1190,10 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         if (::executionCoordinator.isInitialized) executionCoordinator.cancelPending()
         ttsProgressRegistry.cancelPending()
         running.set(false)
+        WakeRuntimeStatusStoreProvider.instance().publish(
+            WakeRuntimeStatus.STOPPED,
+            "service destroyed",
+        )
         kwsListening.set(false)
         commandListening.set(false)
         conversationSessionManager.endSession("service_destroyed")

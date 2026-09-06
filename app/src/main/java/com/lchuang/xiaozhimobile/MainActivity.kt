@@ -30,21 +30,36 @@ import com.lchuang.xiaozhimobile.conversation.ConversationResultKind
 import com.lchuang.xiaozhimobile.conversation.ConversationSession
 import com.lchuang.xiaozhimobile.conversation.ConversationSessionManager
 import com.lchuang.xiaozhimobile.conversation.ConversationSessionStore
+import com.lchuang.xiaozhimobile.runtime.WakeRuntimeStatus
+import com.lchuang.xiaozhimobile.runtime.WakeRuntimeStatusStore
+import com.lchuang.xiaozhimobile.runtime.WakeRuntimeStatusStoreProvider
+import com.lchuang.xiaozhimobile.runtime.WakeServiceController
 
 class MainActivity : Activity() {
     private lateinit var repository: ConversationRepository
     private lateinit var sessionManager: ConversationSessionManager
     private lateinit var stateStore: AssistantStateStore
+    private lateinit var runtimeStatusStore: WakeRuntimeStatusStore
     private lateinit var conversationAdapter: ConversationAdapter
     private lateinit var composer: EditText
     private lateinit var status: TextView
     private var currentSession: ConversationSession? = null
+    private var assistantState = AssistantState.WAITING_WAKE
+    private var runtimeStatus = WakeRuntimeStatus.STOPPED
     private var removeSessionObserver: (() -> Unit)? = null
     private var removeStateObserver: (() -> Unit)? = null
+    private var removeRuntimeObserver: (() -> Unit)? = null
     private val mainHandler = Handler(Looper.getMainLooper())
     private val stateObserver: (AssistantState) -> Unit = { state ->
         mainHandler.post {
-            if (::status.isInitialized) status.text = stateLabel(state)
+            assistantState = state
+            renderStatus()
+        }
+    }
+    private val runtimeObserver: (WakeRuntimeStatus) -> Unit = { state ->
+        mainHandler.post {
+            runtimeStatus = state
+            renderStatus()
         }
     }
     private val sessionObserver: (ConversationSession) -> Unit = { session ->
@@ -69,10 +84,15 @@ class MainActivity : Activity() {
         repository = ConversationSessionStore.repository(this)
         sessionManager = ConversationSessionStore.manager(this)
         stateStore = AssistantStateStoreProvider.instance()
+        runtimeStatusStore = WakeRuntimeStatusStoreProvider.instance()
         setContentView(buildChatHome())
         stateStore.addObserver(stateObserver)
         removeStateObserver = { stateStore.removeObserver(stateObserver) }
-        status.text = stateLabel(stateStore.current)
+        runtimeStatusStore.addObserver(runtimeObserver)
+        removeRuntimeObserver = { runtimeStatusStore.removeObserver(runtimeObserver) }
+        assistantState = stateStore.current
+        runtimeStatus = runtimeStatusStore.current
+        renderStatus()
         currentSession = sessionManager.currentSession() ?: repository.loadCurrent()
         conversationAdapter.submitSession(currentSession)
         ConversationSessionStore.observe(this, sessionObserver)
@@ -87,6 +107,8 @@ class MainActivity : Activity() {
         removeSessionObserver = null
         removeStateObserver?.invoke()
         removeStateObserver = null
+        removeRuntimeObserver?.invoke()
+        removeRuntimeObserver = null
         super.onDestroy()
     }
 
@@ -191,7 +213,7 @@ class MainActivity : Activity() {
     }
 
     fun onTextResult(text: String) {
-        ConversationResultBridge.submitText(text)
+        WakeServiceController.submitText(this, text)
     }
 
     fun onVoiceResult(text: String) {
@@ -227,7 +249,32 @@ class MainActivity : Activity() {
         AssistantState.WAITING_CONFIRMATION -> "等待确认"
     }
 
+    private fun renderStatus() {
+        if (!::status.isInitialized) return
+        status.text = when (runtimeStatus) {
+            WakeRuntimeStatus.KWS_LISTENING -> stateLabel(assistantState)
+            WakeRuntimeStatus.SESSION_ACTIVE -> {
+                if (assistantState == AssistantState.WAITING_WAKE) {
+                    "连续会话进行中"
+                } else {
+                    stateLabel(assistantState)
+                }
+            }
+            WakeRuntimeStatus.STARTING -> "正在启动离线唤醒"
+            WakeRuntimeStatus.STOPPED -> "唤醒服务已停止"
+            WakeRuntimeStatus.ERROR -> {
+                val detail = runtimeStatusStore.detail?.takeIf { it.isNotBlank() }
+                if (detail == null) "唤醒服务异常" else "唤醒服务异常：$detail"
+            }
+        }
+    }
+
     private fun requestNeededPermissions() {
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+            if (WakeServiceController.isBackgroundWakeEnabled(this)) {
+                WakeServiceController.start(this)
+            }
+        }
         val permissions = mutableListOf<String>()
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             permissions += Manifest.permission.RECORD_AUDIO
@@ -239,6 +286,24 @@ class MainActivity : Activity() {
             permissions += Manifest.permission.POST_NOTIFICATIONS
         }
         if (permissions.isNotEmpty()) requestPermissions(permissions.toTypedArray(), REQUEST_PERMISSIONS)
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != REQUEST_PERMISSIONS) return
+        val audioPermissionIndex = permissions.indexOf(Manifest.permission.RECORD_AUDIO)
+        if (audioPermissionIndex < 0 || audioPermissionIndex >= grantResults.size) return
+        if (
+            permissions[audioPermissionIndex] == Manifest.permission.RECORD_AUDIO &&
+            grantResults[audioPermissionIndex] == PackageManager.PERMISSION_GRANTED &&
+            WakeServiceController.isBackgroundWakeEnabled(this)
+        ) {
+            WakeServiceController.start(this)
+        }
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()

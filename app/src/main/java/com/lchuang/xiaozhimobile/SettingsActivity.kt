@@ -1,9 +1,6 @@
 package com.lchuang.xiaozhimobile
 
 import android.app.Activity
-import android.app.ActivityManager
-import android.content.Context
-import android.content.Intent
 import android.graphics.Color
 import android.os.Bundle
 import android.text.InputType
@@ -18,9 +15,14 @@ import android.widget.Spinner
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
+import com.lchuang.xiaozhimobile.runtime.WakeRuntimeStatus
+import com.lchuang.xiaozhimobile.runtime.WakeRuntimeStatusStore
+import com.lchuang.xiaozhimobile.runtime.WakeRuntimeStatusStoreProvider
+import com.lchuang.xiaozhimobile.runtime.WakeServiceController
 
 class SettingsActivity : Activity() {
     private lateinit var settings: SettingsStore
+    private lateinit var runtimeStatusStore: WakeRuntimeStatusStore
 
     private lateinit var assistantName: EditText
     private lateinit var wakePhrase: EditText
@@ -38,12 +40,28 @@ class SettingsActivity : Activity() {
     private lateinit var defaultMapApp: Spinner
     private lateinit var apiMode: Spinner
     private lateinit var appAliases: EditText
+    private lateinit var backgroundWakeEnabled: Switch
+    private lateinit var runtimeStatus: TextView
+
+    private val runtimeObserver: (WakeRuntimeStatus) -> Unit = { status ->
+        runOnUiThread { renderRuntimeStatus(status) }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         settings = SettingsStore(this)
+        runtimeStatusStore = WakeRuntimeStatusStoreProvider.instance()
         setContentView(buildUi())
         loadSettings()
+        runtimeStatusStore.addObserver(runtimeObserver)
+        renderRuntimeStatus(runtimeStatusStore.current)
+    }
+
+    override fun onDestroy() {
+        if (::runtimeStatusStore.isInitialized) {
+            runtimeStatusStore.removeObserver(runtimeObserver)
+        }
+        super.onDestroy()
     }
 
     private fun buildUi(): View {
@@ -81,6 +99,30 @@ class SettingsActivity : Activity() {
         timeoutSeconds = addEdit(root, "连续会话超时秒数，默认 20").apply {
             inputType = InputType.TYPE_CLASS_NUMBER
         }
+        backgroundWakeEnabled = Switch(this).apply {
+            text = "后台唤醒"
+        }
+        root.addView(backgroundWakeEnabled, LinearLayout.LayoutParams(-1, -2))
+        runtimeStatus = TextView(this).apply {
+            setTextColor(Color.DKGRAY)
+            setPadding(0, dp(4), 0, dp(8))
+        }
+        root.addView(runtimeStatus, LinearLayout.LayoutParams(-1, -2))
+        root.addView(Button(this).apply {
+            text = "启动唤醒服务"
+            setOnClickListener { startWakeService() }
+        }, LinearLayout.LayoutParams(-1, -2))
+        root.addView(Button(this).apply {
+            text = "停止唤醒服务"
+            setOnClickListener { stopWakeService() }
+        }, LinearLayout.LayoutParams(-1, -2))
+        root.addView(Button(this).apply {
+            text = "应用唤醒设置"
+            setOnClickListener {
+                persistSettings()
+                applyWakeSettingsIfRunning()
+            }
+        }, LinearLayout.LayoutParams(-1, -2))
         preferOfflineAsr = Switch(this).apply {
             text = "优先使用离线语音识别"
         }
@@ -161,6 +203,7 @@ class SettingsActivity : Activity() {
         wakeReply.setText(settings.wakeReply)
         timeoutReply.setText(settings.timeoutReply)
         timeoutSeconds.setText(settings.sessionTimeoutSeconds.toString())
+        backgroundWakeEnabled.isChecked = WakeServiceController.isBackgroundWakeEnabled(this)
         preferOfflineAsr.isChecked = settings.preferOfflineAsr
         ttsVoiceName.setText(settings.ttsVoiceName)
         apiBaseUrl.setText(settings.apiBaseUrl)
@@ -175,6 +218,20 @@ class SettingsActivity : Activity() {
     }
 
     private fun saveSettings() {
+        persistSettings()
+        if (backgroundWakeEnabled.isChecked) {
+            if (WakeServiceController.isRunning(this)) {
+                WakeServiceController.applyWakeSettings(this)
+            } else {
+                WakeServiceController.start(this)
+            }
+        } else {
+            WakeServiceController.stop(this)
+        }
+        Toast.makeText(this, "设置已保存", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun persistSettings() {
         settings.assistantName = assistantName.text.toString()
         settings.wakePhrase = wakePhrase.text.toString()
         settings.wakeReply = wakeReply.text.toString()
@@ -191,19 +248,38 @@ class SettingsActivity : Activity() {
         settings.ttsPitch = ttsPitch.text.toString().toFloatOrNull() ?: 1.0f
         settings.defaultMapApp = MapAppPreference.entries.getOrElse(defaultMapApp.selectedItemPosition) { MapAppPreference.AUTO }
         settings.appAliases = appAliases.text.toString()
-        applyWakeSettingsIfRunning()
-        Toast.makeText(this, "设置已保存", Toast.LENGTH_SHORT).show()
+        WakeServiceController.setBackgroundWakeEnabled(this, backgroundWakeEnabled.isChecked)
     }
 
     private fun applyWakeSettingsIfRunning() {
-        if (!isWakeServiceRunning()) return
-        startService(Intent(this, WakeService::class.java).setAction(WakeService.ACTION_APPLY_WAKE_SETTINGS))
+        if (!WakeServiceController.isRunning(this)) return
+        WakeServiceController.applyWakeSettings(this)
     }
 
-    private fun isWakeServiceRunning(): Boolean {
-        val manager = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-        @Suppress("DEPRECATION")
-        return manager.getRunningServices(Int.MAX_VALUE).any { it.service.className == WakeService::class.java.name }
+    private fun startWakeService() {
+        backgroundWakeEnabled.isChecked = true
+        WakeServiceController.setBackgroundWakeEnabled(this, true)
+        WakeServiceController.start(this)
+    }
+
+    private fun stopWakeService() {
+        backgroundWakeEnabled.isChecked = false
+        WakeServiceController.setBackgroundWakeEnabled(this, false)
+        WakeServiceController.stop(this)
+    }
+
+    private fun renderRuntimeStatus(status: WakeRuntimeStatus) {
+        if (!::runtimeStatus.isInitialized) return
+        runtimeStatus.text = when (status) {
+            WakeRuntimeStatus.STOPPED -> "唤醒服务已停止"
+            WakeRuntimeStatus.STARTING -> "正在启动离线唤醒"
+            WakeRuntimeStatus.KWS_LISTENING -> "等待唤醒"
+            WakeRuntimeStatus.SESSION_ACTIVE -> "连续会话进行中"
+            WakeRuntimeStatus.ERROR -> {
+                val detail = runtimeStatusStore.detail?.takeIf { it.isNotBlank() }
+                if (detail == null) "唤醒服务异常" else "唤醒服务异常：$detail"
+            }
+        }
     }
 
     private fun addEdit(root: LinearLayout, hintValue: String): EditText = EditText(this).also { editText ->
