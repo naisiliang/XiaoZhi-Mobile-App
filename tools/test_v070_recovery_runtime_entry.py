@@ -90,7 +90,7 @@ def collect_missing():
         clean_source = strip_kotlin_literals(source)
         functions = {}
         for match in re.finditer(
-            r"(?:private |public |internal |protected )?(?:override )?fun\s+([A-Za-z_]\w*)\b[^{{]*\{{",
+            r"(?:private |public |internal |protected )?(?:override )?fun\s+([A-Za-z_]\w*)\b[^{}]*\{",
             clean_source,
         ):
             body = extract_block(clean_source, match.end() - 1)
@@ -113,6 +113,37 @@ def collect_missing():
                 if name in functions and name not in visited
             )
         missing.append(f"{context}: missing reachable {marker}")
+
+    def require_function_reachable(source, entry_names, target_name, context):
+        clean_source = strip_kotlin_literals(source)
+        functions = {}
+        for match in re.finditer(
+            r"(?:private |public |internal |protected )?(?:override )?fun\s+([A-Za-z_]\w*)\b[^{}]*\{",
+            clean_source,
+        ):
+            body = extract_block(clean_source, match.end() - 1)
+            if body is not None:
+                functions[match.group(1)] = body
+        if target_name not in functions:
+            missing.append(f"{context}: missing function {target_name}")
+            return
+        pending = list(entry_names)
+        visited = set()
+        while pending:
+            function_name = pending.pop()
+            if function_name in visited:
+                continue
+            visited.add(function_name)
+            if function_name == target_name:
+                return
+            body = functions.get(function_name)
+            if body is None:
+                continue
+            pending.extend(
+                name for name in re.findall(r"\b([A-Za-z_]\w*)\s*\(", body)
+                if name in functions and name not in visited
+            )
+        missing.append(f"{context}: {target_name} is not reachable from {', '.join(entry_names)}")
 
     def require_shared_controller(context):
         if not CONTROLLER:
@@ -327,6 +358,12 @@ def collect_missing():
         ("submitText", "onTextResult"),
         r"WakeServiceController\s*\.\s*submitText\s*\(",
         "MainActivity typed submit route",
+    )
+    require_function_reachable(
+        MAIN,
+        ("onCreate",),
+        "requestNeededPermissions",
+        "MainActivity permission request path",
     )
     require_marker_in_reachable_functions(
         SETTINGS,

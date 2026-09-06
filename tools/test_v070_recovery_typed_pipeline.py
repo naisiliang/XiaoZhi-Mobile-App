@@ -108,9 +108,12 @@ def collect_missing():
             variable_name = re.escape(declaration.group(1))
             end = intent_declarations[index + 1].start() if index + 1 < len(intent_declarations) else len(body)
             route = body[declaration.end():end]
+            assignment_route = body[declaration.start():end]
             receiver_scope = re.search(
-                rf"\.(?:apply|also|run)\s*\{{|\bwith\s*\(\s*{variable_name}\s*\)\s*\{{",
-                route,
+                rf"\bIntent\s*\([^)]*\)\s*\.(?:apply|also|run)\s*\{{|"
+                rf"\b{variable_name}\s*\.(?:apply|also|run)\s*\{{|"
+                rf"\bwith\s*\(\s*{variable_name}\s*\)\s*\{{",
+                assignment_route,
                 re.S,
             )
             action_on_intent = re.search(

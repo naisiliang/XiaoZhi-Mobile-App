@@ -73,7 +73,7 @@ def collect_missing():
     def ui_entry_function_bodies(source):
         source = strip_kotlin_comments(source)
         pattern = re.compile(
-            r"(?:private |public |internal |protected )?(?:override )?fun\s+([A-Za-z_]\w*)\b[^{{]*\{{"
+            r"(?:private |public |internal |protected )?(?:override )?fun\s+([A-Za-z_]\w*)\b[^{}]*\{"
         )
         bodies = {}
         for match in pattern.finditer(source):
