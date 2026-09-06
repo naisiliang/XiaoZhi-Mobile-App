@@ -98,3 +98,7 @@ PASS: v0.7 Phase 0 recovery gate
 The controller also verified `git diff --check`, the Frozen Golden source diff, and no changes outside the Task 1 files plus the follow-up store fix. The follow-up removes destructive clearing when a stale caller queries a different package/window; a mismatched read now returns null without discarding the current context. The implementation remains process-memory-only and no raw node tree is persisted or logged.
 
 The original RED phase did create the focused test before the implementation, but the implementer could not execute the compile-time RED command because of its isolated environment. The current focused test and all predecessor gates are GREEN under the host toolchain; this environment limitation remains a recorded concern rather than a claimed RED execution.
+
+## Fix round 1
+
+The added immutability regression was run before the implementation and failed as expected: both source-list mutation and external child-list mutation were accepted by the original data class. `ScreenNode` now owns a defensive copied, unmodifiable child list and preserves value equality/hash/toString semantics. The focused test then passed with `gradle :app:testDebugUnitTest --tests '*ScreenContextStoreTest*' --stacktrace`; the full Phase 0 gate also passed. Fix commit: `2410e29`.
