@@ -5,10 +5,8 @@ import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
 MAIN = (ROOT / "app/src/main/java/com/lchuang/xiaozhimobile/MainActivity.kt").read_text("utf-8")
-SETTINGS = (ROOT / "app/src/main/java/com/lchuang/xiaozhimobile/SettingsActivity.kt").read_text("utf-8")
 ADAPTER = (ROOT / "app/src/main/java/com/lchuang/xiaozhimobile/conversation/ConversationAdapter.kt").read_text("utf-8")
 MAIN_LAYOUT = ROOT / "app/src/main/res/layout/activity_main_chat.xml"
-SETTINGS_LAYOUT = ROOT / "app/src/main/res/layout/activity_settings.xml"
 
 
 def collect_missing():
@@ -30,8 +28,6 @@ def collect_missing():
         return source
 
     MAIN_CLEAN = strip_kotlin_comments(MAIN)
-    SETTINGS_CLEAN = strip_kotlin_comments(SETTINGS)
-
     def forbid(source, marker, context):
         if marker in source:
             missing.append(f"{context}: still contains {marker}")
@@ -104,21 +100,6 @@ def collect_missing():
             )
         missing.append(f"{context}: missing reachable UI binding in onCreate or a function it invokes")
 
-    def require_vertical_linear_layout(path, context):
-        if not path.exists():
-            return
-        source = strip_xml_comments(path.read_text("utf-8"))
-        try:
-            root = ET.fromstring(source)
-        except ET.ParseError:
-            return
-        orientation_key = "{http://schemas.android.com/apk/res/android}orientation"
-        for element in root.iter():
-            tag_name = element.tag.rsplit("}", 1)[-1]
-            if tag_name == "LinearLayout" and element.attrib.get(orientation_key) == "vertical":
-                return
-        missing.append(f"{context}: no LinearLayout with android:orientation=vertical")
-
     def require_xml_tags(path, patterns, context):
         if not path.exists():
             missing.append(f"{context}: missing file {path.relative_to(ROOT)}")
@@ -144,16 +125,6 @@ def collect_missing():
         ),
         "MainActivity chat layout",
     )
-    require_xml_tags(
-        SETTINGS_LAYOUT,
-        (
-            r"<(?:[A-Za-z_]\w*\.)*ScrollView\b",
-            r"<(?:[A-Za-z_]\w*\.)*LinearLayout\b",
-            r"android:orientation\s*=\s*[\"']vertical[\"']",
-        ),
-        "SettingsActivity settings layout",
-    )
-    require_vertical_linear_layout(SETTINGS_LAYOUT, "SettingsActivity settings layout")
     require_body(
         MAIN_CLEAN,
         "onCreate",
@@ -161,22 +132,10 @@ def collect_missing():
         "MainActivity XML inflation",
     )
     require_body(
-        SETTINGS_CLEAN,
-        "onCreate",
-        (r"setContentView\s*\(\s*R\.layout\.activity_settings\s*\)",),
-        "SettingsActivity XML inflation",
-    )
-    require_body(
         MAIN_CLEAN,
         "onCreate",
         (r"ViewCompat\.setOnApplyWindowInsetsListener", r"WindowCompat\.setDecorFitsSystemWindows"),
         "MainActivity insets handling",
-    )
-    require_body(
-        SETTINGS_CLEAN,
-        "onCreate",
-        (r"ViewCompat\.setOnApplyWindowInsetsListener", r"WindowCompat\.setDecorFitsSystemWindows"),
-        "SettingsActivity insets handling",
     )
     require_marker_in_ui_entry(
         MAIN_CLEAN,
@@ -184,12 +143,10 @@ def collect_missing():
         "MainActivity assistant-name title",
     )
     forbid(strip_kotlin_literals(ADAPTER), "android.R.layout.simple_list_item_2", "ConversationAdapter scaffold row")
-    if re.search(
-        r'["\'][^"\']*(?:v0\.6\.5|会话状态机|悬浮层手动退出|自然语言媒体音量)[^"\']*["\']',
-        MAIN_CLEAN,
-        re.S,
-    ):
-        missing.append("MainActivity debug subtitle: still contains a v0.6.5/debug status literal")
+    debug_literal = r'["\'][^"\']*(?:v0\.6\.5|会话状态机|悬浮层手动退出|自然语言媒体音量)[^"\']*["\']'
+    oversized_status = r'(?:\btext\s*=|\bsetText\s*\()[^"\n;]*"[^"\n]{48,}"'
+    if re.search(debug_literal, MAIN_CLEAN, re.S) or re.search(oversized_status, MAIN_CLEAN, re.S):
+        missing.append("MainActivity debug subtitle: still contains a debug/version or oversized status literal")
 
     return missing
 

@@ -29,11 +29,12 @@ Output:
 
 ```text
 Traceback (most recent call last):
-  File "E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full\tools\test_v070_recovery_runtime_entry.py", line 257, in <module>
+  File "E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full\tools\test_v070_recovery_runtime_entry.py", line 275, in <module>
     raise AssertionError("runtime entry recovery contract is still missing:\n- " + "\n- ".join(missing))
 AssertionError: runtime entry recovery contract is still missing:
 - MainActivity typed submit route: missing WakeServiceController\s*\.\s*submitText\s*\(
 - SettingsActivity wake settings route: missing reachable WakeServiceController\s*\.\s*(?:start|stop|applyWakeSettings)\s*\(
+- WakeServiceController shared implementation: missing app\src\main\java\com\lchuang\xiaozhimobile\runtime\WakeServiceController.kt
 - MainActivity first-install permission grant path: missing callback/equivalent with permission-grant signal and WakeServiceController.start(
 - MainActivity granted microphone branch: missing reachable WakeServiceController.start( in the granted RECORD_AUDIO branch
 ```
@@ -52,11 +53,12 @@ Output:
 
 ```text
 Traceback (most recent call last):
-  File "E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full\tools\test_v070_recovery_typed_pipeline.py", line 230, in <module>
+  File "E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full\tools\test_v070_recovery_typed_pipeline.py", line 249, in <module>
     raise AssertionError("typed pipeline recovery contract is still missing:\n- " + "\n- ".join(missing))
 AssertionError: typed pipeline recovery contract is still missing:
-- MainActivity typed submit path: still contains ConversationResultBridge.submitText(
+- MainActivity typed submit path: still contains pattern ConversationResultBridge\s*\.\s*submitText\s*\(
 - MainActivity text submission route: missing WakeServiceController\s*\.\s*submitText\s*\(
+- WakeServiceController submit route: missing app\src\main\java\com\lchuang\xiaozhimobile\runtime\WakeServiceController.kt
 - WakeService text action constant: missing pattern const val ACTION_SUBMIT_TEXT\b
 - WakeService text payload constant: missing pattern const val EXTRA_TEXT\b
 - WakeService shared text processor: missing pattern fun\s+processAssistantInput\s*\(
@@ -77,30 +79,26 @@ Output:
 
 ```text
 Traceback (most recent call last):
-  File "E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full\tools\test_v070_recovery_ui_contract.py", line 199, in <module>
+  File "E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full\tools\test_v070_recovery_ui_contract.py", line 156, in <module>
     raise AssertionError("ui recovery contract is still missing:\n- " + "\n- ".join(missing))
 AssertionError: ui recovery contract is still missing:
 - MainActivity chat layout: missing file app\src\main\res\layout\activity_main_chat.xml
-- SettingsActivity settings layout: missing file app\src\main\res\layout\activity_settings.xml
 - MainActivity XML inflation: missing setContentView\s*\(\s*R\.layout\.activity_main_chat\s*\)
-- SettingsActivity XML inflation: missing setContentView\s*\(\s*R\.layout\.activity_settings\s*\)
 - MainActivity insets handling: missing ViewCompat\.setOnApplyWindowInsetsListener
 - MainActivity insets handling: missing WindowCompat\.setDecorFitsSystemWindows
-- SettingsActivity insets handling: missing ViewCompat\.setOnApplyWindowInsetsListener
-- SettingsActivity insets handling: missing WindowCompat\.setDecorFitsSystemWindows
 - MainActivity assistant-name title: missing reachable UI binding in onCreate or a function it invokes
 - ConversationAdapter scaffold row: still contains android.R.layout.simple_list_item_2
-- MainActivity debug subtitle: still contains a v0.6.5/debug status literal
+- MainActivity debug subtitle: still contains a debug/version or oversized status literal
 ```
 
-Why this is expected: the planned chat/settings XML layouts do not exist yet, the activities still use the old programmatic scaffold, insets hooks are absent, the assistant-name title marker is absent, and the scaffold conversation row plus debug subtitle are still present.
+Why this is expected: the planned chat XML layout does not exist yet, MainActivity still uses the old programmatic scaffold, the MainActivity Insets hooks and assistant-name title binding are absent, and the scaffold conversation row plus debug subtitle are still present. Settings XML remains owned by the later Settings parity task.
 
 ## Self-review
 
 - Confirmed the task stayed test/evidence only; no production Kotlin, XML, or Gradle files were changed.
-- Confirmed the runtime test now checks a reachable granted-microphone start branch, a permission callback tied to the audio/request signal, and controller calls reachable from Settings lifecycle/actions.
-- Confirmed the typed test keeps the bridge submit call forbidden, couples `ACTION_SUBMIT_TEXT` to `EXTRA_TEXT` and `processAssistantInput` with direct data flow or an intent-carrying helper, and forbids direct device execution from Activities.
-- Confirmed the UI test parses XML, matches real opening tags, ties Settings orientation to a `LinearLayout`, scopes the assistant title to code reachable from `onCreate`, and checks the Insets path.
+- Confirmed the runtime test now checks a reachable granted-microphone start branch, a permission callback tied to the audio/request signal, controller calls reachable from Settings lifecycle/actions, and the shared controller source.
+- Confirmed the typed test keeps the bridge submit call forbidden, couples the controller implementation to `ACTION_SUBMIT_TEXT`/`EXTRA_TEXT`, checks the service-side `processAssistantInput` data flow or an intent-carrying helper, and forbids direct device execution from Activities.
+- Confirmed the UI test parses the MainActivity XML, matches real opening tags, scopes the assistant title to code reachable from `onCreate`, checks the Insets path, and leaves Settings XML to the later parity task.
 
 ## Commit
 

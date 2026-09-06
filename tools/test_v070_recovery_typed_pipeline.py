@@ -6,6 +6,8 @@ ROOT = Path(__file__).resolve().parents[1]
 MAIN = (ROOT / "app/src/main/java/com/lchuang/xiaozhimobile/MainActivity.kt").read_text("utf-8")
 SETTINGS = (ROOT / "app/src/main/java/com/lchuang/xiaozhimobile/SettingsActivity.kt").read_text("utf-8")
 WAKE = (ROOT / "app/src/main/java/com/lchuang/xiaozhimobile/WakeService.kt").read_text("utf-8")
+CONTROLLER_PATH = ROOT / "app/src/main/java/com/lchuang/xiaozhimobile/runtime/WakeServiceController.kt"
+CONTROLLER = CONTROLLER_PATH.read_text("utf-8") if CONTROLLER_PATH.exists() else ""
 
 
 def collect_missing():
@@ -87,6 +89,22 @@ def collect_missing():
             if body is not None and re.search(marker, body, re.S):
                 return
         missing.append(f"{context}: missing {marker}")
+
+    def require_controller_submit_route():
+        if not CONTROLLER:
+            missing.append(f"WakeServiceController submit route: missing {CONTROLLER_PATH.relative_to(ROOT)}")
+            return
+        body = function_body(CONTROLLER, "submitText")
+        if body is None:
+            missing.append("WakeServiceController submit route: missing function submitText")
+            return
+        for marker in (
+            r"\bIntent\s*\(",
+            r"\bWakeService\s*\.\s*ACTION_SUBMIT_TEXT\b",
+            r"\bWakeService\s*\.\s*EXTRA_TEXT\b",
+        ):
+            if not re.search(marker, body, re.S):
+                missing.append(f"WakeServiceController submit route: missing {marker}")
 
     def require_action_branch(source, context):
         body = function_body(source, "onStartCommand")
@@ -205,6 +223,7 @@ def collect_missing():
         r"WakeServiceController\s*\.\s*submitText\s*\(",
         "MainActivity text submission route",
     )
+    require_controller_submit_route()
     require_regex(WAKE_CLEAN, r"const val ACTION_SUBMIT_TEXT\b", "WakeService text action constant")
     require_regex(WAKE_CLEAN, r"const val EXTRA_TEXT\b", "WakeService text payload constant")
     require_regex(WAKE_CLEAN, r"fun\s+processAssistantInput\s*\(", "WakeService shared text processor")

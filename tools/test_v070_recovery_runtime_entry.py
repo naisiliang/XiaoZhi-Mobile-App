@@ -5,6 +5,8 @@ import re
 ROOT = Path(__file__).resolve().parents[1]
 MAIN = (ROOT / "app/src/main/java/com/lchuang/xiaozhimobile/MainActivity.kt").read_text("utf-8")
 SETTINGS = (ROOT / "app/src/main/java/com/lchuang/xiaozhimobile/SettingsActivity.kt").read_text("utf-8")
+CONTROLLER_PATH = ROOT / "app/src/main/java/com/lchuang/xiaozhimobile/runtime/WakeServiceController.kt"
+CONTROLLER = CONTROLLER_PATH.read_text("utf-8") if CONTROLLER_PATH.exists() else ""
 
 
 def collect_missing():
@@ -111,6 +113,21 @@ def collect_missing():
                 if name in functions and name not in visited
             )
         missing.append(f"{context}: missing reachable {marker}")
+
+    def require_shared_controller(context):
+        if not CONTROLLER:
+            missing.append(f"{context}: missing {CONTROLLER_PATH.relative_to(ROOT)}")
+            return
+        controller_clean = strip_kotlin_literals(CONTROLLER)
+        if not re.search(r"\b(?:object|class)\s+WakeServiceController\b", controller_clean):
+            missing.append(f"{context}: missing WakeServiceController declaration")
+        shared_reference = (
+            r"(?:import\s+com\.lchuang\.xiaozhimobile\.runtime\.WakeServiceController\b|"
+            r"\bcom\.lchuang\.xiaozhimobile\.runtime\.WakeServiceController\b)"
+        )
+        for source, source_name in ((MAIN, "MainActivity"), (SETTINGS, "SettingsActivity")):
+            if not re.search(shared_reference, strip_kotlin_comments(source), re.S):
+                missing.append(f"{context}: {source_name} does not reference the shared runtime controller")
 
     def require_permission_branch(source, context):
         body = function_body(source, "requestNeededPermissions")
@@ -247,6 +264,7 @@ def collect_missing():
         r"WakeServiceController\s*\.\s*(?:start|stop|applyWakeSettings)\s*\(",
         "SettingsActivity wake settings route",
     )
+    require_shared_controller("WakeServiceController shared implementation")
     require_callback_start(MAIN, "MainActivity first-install permission grant path")
     require_permission_branch(MAIN, "MainActivity granted microphone branch")
     return missing
