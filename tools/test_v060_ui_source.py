@@ -6,6 +6,7 @@ ROOT = Path(__file__).resolve().parents[1]
 MAIN_SOURCE = (ROOT / "app/src/main/java/com/lchuang/xiaozhimobile/MainActivity.kt").read_text("utf-8")
 SETTINGS_SOURCE = (ROOT / "app/src/main/java/com/lchuang/xiaozhimobile/SettingsActivity.kt").read_text("utf-8")
 SETTINGS_LAYOUT = (ROOT / "app/src/main/res/layout/activity_settings.xml").read_text("utf-8")
+MAIN_LAYOUT = (ROOT / "app/src/main/res/layout/activity_main_chat.xml").read_text("utf-8")
 
 
 def extract_block(source, opening_brace, description):
@@ -89,7 +90,7 @@ settings_load = method_body(settings_class, "loadSettings")
 settings_save = method_body(settings_class, "saveSettings")
 settings_persist = method_body(settings_class, "persistSettings")
 main_on_create = method_body(MAIN_SOURCE, "onCreate")
-main_build_ui = method_body(MAIN_SOURCE, "buildChatHome")
+main_bind_views = method_body(MAIN_SOURCE, "bindChatViews")
 main_menu = method_body(MAIN_SOURCE, "showHomeMenu")
 permissions = method_body(MAIN_SOURCE, "requestNeededPermissions")
 
@@ -168,8 +169,11 @@ require(SETTINGS_LAYOUT, "android:inputType=\"textPassword\"", "SettingsActivity
 
 require(MAIN_SOURCE, "private lateinit var repository: ConversationRepository", "MainActivity chat repository")
 require(MAIN_SOURCE, "private var currentSession: ConversationSession? = null", "MainActivity active session")
-for marker in ("RecyclerView", "ConversationAdapter", 'hint = "输入消息"', 'text = "发送"', 'text = "⋮"'):
-    require(main_build_ui, marker, "MainActivity chat home")
+for marker in ("<androidx.recyclerview.widget.RecyclerView", "<EditText", 'android:hint="点击输入或按住说话"', 'android:text="＋"', 'android:text="⋮"', 'android:text="☰"'):
+    require(MAIN_LAYOUT, marker, "MainActivity chat home")
+require(main_bind_views, "conversationList = findViewById(R.id.conversation_list)", "MainActivity RecyclerView binding")
+require(main_bind_views, "conversationList.adapter = conversationAdapter", "MainActivity adapter binding")
+require(main_bind_views, "composer = findViewById(R.id.message_input)", "MainActivity composer binding")
 
 require(main_menu, 'menu.add("历史会话").setOnMenuItemClickListener', "MainActivity history entry")
 require(main_menu, "Intent(this@MainActivity, ConversationHistoryActivity::class.java)", "MainActivity history navigation")
@@ -185,7 +189,8 @@ require_order(
     ("assistantState = stateStore.current", "runtimeStatus = runtimeStatusStore.current", "renderStatus()"),
     "MainActivity initial diagnostic status",
 )
-require(main_build_ui, 'text = "v0.6.5：会话状态机 + 悬浮层手动退出 + 智能退出 + 自然语言媒体音量"', "MainActivity diagnostic summary")
+require(MAIN_LAYOUT, 'android:text="小白智能体"', "MainActivity assistant title")
+require(MAIN_SOURCE, 'assistantTitle.text = "${assistantName}智能体"', "MainActivity assistant title binding")
 require(permissions, "Manifest.permission.RECORD_AUDIO", "MainActivity microphone permission")
 require(permissions, "Manifest.permission.CAMERA", "MainActivity camera permission")
 require(permissions, "Manifest.permission.POST_NOTIFICATIONS", "MainActivity notification permission")
@@ -193,7 +198,10 @@ require(permissions, "Manifest.permission.POST_NOTIFICATIONS", "MainActivity not
 require_order(
     main_on_create,
     (
-        "setContentView(buildChatHome())",
+        "setContentView(R.layout.activity_main_chat)",
+        "bindChatViews()",
+        "configureQuickActions()",
+        "configureInsets()",
         "currentSession = sessionManager.currentSession() ?: repository.loadCurrent()",
         "conversationAdapter.submitSession(currentSession)",
         "ConversationSessionStore.observe(this, sessionObserver)",

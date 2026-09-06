@@ -4,18 +4,18 @@ import android.Manifest
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.graphics.Color
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.Bundle
-import android.view.Gravity
 import android.view.View
 import android.widget.EditText
-import android.widget.LinearLayout
 import android.widget.PopupMenu
 import android.widget.TextView
 import android.widget.Toast
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.lchuang.xiaozhimobile.conversation.AssistantState
@@ -36,6 +36,7 @@ import com.lchuang.xiaozhimobile.runtime.WakeRuntimeStatusStoreProvider
 import com.lchuang.xiaozhimobile.runtime.WakeServiceController
 
 class MainActivity : Activity() {
+    private lateinit var settings: SettingsStore
     private lateinit var repository: ConversationRepository
     private lateinit var sessionManager: ConversationSessionManager
     private lateinit var stateStore: AssistantStateStore
@@ -43,6 +44,11 @@ class MainActivity : Activity() {
     private lateinit var conversationAdapter: ConversationAdapter
     private lateinit var composer: EditText
     private lateinit var status: TextView
+    private lateinit var assistantTitle: TextView
+    private lateinit var chatRoot: View
+    private lateinit var chatHeader: View
+    private lateinit var composerContainer: View
+    private lateinit var conversationList: RecyclerView
     private var currentSession: ConversationSession? = null
     private var assistantState = AssistantState.WAITING_WAKE
     private var runtimeStatus = WakeRuntimeStatus.STOPPED
@@ -82,11 +88,16 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        settings = SettingsStore(this)
         repository = ConversationSessionStore.repository(this)
         sessionManager = ConversationSessionStore.manager(this)
         stateStore = AssistantStateStoreProvider.instance()
         runtimeStatusStore = WakeRuntimeStatusStoreProvider.instance()
-        setContentView(buildChatHome())
+        setContentView(R.layout.activity_main_chat)
+        bindChatViews()
+        configureQuickActions()
+        configureInsets()
+        renderAssistantTitle()
         stateStore.addObserver(stateObserver)
         removeStateObserver = { stateStore.removeObserver(stateObserver) }
         runtimeStatusStore.addObserver(runtimeObserver)
@@ -102,6 +113,11 @@ class MainActivity : Activity() {
         requestNeededPermissions()
     }
 
+    override fun onResume() {
+        super.onResume()
+        if (::assistantTitle.isInitialized) renderAssistantTitle()
+    }
+
     override fun onDestroy() {
         ConversationResultBridge.unregisterSink(resultSink)
         removeSessionObserver?.invoke()
@@ -113,61 +129,54 @@ class MainActivity : Activity() {
         super.onDestroy()
     }
 
-    private fun buildChatHome(): View {
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(20), dp(16), dp(16))
-            setBackgroundColor(Color.rgb(247, 248, 250))
-        }
-        val header = LinearLayout(this).apply {
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        header.addView(TextView(this).apply {
-            text = "小智对话"
-            textSize = 26f
-            setTextColor(Color.rgb(20, 24, 33))
-        }, LinearLayout.LayoutParams(0, -2, 1f))
-        header.addView(TextView(this).apply {
-            text = "⋮"
-            textSize = 30f
-            gravity = Gravity.CENTER
-            setPadding(dp(12), 0, dp(12), 0)
-            setOnClickListener { showHomeMenu(it) }
-        })
-        root.addView(header)
-
-        status = TextView(this).apply {
-            text = "v0.6.5：会话状态机 + 悬浮层手动退出 + 智能退出 + 自然语言媒体音量"
-            textSize = 14f
-            setTextColor(Color.rgb(34, 95, 68))
-            setPadding(0, dp(6), 0, dp(10))
-        }
-        root.addView(status)
-
+    private fun bindChatViews() {
+        chatRoot = findViewById(R.id.chat_root)
+        chatHeader = findViewById(R.id.chat_header)
+        composerContainer = findViewById(R.id.composer_container)
+        assistantTitle = findViewById(R.id.assistant_title)
+        status = findViewById(R.id.assistant_status)
+        composer = findViewById(R.id.message_input)
+        conversationList = findViewById(R.id.conversation_list)
         conversationAdapter = ConversationAdapter()
-        root.addView(RecyclerView(this).apply {
-            layoutManager = LinearLayoutManager(this@MainActivity)
-            adapter = conversationAdapter
-            setHasFixedSize(false)
-        }, LinearLayout.LayoutParams(-1, 0, 1f))
+        conversationList.layoutManager = LinearLayoutManager(this)
+        conversationList.adapter = conversationAdapter
+        conversationList.setHasFixedSize(false)
+        findViewById<TextView>(R.id.home_navigation).setOnClickListener { showHomeMenu(it) }
+        findViewById<TextView>(R.id.home_menu).setOnClickListener { showHomeMenu(it) }
+    }
 
-        val composerRow = LinearLayout(this).apply {
-            gravity = Gravity.CENTER_VERTICAL
+    private fun configureQuickActions() {
+        mapOf(
+            R.id.quick_open_app to "请认真思考后回答",
+            R.id.quick_nearby to "打给小白",
+            R.id.quick_music to "帮我写作",
+            R.id.quick_volume to "请总结当前内容",
+        ).forEach { (viewId, command) ->
+            findViewById<TextView>(viewId).setOnClickListener { onTextResult(command) }
         }
-        composer = EditText(this).apply {
-            hint = "输入消息"
-            setSingleLine(false)
-            maxLines = 3
+        findViewById<TextView>(R.id.send_message).setOnClickListener { submitText() }
+    }
+
+    private fun configureInsets() {
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        ViewCompat.setOnApplyWindowInsetsListener(chatRoot) { _, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
+            chatHeader.setPadding(dp(16), bars.top + dp(12), dp(12), dp(8))
+            composerContainer.setPadding(
+                dp(12),
+                dp(6),
+                dp(8),
+                maxOf(bars.bottom, ime.bottom) + dp(6),
+            )
+            insets
         }
-        composerRow.addView(composer, LinearLayout.LayoutParams(0, -2, 1f))
-        composerRow.addView(TextView(this).apply {
-            text = "发送"
-            gravity = Gravity.CENTER
-            setPadding(dp(16), dp(12), dp(16), dp(12))
-            setOnClickListener { submitText() }
-        })
-        root.addView(composerRow)
-        return root
+        ViewCompat.requestApplyInsets(chatRoot)
+    }
+
+    private fun renderAssistantTitle() {
+        val assistantName = settings.assistantName
+        assistantTitle.text = "${assistantName}智能体"
     }
 
     private fun showHomeMenu(anchor: View) {

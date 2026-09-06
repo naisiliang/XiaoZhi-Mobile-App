@@ -9,6 +9,18 @@ ROOT = Path(__file__).resolve().parents[1]
 MAIN = (ROOT / "app/src/main/java/com/lchuang/xiaozhimobile/MainActivity.kt").read_text("utf-8")
 ADAPTER = (ROOT / "app/src/main/java/com/lchuang/xiaozhimobile/conversation/ConversationAdapter.kt").read_text("utf-8")
 MAIN_LAYOUT = ROOT / "app/src/main/res/layout/activity_main_chat.xml"
+ROLE_LAYOUTS = {
+    "user": ROOT / "app/src/main/res/layout/item_message_user.xml",
+    "assistant": ROOT / "app/src/main/res/layout/item_message_assistant.xml",
+    "operation": ROOT / "app/src/main/res/layout/item_message_operation.xml",
+}
+DRAWABLES = {
+    "user bubble": ROOT / "app/src/main/res/drawable/bg_user_bubble.xml",
+    "assistant card": ROOT / "app/src/main/res/drawable/bg_assistant_card.xml",
+    "composer": ROOT / "app/src/main/res/drawable/bg_chat_composer.xml",
+    "quick chip": ROOT / "app/src/main/res/drawable/bg_quick_chip.xml",
+    "assistant avatar": ROOT / "app/src/main/res/drawable/bg_assistant_avatar.xml",
+}
 
 
 def collect_missing():
@@ -117,6 +129,32 @@ def collect_missing():
         ),
         "MainActivity chat layout",
     )
+    for role, path in ROLE_LAYOUTS.items():
+        if not path.exists():
+            missing.append(f"ConversationAdapter {role} layout: missing file {path.relative_to(ROOT)}")
+            continue
+        role_source = strip_xml_comments(path.read_text("utf-8"))
+        require_xml_tags(path, (r"@\+id/message_text", r"@\+id/message_role"), f"ConversationAdapter {role} layout")
+        if "@drawable/" not in role_source:
+            missing.append(f"ConversationAdapter {role} layout: missing role-specific background")
+    for name, path in DRAWABLES.items():
+        if not path.exists():
+            missing.append(f"MainActivity {name} drawable: missing file {path.relative_to(ROOT)}")
+            continue
+        try:
+            ET.fromstring(path.read_text("utf-8"))
+        except ET.ParseError as error:
+            missing.append(f"MainActivity {name} drawable: malformed XML ({error})")
+    for marker in (
+        "setHasStableIds(true)",
+        "override fun getItemViewType",
+        "override fun getItemId",
+        "R.layout.item_message_user",
+        "R.layout.item_message_assistant",
+        "R.layout.item_message_operation",
+    ):
+        if marker not in ADAPTER:
+            missing.append(f"ConversationAdapter role/stable-id binding: missing {marker}")
     require_body(
         MAIN_STRUCTURE,
         "onCreate",
@@ -132,6 +170,21 @@ def collect_missing():
         MAIN_STRUCTURE,
         r"WindowCompat\.setDecorFitsSystemWindows",
         "MainActivity window fitting",
+    )
+    require_marker_in_ui_entry(
+        MAIN_STRUCTURE,
+        r"chatHeader\.setPadding",
+        "MainActivity header inset binding",
+    )
+    require_marker_in_ui_entry(
+        MAIN_STRUCTURE,
+        r"composerContainer\.setPadding",
+        "MainActivity composer inset binding",
+    )
+    require_marker_in_ui_entry(
+        MAIN_STRUCTURE,
+        r"WakeServiceController\.submitText",
+        "MainActivity typed composer route",
     )
     require_marker_in_ui_entry(
         MAIN_CLEAN,

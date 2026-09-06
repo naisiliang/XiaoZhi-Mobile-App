@@ -5,6 +5,7 @@ import re
 ROOT = Path(__file__).resolve().parents[1]
 MAIN_ACTIVITY = (ROOT / "app/src/main/java/com/lchuang/xiaozhimobile/MainActivity.kt").read_text("utf-8")
 ADAPTER_SOURCE = (ROOT / "app/src/main/java/com/lchuang/xiaozhimobile/conversation/ConversationAdapter.kt").read_text("utf-8")
+MAIN_LAYOUT = (ROOT / "app/src/main/res/layout/activity_main_chat.xml").read_text("utf-8") if (ROOT / "app/src/main/res/layout/activity_main_chat.xml").exists() else ""
 MODELS_SOURCE = (ROOT / "app/src/main/java/com/lchuang/xiaozhimobile/conversation/ConversationModels.kt").read_text("utf-8")
 SOURCE_SOURCE = (ROOT / "app/src/main/java/com/lchuang/xiaozhimobile/conversation/ConversationSessionEventSource.kt").read_text("utf-8") if (ROOT / "app/src/main/java/com/lchuang/xiaozhimobile/conversation/ConversationSessionEventSource.kt").exists() else ""
 SQLITE_SOURCE = (ROOT / "app/src/main/java/com/lchuang/xiaozhimobile/conversation/SqliteConversationRepository.kt").read_text("utf-8")
@@ -112,7 +113,7 @@ def require_order(source, markers, context):
 
 main_on_create = method_body(MAIN_ACTIVITY, "onCreate")
 main_on_destroy = method_body(MAIN_ACTIVITY, "onDestroy")
-main_build_ui = method_body(MAIN_ACTIVITY, "buildChatHome")
+main_bind_views = method_body(MAIN_ACTIVITY, "bindChatViews")
 main_menu = method_body(MAIN_ACTIVITY, "showHomeMenu")
 main_append = method_body(MAIN_ACTIVITY, "appendToCurrentSession")
 main_result_dispatch = lambda_body(MAIN_ACTIVITY, "private val resultSink", "MainActivity result dispatch")
@@ -133,7 +134,10 @@ require_order(
         "repository = ConversationSessionStore.repository(this)",
         "sessionManager = ConversationSessionStore.manager(this)",
         "stateStore = AssistantStateStore",
-        "setContentView(buildChatHome())",
+        "setContentView(R.layout.activity_main_chat)",
+        "bindChatViews()",
+        "configureQuickActions()",
+        "configureInsets()",
         "currentSession = sessionManager.currentSession() ?: repository.loadCurrent()",
         "conversationAdapter.submitSession(currentSession)",
         "ConversationSessionStore.observe(this, sessionObserver)",
@@ -163,9 +167,16 @@ require(main_menu, 'menu.add("Agents")', "Agents menu item")
 require(main_menu, 'menu.add("设置")', "settings menu item")
 require(main_menu, "Intent(this@MainActivity, ConversationHistoryActivity::class.java)", "explicit history navigation")
 require(main_menu, "Intent(this@MainActivity, SettingsActivity::class.java)", "explicit settings navigation")
-require(main_build_ui, "RecyclerView", "chat home RecyclerView")
-require(main_build_ui, "composer = EditText(this)", "chat home composer")
-require(main_build_ui, "adapter = conversationAdapter", "chat home adapter binding")
+require(MAIN_LAYOUT, "<androidx.recyclerview.widget.RecyclerView", "chat home RecyclerView layout")
+require(MAIN_LAYOUT, "<EditText", "chat home composer layout")
+require(MAIN_LAYOUT, 'android:id="@+id/assistant_title"', "chat home assistant title layout")
+require(MAIN_LAYOUT, 'android:text="智能思考"', "chat home quick action")
+require(MAIN_LAYOUT, 'android:text="打给小白"', "chat home quick action")
+require(MAIN_LAYOUT, 'android:text="AI写作"', "chat home quick action")
+require(MAIN_LAYOUT, 'android:text="总结"', "chat home quick action")
+require(main_bind_views, "conversationList = findViewById(R.id.conversation_list)", "chat home RecyclerView binding")
+require(main_bind_views, "composer = findViewById(R.id.message_input)", "chat home composer binding")
+require(main_bind_views, "conversationList.adapter = conversationAdapter", "chat home adapter binding")
 
 for handler, ingress in (
     ("onVoiceResult", "submitVoice"),

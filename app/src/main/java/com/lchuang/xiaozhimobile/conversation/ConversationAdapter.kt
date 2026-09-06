@@ -6,6 +6,9 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
+import com.lchuang.xiaozhimobile.R
+import java.text.DateFormat
+import java.util.Date
 
 class ConversationAdapter : RecyclerView.Adapter<ConversationAdapter.MessageViewHolder>() {
     sealed interface Row {
@@ -14,6 +17,10 @@ class ConversationAdapter : RecyclerView.Adapter<ConversationAdapter.MessageView
     }
 
     private val rows = mutableListOf<Row>()
+
+    init {
+        setHasStableIds(true)
+    }
 
     fun submitSession(session: ConversationSession?) {
         submitMessages(session?.messages.orEmpty())
@@ -34,8 +41,36 @@ class ConversationAdapter : RecyclerView.Adapter<ConversationAdapter.MessageView
         notifyDataSetChanged()
     }
 
+    override fun getItemViewType(position: Int): Int = when (val row = rows[position]) {
+        is Row.SessionHeader -> VIEW_TYPE_SESSION_HEADER
+        is Row.Message -> when (row.message.role) {
+            ConversationMessage.Role.USER -> VIEW_TYPE_USER
+            ConversationMessage.Role.ASSISTANT -> VIEW_TYPE_ASSISTANT
+            ConversationMessage.Role.SYSTEM_ACTION,
+            ConversationMessage.Role.SYSTEM_RESULT,
+            ConversationMessage.Role.CONFIRMATION,
+            -> VIEW_TYPE_OPERATION
+        }
+    }
+
+    override fun getItemId(position: Int): Long = when (val row = rows[position]) {
+        is Row.SessionHeader -> row.session.id.hashCode().toLong()
+        is Row.Message -> {
+            var key = row.message.timestampMs
+            key = key * 31 + row.message.role.ordinal
+            key = key * 31 + row.message.text.hashCode()
+            key
+        }
+    }
+
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): MessageViewHolder {
-        val view = LayoutInflater.from(parent.context).inflate(android.R.layout.simple_list_item_2, parent, false)
+        val layout = when (viewType) {
+            VIEW_TYPE_USER -> R.layout.item_message_user
+            VIEW_TYPE_ASSISTANT -> R.layout.item_message_assistant
+            VIEW_TYPE_OPERATION, VIEW_TYPE_SESSION_HEADER -> R.layout.item_message_operation
+            else -> error("Unknown conversation row type: $viewType")
+        }
+        val view = LayoutInflater.from(parent.context).inflate(layout, parent, false)
         return MessageViewHolder(view)
     }
 
@@ -46,19 +81,19 @@ class ConversationAdapter : RecyclerView.Adapter<ConversationAdapter.MessageView
     override fun getItemCount(): Int = rows.size
 
     class MessageViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
-        private val title = itemView.findViewById<TextView>(android.R.id.text1)
-        private val content = itemView.findViewById<TextView>(android.R.id.text2)
+        private val role = itemView.findViewById<TextView>(R.id.message_role)
+        private val content = itemView.findViewById<TextView>(R.id.message_text)
 
         fun bind(row: Row) {
             when (row) {
                 is Row.SessionHeader -> {
-                    title.text = row.session.title
-                    content.text = "${row.session.assistantName} · ${row.session.status.name} · ${row.session.startedAtMs}"
+                    role.text = "会话 · ${row.session.title}"
+                    content.text = "${row.session.assistantName} · ${statusLabel(row.session.status)} · ${formatTimestamp(row.session.startedAtMs)}"
                 }
                 is Row.Message -> {
-                    title.text = when (row.message.role) {
+                    role.text = when (row.message.role) {
                         ConversationMessage.Role.USER -> "我"
-                        ConversationMessage.Role.ASSISTANT -> "小智"
+                        ConversationMessage.Role.ASSISTANT -> "小白"
                         ConversationMessage.Role.SYSTEM_ACTION -> "系统操作"
                         ConversationMessage.Role.SYSTEM_RESULT -> "系统结果"
                         ConversationMessage.Role.CONFIRMATION -> "确认"
@@ -67,6 +102,21 @@ class ConversationAdapter : RecyclerView.Adapter<ConversationAdapter.MessageView
                 }
             }
         }
+
+        private fun statusLabel(status: ConversationSession.Status): String = when (status) {
+            ConversationSession.Status.ACTIVE -> "进行中"
+            ConversationSession.Status.COMPLETED -> "已完成"
+        }
+
+        private fun formatTimestamp(timestampMs: Long): String =
+            DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(timestampMs))
+    }
+
+    private companion object {
+        const val VIEW_TYPE_USER = 1
+        const val VIEW_TYPE_ASSISTANT = 2
+        const val VIEW_TYPE_OPERATION = 3
+        const val VIEW_TYPE_SESSION_HEADER = 4
     }
 }
 
