@@ -225,8 +225,8 @@ require(ADAPTER_SOURCE, "fun submitSession(session: ConversationSession?)", "Con
 require(ADAPTER_SOURCE, "RecyclerView.Adapter", "ConversationAdapter RecyclerView implementation")
 require(history_on_create, "repository = ConversationSessionStore.repository(this)", "history shared repository initialization")
 require(history_on_create, "repository.loadHistory()", "history repository loading")
-require(history_on_create, "ConversationAdapter()", "history adapter binding")
-require(history_on_create, "it.submitHistory(sessions)", "history session-bound adapter binding")
+require(history_on_create, "HistoryAdapter(sessions)", "history adapter binding")
+require(HISTORY_SOURCE, "class HistoryAdapter", "history session-bound adapter implementation")
 forbid(HISTORY_SOURCE, ".flatMap", "history session boundaries")
 require_regex(
     MANIFEST,
