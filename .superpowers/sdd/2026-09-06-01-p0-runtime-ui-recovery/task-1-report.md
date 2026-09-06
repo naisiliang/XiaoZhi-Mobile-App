@@ -29,13 +29,13 @@ Output:
 
 ```text
 Traceback (most recent call last):
-  File "E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full\tools\test_v070_recovery_runtime_entry.py", line 184, in <module>
+  File "E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full\tools\test_v070_recovery_runtime_entry.py", line 174, in <module>
     raise AssertionError("runtime entry recovery contract is still missing:\n- " + "\n- ".join(missing))
 AssertionError: runtime entry recovery contract is still missing:
 - MainActivity typed submit route: missing WakeServiceController\s*\.\s*submitText\s*\(
 - SettingsActivity wake settings route: missing WakeServiceController\b
 - MainActivity first-install permission grant path: missing callback/equivalent with permission-grant signal and WakeServiceController.start(
-- MainActivity granted microphone branch: missing WakeServiceController.start(
+- MainActivity granted microphone branch: missing reachable WakeServiceController.start( in the granted RECORD_AUDIO branch
 ```
 
 Why this is expected: the current source still has no shared-controller submit path, no controller-backed settings route, no permission-grant callback/equivalent with controller startup, and no granted microphone branch that starts through the controller.
@@ -52,7 +52,7 @@ Output:
 
 ```text
 Traceback (most recent call last):
-  File "E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full\tools\test_v070_recovery_typed_pipeline.py", line 180, in <module>
+  File "E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full\tools\test_v070_recovery_typed_pipeline.py", line 223, in <module>
     raise AssertionError("typed pipeline recovery contract is still missing:\n- " + "\n- ".join(missing))
 AssertionError: typed pipeline recovery contract is still missing:
 - MainActivity typed submit path: still contains ConversationResultBridge.submitText(
@@ -77,7 +77,7 @@ Output:
 
 ```text
 Traceback (most recent call last):
-  File "E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full\tools\test_v070_recovery_ui_contract.py", line 134, in <module>
+  File "E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full\tools\test_v070_recovery_ui_contract.py", line 142, in <module>
     raise AssertionError("ui recovery contract is still missing:\n- " + "\n- ".join(missing))
 AssertionError: ui recovery contract is still missing:
 - MainActivity chat layout: missing file app\src\main\res\layout\activity_main_chat.xml
@@ -104,4 +104,4 @@ Why this is expected: the planned chat/settings XML layouts do not exist yet, th
 
 ## Commit
 
-`f0bde34f018283d60b9d059578be367a96af82eb` - `test: tighten v070 task1 recovery evidence`
+Final evidence commit is recorded after the last test-only tightening commit.

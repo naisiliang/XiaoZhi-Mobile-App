@@ -17,6 +17,10 @@ def collect_missing():
         source = re.sub(r"(?m)//.*$", "", source)
         return source
 
+    MAIN_CLEAN = strip_comments(MAIN)
+    SETTINGS_CLEAN = strip_comments(SETTINGS)
+    WAKE_CLEAN = strip_comments(WAKE)
+
     def require(source, marker, context):
         if marker not in source:
             missing.append(f"{context}: missing {marker}")
@@ -95,82 +99,121 @@ def collect_missing():
         body = strip_comments(body)
 
         def has_text_processor(container):
+            container = strip_comments(container)
             extraction_patterns = (
-                r"(?:val\s+\w+\s*=\s*)?(?:intent\?\.)?(?:getStringExtra|getCharSequenceExtra|getString|getParcelableExtra|extras\?\.getString)\s*\(\s*EXTRA_TEXT\s*\)",
+                r"(?:intent\?\.\s*|intent\.\s*|extras\?\.\s*)?(?:getStringExtra|getCharSequenceExtra|getString|getParcelableExtra)\s*\(\s*EXTRA_TEXT\s*\)",
                 r"EXTRA_TEXT\s*=\s*",
-                r"EXTRA_TEXT\b[\s\S]{0,200}(?:let\s*\{|\?.|!!|processAssistantInput\s*\()",
-            )
-            process_patterns = (
-                r"processAssistantInput\s*\(",
-                r"processAssistantInput\b",
             )
             if not any(re.search(pattern, container, re.S) for pattern in extraction_patterns):
                 return False
-            return any(re.search(pattern, container, re.S) for pattern in process_patterns)
 
-        def inspect_helper(branch_text, whole_text):
-            helper_candidates = re.findall(r"\b([A-Za-z_]\w*)\s*\(", branch_text)
-            for helper_name in helper_candidates:
-                if helper_name in {
-                    "if", "when", "for", "while", "return", "require", "check", "set", "get",
-                    "val", "var", "println", "recreate", "start", "stop", "run", "let",
-                }:
+            assignment_patterns = (
+                r"(?:val|var)\s+([A-Za-z_]\w*)\s*=\s*(?:intent\?\.\s*|intent\.\s*|extras\?\.\s*)?(?:getStringExtra|getCharSequenceExtra|getString|getParcelableExtra)\s*\(\s*EXTRA_TEXT\s*\)",
+                r"(?:val|var)\s+([A-Za-z_]\w*)\s*=\s*[^\n;]*EXTRA_TEXT\s*\)",
+            )
+            for assignment in assignment_patterns:
+                for match in re.finditer(assignment, container, re.S):
+                    value_name = re.escape(match.group(1))
+                    tail = container[match.end():]
+                    if re.search(rf"processAssistantInput\s*\(\s*{value_name}\b", tail, re.S):
+                        return True
+                    if re.search(
+                        rf"{value_name}\s*\?\.\s*let\s*\{{[\s\S]*?processAssistantInput\s*\(\s*it\b",
+                        tail,
+                        re.S,
+                    ):
+                        return True
+
+            inline_extraction = (
+                r"(?:intent\?\.\s*|intent\.\s*|extras\?\.\s*)?(?:getStringExtra|getCharSequenceExtra|getString|getParcelableExtra)\s*\(\s*EXTRA_TEXT\s*\)",
+            )
+            return any(
+                re.search(
+                    rf"processAssistantInput\s*\(\s*[^\n;]*{pattern}",
+                    container,
+                    re.S,
+                )
+                for pattern in inline_extraction
+            )
+
+        def candidate_helpers(branch_text, whole_text):
+            stop_names = {
+                "if", "when", "for", "while", "return", "require", "check", "set", "get",
+                "val", "var", "println", "recreate", "start", "stop", "run", "let", "else",
+                "true", "false", "null",
+            }
+            seen = []
+            for helper_name in re.findall(r"\b([A-Za-z_]\w*)\s*\(", branch_text):
+                if helper_name in stop_names or helper_name in seen:
                     continue
-                if not re.match(r"^(handle|route|dispatch|forward|submit|process|apply|send)", helper_name, re.I):
-                    continue
+                seen.append(helper_name)
                 helper_body = local_function_body(whole_text, helper_name)
                 if helper_body is None:
                     helper_body = function_body(source, helper_name)
-                if helper_body is not None and has_text_processor(helper_body):
-                    return True
-            return False
+                if helper_body is not None:
+                    yield helper_name, helper_body
 
         def branch_satisfies(branch_text):
             if has_text_processor(branch_text):
                 return True
-            return inspect_helper(branch_text, body)
+            for _, helper_body in candidate_helpers(branch_text, body):
+                helper_body = strip_comments(helper_body)
+                if has_text_processor(helper_body):
+                    return True
+            return False
 
-        if_match = re.search(
-            r"if\s*\(\s*[^{}]*ACTION_SUBMIT_TEXT[^{}]*\)\s*\{",
-            body,
-            re.S,
+        branch_openers = (
+            r"if\s*\(\s*[^{}]*(?:intent\?\.action|action|intent\.action|this\.action)\s*==\s*ACTION_SUBMIT_TEXT[^{}]*\)\s*\{",
+            r"if\s*\(\s*ACTION_SUBMIT_TEXT\s*==\s*[^{}]*(?:intent\?\.action|action|intent\.action|this\.action)[^{}]*\)\s*\{",
         )
-        if if_match:
-            opening = body.find("{", if_match.end() - 1)
-            if opening >= 0:
-                branch_body = extract_braced_block(body, opening)
-                if branch_body is not None and branch_satisfies(branch_body):
-                    return
+        branch_bodies = []
+        for opener in branch_openers:
+            match = re.search(opener, body, re.S)
+            if not match:
+                continue
+            opening = body.find("{", match.end() - 1)
+            if opening < 0:
+                continue
+            branch_body = extract_braced_block(body, opening)
+            if branch_body is None:
+                continue
+            branch_bodies.append(strip_comments(branch_body))
 
-        when_match = re.search(r"ACTION_SUBMIT_TEXT\s*->", body)
+        when_match = re.search(r"when\s*\([^{}]*\)\s*\{", body, re.S)
         if when_match:
-            after_arrow = body[when_match.end():].lstrip()
-            if after_arrow.startswith("{"):
-                branch_body = extract_braced_block(after_arrow, 0)
-                if branch_body is not None and branch_satisfies(branch_body):
-                    return
-            else:
-                line = after_arrow.splitlines()[0].strip()
-                if branch_satisfies(line):
-                    return
+            when_body = extract_braced_block(body, when_match.end() - 1)
+            if when_body is not None:
+                case_match = re.search(r"\bACTION_SUBMIT_TEXT\s*->", when_body, re.S)
+                if case_match:
+                    case_tail = when_body[case_match.end():].lstrip()
+                    if case_tail.startswith("{"):
+                        case_body = extract_braced_block(case_tail, 0)
+                    else:
+                        case_body = case_tail.splitlines()[0]
+                    if case_body is not None:
+                        branch_bodies.append(strip_comments(case_body))
+
+        for branch_body in branch_bodies:
+            if branch_satisfies(branch_body):
+                return
 
         missing.append(f"{context}: missing coupled ACTION_SUBMIT_TEXT -> EXTRA_TEXT -> processAssistantInput route")
 
-    forbid(MAIN, "ConversationResultBridge.submitText(", "MainActivity typed submit path")
+    forbid(MAIN_CLEAN, "ConversationResultBridge.submitText(", "MainActivity typed submit path")
     require_any_function_body(
-        MAIN,
+        MAIN_CLEAN,
         ("submitText", "onTextResult"),
         r"WakeServiceController\s*\.\s*submitText\s*\(",
         "MainActivity text submission route",
     )
-    require_regex(WAKE, r"const val ACTION_SUBMIT_TEXT\b", "WakeService text action constant")
-    require_regex(WAKE, r"const val EXTRA_TEXT\b", "WakeService text payload constant")
-    require_regex(WAKE, r"fun\s+processAssistantInput\s*\(", "WakeService shared text processor")
-    require_action_branch(WAKE, "WakeService text service action route")
-    forbid(MAIN, "processAssistantInput(", "MainActivity typed pipeline local processor")
-    forbid(SETTINGS, "processAssistantInput(", "SettingsActivity typed pipeline local processor")
-    forbid(MAIN, "DeviceActionExecutor", "MainActivity direct device executor")
-    forbid(SETTINGS, "DeviceActionExecutor", "SettingsActivity direct device executor")
+    require_regex(WAKE_CLEAN, r"const val ACTION_SUBMIT_TEXT\b", "WakeService text action constant")
+    require_regex(WAKE_CLEAN, r"const val EXTRA_TEXT\b", "WakeService text payload constant")
+    require_regex(WAKE_CLEAN, r"fun\s+processAssistantInput\s*\(", "WakeService shared text processor")
+    require_action_branch(WAKE_CLEAN, "WakeService text service action route")
+    forbid(MAIN_CLEAN, "processAssistantInput(", "MainActivity typed pipeline local processor")
+    forbid(SETTINGS_CLEAN, "processAssistantInput(", "SettingsActivity typed pipeline local processor")
+    forbid(MAIN_CLEAN, "DeviceActionExecutor", "MainActivity direct device executor")
+    forbid(SETTINGS_CLEAN, "DeviceActionExecutor", "SettingsActivity direct device executor")
 
     return missing
 

@@ -16,6 +16,14 @@ def collect_missing():
     def strip_xml_comments(source):
         return re.sub(r"<!--.*?-->", "", source, flags=re.S)
 
+    def strip_kotlin_comments(source):
+        source = re.sub(r"/\*.*?\*/", "", source, flags=re.S)
+        source = re.sub(r"(?m)//.*$", "", source)
+        return source
+
+    MAIN_CLEAN = strip_kotlin_comments(MAIN)
+    SETTINGS_CLEAN = strip_kotlin_comments(SETTINGS)
+
     def require(source, marker, context):
         if marker not in source:
             missing.append(f"{context}: missing {marker}")
@@ -95,36 +103,36 @@ def collect_missing():
         "SettingsActivity settings layout",
     )
     require_body(
-        MAIN,
+        MAIN_CLEAN,
         "onCreate",
         (r"setContentView\s*\(\s*R\.layout\.activity_main_chat\s*\)",),
         "MainActivity XML inflation",
     )
     require_body(
-        SETTINGS,
+        SETTINGS_CLEAN,
         "onCreate",
         (r"setContentView\s*\(\s*R\.layout\.activity_settings\s*\)",),
         "SettingsActivity XML inflation",
     )
     require_body(
-        MAIN,
+        MAIN_CLEAN,
         "onCreate",
         (r"ViewCompat\.setOnApplyWindowInsetsListener", r"WindowCompat\.setDecorFitsSystemWindows"),
         "MainActivity insets handling",
     )
     require_body(
-        SETTINGS,
+        SETTINGS_CLEAN,
         "onCreate",
         (r"ViewCompat\.setOnApplyWindowInsetsListener", r"WindowCompat\.setDecorFitsSystemWindows"),
         "SettingsActivity insets handling",
     )
     require_regex(
-        MAIN,
+        MAIN_CLEAN,
         r'"\$\{[^"]*assistantName[^"]*\}.*智能体"',
         "MainActivity assistant-name title",
     )
     forbid(ADAPTER, "android.R.layout.simple_list_item_2", "ConversationAdapter scaffold row")
-    forbid(MAIN, "v0.6.5：会话状态机 + 悬浮层手动退出 + 智能退出 + 自然语言媒体音量", "MainActivity debug subtitle")
+    forbid(MAIN_CLEAN, "v0.6.5：会话状态机 + 悬浮层手动退出 + 智能退出 + 自然语言媒体音量", "MainActivity debug subtitle")
 
     return missing
 
