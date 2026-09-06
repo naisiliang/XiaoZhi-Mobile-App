@@ -34,7 +34,6 @@ class ScreenContextStore(
     fun get(packageName: String, windowFingerprint: String): ScreenContext? {
         val context = current ?: return null
         if (context.packageName != packageName || context.windowFingerprint != windowFingerprint) {
-            current = null
             return null
         }
         if (clockMs() - context.capturedAtMs >= ttlMs) {
