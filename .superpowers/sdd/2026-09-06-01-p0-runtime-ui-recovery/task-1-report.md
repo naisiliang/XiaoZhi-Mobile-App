@@ -81,7 +81,7 @@ Output:
 
 ```text
 Traceback (most recent call last):
-  File "E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full\tools\test_v070_recovery_ui_contract.py", line 162, in <module>
+  File "E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full\tools\test_v070_recovery_ui_contract.py", line 152, in <module>
     raise AssertionError("ui recovery contract is still missing:\n- " + "\n- ".join(missing))
 AssertionError: ui recovery contract is still missing:
 - MainActivity chat layout: missing file app\src\main\res\layout\activity_main_chat.xml
@@ -94,6 +94,17 @@ AssertionError: ui recovery contract is still missing:
 ```
 
 Why this is expected: the planned chat XML layout does not exist yet, MainActivity still uses the old programmatic scaffold, the MainActivity Insets hooks and assistant-name title binding are absent, and the scaffold conversation row plus debug subtitle are still present. Settings XML remains owned by the later Settings parity task.
+
+## Verification before final review
+
+At commit `b4f3c1536cf966490022bc6095ace58b1c4f9625`:
+
+- All three RED contract commands above returned `EXIT=1` with the expected missing-contract assertions.
+- Python AST parsing for all three contracts and `tools/v070_source_contract_utils.py` returned `PASS: AST` and `EXIT=0`.
+- `git diff --check` returned `EXIT=0`.
+- `python -B -X utf8 tools/test_v065_frozen_baseline.py` returned `FROZEN_EXIT=0` with all v0.6.3/v0.6.4/v0.6.5 frozen checks passing, using the verified JDK 17/Kotlin toolchain on PATH.
+- `git diff --name-status 954998eb054fef67a63bcfb6ea67a16c3fd059bd -- app/src` returned `PRODUCTION_DIFF_EMPTY`.
+- `git status --short` was empty and `git rev-parse HEAD` returned the commit above.
 
 ## Self-review
 

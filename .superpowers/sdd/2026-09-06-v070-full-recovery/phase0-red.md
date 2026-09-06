@@ -68,7 +68,7 @@ Output:
 
 ```text
 Traceback (most recent call last):
-  File "E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full\tools\test_v070_recovery_ui_contract.py", line 162, in <module>
+  File "E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full\tools\test_v070_recovery_ui_contract.py", line 152, in <module>
     raise AssertionError("ui recovery contract is still missing:\n- " + "\n- ".join(missing))
 AssertionError: ui recovery contract is still missing:
 - MainActivity chat layout: missing file app\src\main\res\layout\activity_main_chat.xml
