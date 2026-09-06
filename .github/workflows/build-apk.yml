@@ -8,7 +8,7 @@ on:
         required: true
         type: string
   push:
-    branches: [ main, master ]
+    branches: [ main, master, 'recovery/**' ]
 
 jobs:
   build:
@@ -30,12 +30,14 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.reviewed_ref }}
+          fetch-depth: 0
 
       - name: Checkout push commit
         if: ${{ github.event_name == 'push' }}
         uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
+          fetch-depth: 0
 
       - name: Verify Alpha1 checkout SHA
         if: ${{ github.event_name == 'workflow_dispatch' }}
@@ -113,6 +115,10 @@ jobs:
 
       - name: Validate source tree
         run: python3 tools/validate_project.py
+
+      - name: v0.7.0 Phase 0 recovery gate
+        if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/heads/recovery/') }}
+        run: python3 tools/test_v070_phase0_recovery_gate.py
 
       - name: Fetch offline wake + ASR models
         run: bash scripts/fetch-kws-model.sh

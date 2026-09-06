@@ -13,18 +13,36 @@ checks = [
     ('overlay executing state', '正在执行' in wake),
     ('overlay thinking state', '正在思考' in wake),
     ('waveform follows rms', 'overlay.updateAudioLevel' in wake and 'rms' in wake),
-    ('spoken text normalized', 'VoiceCommandNormalizer.normalize(rawText)' in wake),
+    # The v0.7 shared assistant pipeline trims the source-aware input into
+    # `text` before normalization; the v0.4 implementation normalized
+    # `rawText` directly. Both forms preserve the required behavior.
+    ('spoken text normalized', (
+        'VoiceCommandNormalizer.normalize(rawText)' in wake or
+        'VoiceCommandNormalizer.normalize(text)' in wake
+    )),
     ('router plans normalized command', 'router.plan(normalized)' in wake),
     ('overlay hidden when session ends', 'overlay.hide()' in wake),
     ('overlay released on destroy', 'overlay.release()' in wake),
 ]
 
-# Enforce routing order in processUtterance: normalize before router.
+# Enforce routing order in the voice/assistant pipeline: normalize before
+# router. The v0.7 shared entry point is processAssistantInput; keep the
+# legacy processUtterance fallback for older source snapshots.
 try:
-    normalize_i = wake.index('VoiceCommandNormalizer.normalize(rawText)')
-    router_i = wake.index('router.plan(normalized)')
-    checks.append(('normalization occurs before router', normalize_i < router_i))
+    pipeline_start = wake.index('private fun processAssistantInput(')
 except ValueError:
+    pipeline_start = wake.index('private fun processUtterance(')
+
+pipeline = wake[pipeline_start:]
+try:
+    normalize_tokens = (
+        'VoiceCommandNormalizer.normalize(rawText)',
+        'VoiceCommandNormalizer.normalize(text)',
+    )
+    normalize_i = min(pipeline.index(token) for token in normalize_tokens if token in pipeline)
+    router_i = pipeline.index('router.plan(normalized)')
+    checks.append(('normalization occurs before router', normalize_i < router_i))
+except (ValueError, TypeError):
     checks.append(('normalization occurs before router', False))
 
 failed=[]
