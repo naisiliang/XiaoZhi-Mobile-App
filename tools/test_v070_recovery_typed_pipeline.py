@@ -186,7 +186,11 @@ def collect_missing():
             if constructor_end is None:
                 continue
             constructor_args = assignment_route[constructor.end():constructor_end]
-            if not re.search(r"\bWakeService\b", constructor_args, re.S):
+            if not re.search(
+                r"\bWakeService\s*::\s*class\s*\.\s*java\b",
+                constructor_args,
+                re.S,
+            ):
                 continue
             receiver_scope = intent_receiver_scope(assignment_route, variable_name_text)
             action_on_intent = re.search(
