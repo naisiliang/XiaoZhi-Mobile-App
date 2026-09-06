@@ -78,6 +78,7 @@ def main():
     require(text_handler is not None, "missing text action handler")
     require("getStringExtra(EXTRA_TEXT)" in text_handler, "text handler must read EXTRA_TEXT")
     require("pendingTextRequests" in text_handler and ".offer(" in text_handler, "text handler must use bounded queue")
+    require("textInputIsBusy()" in text_handler, "text handler must defer while ASR/TTS/assistant work is active")
     require(
         re.search(r"processAssistantInput\s*\([^)]*\bAssistantRequestSource\.TEXT", text_handler),
         "text handler must call shared processor with TEXT",
@@ -93,6 +94,18 @@ def main():
         "ConversationResultKind.TEXT -> appendToCurrentSession" not in main_source
         and "ConversationResultKind.VOICE -> appendToCurrentSession" not in main_source,
         "MainActivity must not persist typed or voice input as the final processing path",
+    )
+    require("private fun textInputIsBusy()" in wake, "missing text input busy-state guard")
+    require(
+        re.search(r"private fun textInputIsBusy\(\)[\s\S]*commandListening\.get\(\)[\s\S]*ttsSpeaking\.get\(\)", wake),
+        "text busy-state guard must cover command ASR and TTS",
+    )
+    drain = function_body(WAKE, "drainPendingTextRequests")
+    require(drain is not None and "pendingTextRequests.poll()" in drain, "text queue must dispatch one FIFO request at a time")
+    continuation = function_body(WAKE, "continueConversationSession")
+    require(
+        continuation is not None and "drainPendingTextRequests()" in continuation,
+        "completed assistant work must release queued text requests before starting ASR",
     )
     require(
         "WakeServiceController.submitText(this, text)" in main_source,

@@ -37,4 +37,16 @@ class PendingTextRequestQueueTest {
         assertEquals((0 until 8).map { "item-$it" }, queue.drain())
         assertEquals(emptyList<String>(), queue.drain())
     }
+
+    @Test
+    fun `poll removes only the next FIFO entry`() {
+        val queue = PendingTextRequestQueue()
+
+        queue.offer("first")
+        queue.offer("second")
+
+        assertEquals("first", queue.poll())
+        assertEquals(listOf("second"), queue.drain())
+        assertEquals(null, queue.poll())
+    }
 }

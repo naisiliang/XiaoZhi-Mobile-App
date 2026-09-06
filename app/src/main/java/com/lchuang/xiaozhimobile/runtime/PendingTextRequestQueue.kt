@@ -22,11 +22,17 @@ class PendingTextRequestQueue(
         }
     }
 
+    fun poll(): String? = synchronized(lock) {
+        if (pending.isEmpty()) null else pending.removeFirst()
+    }
+
     fun drain(): List<String> = synchronized(lock) {
         buildList(pending.size) {
             while (pending.isNotEmpty()) add(pending.removeFirst())
         }
     }
+
+    fun clear() = synchronized(lock) { pending.clear() }
 
     companion object {
         const val DEFAULT_CAPACITY = 8

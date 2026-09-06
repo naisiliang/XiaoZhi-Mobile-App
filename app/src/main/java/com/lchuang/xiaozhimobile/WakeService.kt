@@ -70,6 +70,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
     private val runtimeLifecycleLock = Any()
     private val assistantRuntimeReady = AtomicBoolean(false)
     private val pendingTextRequests = PendingTextRequestQueue()
+    private val textDispatchScheduled = AtomicBoolean(false)
     private val kwsListening = AtomicBoolean(false)
     private val commandListening = AtomicBoolean(false)
     private val ttsSpeaking = AtomicBoolean(false)
@@ -315,23 +316,45 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
     private fun handleTextIntent(intent: Intent) {
         val text = intent.getStringExtra(EXTRA_TEXT)?.trim().orEmpty()
         if (text.isBlank()) return
-        if (assistantRuntimeReady.get()) {
-            drainPendingTextRequests()
-            mainHandler.post { processAssistantInput(text, AssistantRequestSource.TEXT) }
+        if (!assistantRuntimeReady.get() || textInputIsBusy()) {
+            if (!pendingTextRequests.offer(text)) {
+                updateNotificationRaw("文字输入过多，请稍后重试")
+            }
             return
         }
-        if (!pendingTextRequests.offer(text)) {
-            updateNotificationRaw("文字输入过多，请稍后重试")
-        }
+        processAssistantInput(text, AssistantRequestSource.TEXT)
     }
 
-    private fun drainPendingTextRequests() {
-        if (!assistantRuntimeReady.get()) return
-        val pending = pendingTextRequests.drain()
-        if (pending.isEmpty()) return
-        mainHandler.post {
-            pending.forEach { processAssistantInput(it, AssistantRequestSource.TEXT) }
+    private fun textInputIsBusy(): Boolean {
+        return textDispatchScheduled.get() ||
+            commandListening.get() ||
+            ttsSpeaking.get() ||
+            conversationState == ConversationState.EXECUTING ||
+            conversationState == ConversationState.SPEAKING
+    }
+
+    private fun drainPendingTextRequests(): Boolean {
+        if (!assistantRuntimeReady.get() || textInputIsBusy()) return false
+        val next = pendingTextRequests.poll() ?: return false
+        if (!textDispatchScheduled.compareAndSet(false, true)) {
+            pendingTextRequests.offer(next)
+            return false
         }
+        val posted = mainHandler.post {
+            textDispatchScheduled.set(false)
+            if (textInputIsBusy()) {
+                if (!pendingTextRequests.offer(next)) {
+                    updateNotificationRaw("文字输入过多，请稍后重试")
+                }
+                return@post
+            }
+            processAssistantInput(next, AssistantRequestSource.TEXT)
+        }
+        if (!posted) {
+            textDispatchScheduled.set(false)
+            pendingTextRequests.offer(next)
+        }
+        return posted
     }
 
     private fun initKeywordSpotter() {
@@ -763,6 +786,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         if (decision.resetAttempts) commandRecognitionAttempts = 0
         val reply = decision.spokenReply ?: decision.continuation
         if (reply == null) {
+            if (drainPendingTextRequests()) return
             updateNotification("连续会话中 · 等待下一条指令")
             scheduleListeningAfterSpeech(if (decision.immediateListen) IMMEDIATE_LISTEN_DELAY_MS else IDLE_RELISTEN_DELAY_MS)
             return
@@ -1125,6 +1149,9 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
             finishSessionForTimeout()
             return
         }
+        if (textDispatchScheduled.get()) return
+        setConversationState(ConversationState.READY_TO_LISTEN)
+        if (drainPendingTextRequests()) return
         updateNotification("连续会话中 · 准备下一轮监听")
         val delay = if (immediate) IMMEDIATE_LISTEN_DELAY_MS else 180L
         scheduleListeningAfterSpeech(delay)
@@ -1146,6 +1173,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         val generation = sessionGeneration
         pendingListenRunnable?.let(mainHandler::removeCallbacks)
         pendingListenRunnable = null
+        pendingTextRequests.clear()
         commandListening.set(false)
         try { audioRecord?.stop() } catch (_: Throwable) {}
         releaseAudioRecord()
