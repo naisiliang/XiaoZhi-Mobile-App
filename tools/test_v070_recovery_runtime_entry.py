@@ -242,29 +242,39 @@ def collect_missing():
         )
         success_patterns = (
             (
-                r"if\s*\(\s*[^{}]*grantResults[^{}]*==[^{}]*PackageManager\.PERMISSION_GRANTED[^{}]*\)\s*\{",
-                True,
-                True,
+                r"if\s*\(\s*[^{}]*grantResults\s*\[\s*permissions\s*\.\s*indexOf\s*\(\s*"
+                r"Manifest\.permission\.RECORD_AUDIO\s*\)\s*\]\s*==\s*"
+                r"PackageManager\.PERMISSION_GRANTED[^{}]*\)\s*\{",
+                False,
             ),
             (
-                r"if\s*\(\s*[^{}]*grantResults[^{}]*Manifest\.permission\.RECORD_AUDIO[^{}]*==[^{}]*PackageManager\.PERMISSION_GRANTED[^{}]*\)\s*\{",
+                r"if\s*\(\s*[^{}]*permissions\s*\[\s*(?P<index>[A-Za-z_]\w*|\d+)\s*\]"
+                r"\s*==\s*Manifest\.permission\.RECORD_AUDIO[^{}]*grantResults\s*\[\s*"
+                r"(?P=index)\s*\]\s*==\s*PackageManager\.PERMISSION_GRANTED[^{}]*\)\s*\{",
                 False,
+            ),
+            (
+                r"if\s*\(\s*[^{}]*grantResults\s*\[\s*(?P<reverse_index>[A-Za-z_]\w*|\d+)\s*\]"
+                r"\s*==\s*PackageManager\.PERMISSION_GRANTED[^{}]*permissions\s*\[\s*"
+                r"(?P=reverse_index)\s*\]\s*==\s*Manifest\.permission\.RECORD_AUDIO[^{}]*\)\s*\{",
+                False,
+            ),
+            (
+                r"if\s*\(\s*[^{}]*grantResults\s*\.\s*all\s*\{\s*it\s*==\s*"
+                r"PackageManager\.PERMISSION_GRANTED\s*\}[^{}]*\)\s*\{",
                 True,
             ),
             (
                 r"if\s*\(\s*[^{}]*\[[^\]]*Manifest\.permission\.RECORD_AUDIO[^\]]*\]\s*==\s*true[^{}]*\)\s*\{",
                 False,
-                True,
             ),
             (
                 r"if\s*\(\s*[^{}]*ContextCompat\.checkSelfPermission[^{}]*Manifest\.permission\.RECORD_AUDIO[^{}]*==[^{}]*PackageManager\.PERMISSION_GRANTED[^{}]*\)\s*\{",
                 False,
-                True,
             ),
             (
                 r"if\s*\(\s*[^{}]*ContextCompat\.checkSelfPermission[^{}]*Manifest\.permission\.RECORD_AUDIO[^{}]*==[^{}]*ContextCompat\.PERMISSION_GRANTED[^{}]*\)\s*\{",
                 False,
-                True,
             ),
         )
 
@@ -319,43 +329,6 @@ def collect_missing():
             ):
                 return
 
-        def grant_results_select_audio(condition, mapping_window):
-            direct_index = (
-                r"\bgrantResults\s*\[[^\]]*permissions\s*\.\s*indexOf\s*\("
-                r"\s*Manifest\.permission\.RECORD_AUDIO\s*\)[^\]]*\]"
-            )
-            if re.search(direct_index, condition, re.S):
-                return True
-            variable_index = re.search(
-                r"\bgrantResults\s*\[\s*([A-Za-z_]\w*)\s*\]",
-                condition,
-                re.S,
-            )
-            if variable_index is not None:
-                variable_name = re.escape(variable_index.group(1))
-                if re.search(
-                    rf"\b(?:val|var)\s+{variable_name}\s*=\s*[^;\n]*"
-                    r"\bpermissions\s*\.\s*indexOf\s*\(\s*Manifest\.permission\.RECORD_AUDIO\s*\)",
-                    mapping_window,
-                    re.S,
-                ):
-                    return True
-            same_index_patterns = (
-                r"\bpermissions\s*\[\s*(?P<index>[A-Za-z_]\w*|\d+)\s*\]\s*==\s*"
-                r"Manifest\.permission\.RECORD_AUDIO[^{}]*\bgrantResults\s*\[\s*(?P=index)\s*\]",
-                r"\bgrantResults\s*\[\s*(?P<index2>[A-Za-z_]\w*|\d+)\s*\][^{}]*==[^{}]*"
-                r"\bpermissions\s*\[\s*(?P=index2)\s*\]\s*==\s*Manifest\.permission\.RECORD_AUDIO",
-            )
-            if any(re.search(pattern, condition, re.S) for pattern in same_index_patterns):
-                return True
-            return bool(
-                re.search(
-                    r"\b\[[^\]]*Manifest\.permission\.RECORD_AUDIO[^\]]*\]\s*==\s*true\b",
-                    condition,
-                    re.S,
-                )
-            )
-
         for marker in callback_markers:
             callback_body = block_after_marker(source, marker)
             if callback_body is None:
@@ -366,7 +339,7 @@ def collect_missing():
                 re.S,
             ):
                 continue
-            for pattern, requires_request_code, requires_audio in success_patterns:
+            for pattern, requires_request_code in success_patterns:
                 match = re.search(pattern, callback_body, re.S)
                 if not match:
                     continue
@@ -376,11 +349,6 @@ def collect_missing():
                     re.S,
                 ):
                     continue
-                if requires_audio:
-                    condition = match.group(0)
-                    mapping_window = callback_body[max(0, match.start() - 512):match.end()]
-                    if not grant_results_select_audio(condition, mapping_window):
-                        continue
                 opening = match.end() - 1
                 success_body = extract_block(callback_body, opening)
                 if success_body is None:

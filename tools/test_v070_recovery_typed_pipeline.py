@@ -279,7 +279,6 @@ def collect_missing():
             container = strip_kotlin_literals(container)
             extraction_patterns = (
                 r"(?:[A-Za-z_]\w*(?:\?\.)?\s*)?(?:getStringExtra|getCharSequenceExtra|getString|getParcelableExtra)\s*\(\s*EXTRA_TEXT\s*\)",
-                r"EXTRA_TEXT\s*=\s*",
             )
             if not any(re.search(pattern, container, re.S) for pattern in extraction_patterns):
                 return False
