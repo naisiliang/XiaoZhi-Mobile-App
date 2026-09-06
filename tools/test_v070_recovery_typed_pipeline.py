@@ -108,13 +108,36 @@ def collect_missing():
             variable_name = re.escape(declaration.group(1))
             end = intent_declarations[index + 1].start() if index + 1 < len(intent_declarations) else len(body)
             route = body[declaration.end():end]
-            if not re.search(
-                rf"(?:\bsetAction\s*\(\s*|\baction\s*=\s*)\s*WakeService\s*\.\s*ACTION_SUBMIT_TEXT\b",
+            receiver_scope = re.search(
+                rf"\.(?:apply|also|run)\s*\{{|\bwith\s*\(\s*{variable_name}\s*\)\s*\{{",
                 route,
                 re.S,
-            ):
+            )
+            action_on_intent = re.search(
+                rf"\b{variable_name}\s*\.\s*(?:setAction\s*\(\s*|\baction\s*=\s*)"
+                rf"WakeService\s*\.\s*ACTION_SUBMIT_TEXT\b",
+                route,
+                re.S,
+            )
+            action_in_scope = receiver_scope and re.search(
+                r"(?:\bsetAction\s*\(\s*|\baction\s*=\s*)"
+                r"WakeService\s*\.\s*ACTION_SUBMIT_TEXT\b",
+                route,
+                re.S,
+            )
+            if not action_on_intent and not action_in_scope:
                 continue
-            if not re.search(r"\bputExtra\s*\(\s*WakeService\s*\.\s*EXTRA_TEXT\b", route, re.S):
+            extra_on_intent = re.search(
+                rf"\b{variable_name}\s*\.\s*putExtra\s*\(\s*WakeService\s*\.\s*EXTRA_TEXT\b",
+                route,
+                re.S,
+            )
+            extra_in_scope = receiver_scope and re.search(
+                r"\bputExtra\s*\(\s*WakeService\s*\.\s*EXTRA_TEXT\b",
+                route,
+                re.S,
+            )
+            if not extra_on_intent and not extra_in_scope:
                 continue
             if not re.search(
                 rf"\b(?:startService|startForegroundService)\s*\([^)]*\b{variable_name}\b[^)]*\)",

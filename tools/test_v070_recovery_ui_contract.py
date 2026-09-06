@@ -133,11 +133,15 @@ def collect_missing():
         (r"setContentView\s*\(\s*R\.layout\.activity_main_chat\s*\)",),
         "MainActivity XML inflation",
     )
-    require_body(
+    require_marker_in_ui_entry(
         MAIN_STRUCTURE,
-        "onCreate",
-        (r"ViewCompat\.setOnApplyWindowInsetsListener", r"WindowCompat\.setDecorFitsSystemWindows"),
-        "MainActivity insets handling",
+        r"ViewCompat\.setOnApplyWindowInsetsListener",
+        "MainActivity insets listener",
+    )
+    require_marker_in_ui_entry(
+        MAIN_STRUCTURE,
+        r"WindowCompat\.setDecorFitsSystemWindows",
+        "MainActivity window fitting",
     )
     require_marker_in_ui_entry(
         MAIN_CLEAN,

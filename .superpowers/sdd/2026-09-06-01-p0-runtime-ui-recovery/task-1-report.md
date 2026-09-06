@@ -29,7 +29,7 @@ Output:
 
 ```text
 Traceback (most recent call last):
-  File "E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full\tools\test_v070_recovery_runtime_entry.py", line 298, in <module>
+  File "E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full\tools\test_v070_recovery_runtime_entry.py", line 345, in <module>
     raise AssertionError("runtime entry recovery contract is still missing:\n- " + "\n- ".join(missing))
 AssertionError: runtime entry recovery contract is still missing:
 - MainActivity typed submit route: missing WakeServiceController\s*\.\s*submitText\s*\(
@@ -53,7 +53,7 @@ Output:
 
 ```text
 Traceback (most recent call last):
-  File "E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full\tools\test_v070_recovery_typed_pipeline.py", line 271, in <module>
+  File "E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full\tools\test_v070_recovery_typed_pipeline.py", line 294, in <module>
     raise AssertionError("typed pipeline recovery contract is still missing:\n- " + "\n- ".join(missing))
 AssertionError: typed pipeline recovery contract is still missing:
 - MainActivity typed submit path: still contains pattern ConversationResultBridge\s*\.\s*submitText\s*\(
@@ -79,13 +79,13 @@ Output:
 
 ```text
 Traceback (most recent call last):
-  File "E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full\tools\test_v070_recovery_ui_contract.py", line 156, in <module>
+  File "E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full\tools\test_v070_recovery_ui_contract.py", line 162, in <module>
     raise AssertionError("ui recovery contract is still missing:\n- " + "\n- ".join(missing))
 AssertionError: ui recovery contract is still missing:
 - MainActivity chat layout: missing file app\src\main\res\layout\activity_main_chat.xml
 - MainActivity XML inflation: missing setContentView\s*\(\s*R\.layout\.activity_main_chat\s*\)
-- MainActivity insets handling: missing ViewCompat\.setOnApplyWindowInsetsListener
-- MainActivity insets handling: missing WindowCompat\.setDecorFitsSystemWindows
+- MainActivity insets listener: missing reachable UI binding in onCreate or a function it invokes
+- MainActivity window fitting: missing reachable UI binding in onCreate or a function it invokes
 - MainActivity assistant-name title: missing reachable UI binding in onCreate or a function it invokes
 - ConversationAdapter scaffold row: still contains android.R.layout.simple_list_item_2
 - MainActivity debug subtitle: still contains a debug/version or oversized status literal

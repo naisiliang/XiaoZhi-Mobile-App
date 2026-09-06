@@ -121,11 +121,21 @@ def collect_missing():
         controller_clean = strip_kotlin_literals(CONTROLLER)
         if not re.search(r"^\s*package\s+com\.lchuang\.xiaozhimobile\.runtime\b", CONTROLLER, re.M):
             missing.append(f"{context}: controller package is not com.lchuang.xiaozhimobile.runtime")
-        if not re.search(r"\b(?:object|class)\s+WakeServiceController\b", controller_clean):
+        declaration = re.search(
+            r"\b(?:object|class)\s+WakeServiceController\b[^{}]*\{",
+            controller_clean,
+            re.S,
+        )
+        if declaration is None:
             missing.append(f"{context}: missing WakeServiceController declaration")
-        for method_name in ("start", "stop", "applyWakeSettings", "submitText", "isRunning"):
-            if not re.search(rf"\bfun\s+{method_name}\s*\(", controller_clean):
-                missing.append(f"{context}: missing WakeServiceController.{method_name} definition")
+        else:
+            controller_body = extract_block(controller_clean, declaration.end() - 1)
+            if controller_body is None:
+                missing.append(f"{context}: unbalanced WakeServiceController declaration")
+            else:
+                for method_name in ("start", "stop", "applyWakeSettings", "submitText", "isRunning"):
+                    if not re.search(rf"\bfun\s+{method_name}\s*\(", controller_body):
+                        missing.append(f"{context}: missing WakeServiceController.{method_name} definition")
         shared_reference = (
             r"(?:^\s*import\s+com\.lchuang\.xiaozhimobile\.runtime\.WakeServiceController\b|"
             r"\bcom\.lchuang\.xiaozhimobile\.runtime\.WakeServiceController\b)"
@@ -226,6 +236,44 @@ def collect_missing():
                 True,
             ),
         )
+
+        def grant_results_select_audio(condition, mapping_window):
+            direct_index = (
+                r"\bgrantResults\s*\[[^\]]*permissions\s*\.\s*indexOf\s*\("
+                r"\s*Manifest\.permission\.RECORD_AUDIO\s*\)[^\]]*\]"
+            )
+            if re.search(direct_index, condition, re.S):
+                return True
+            variable_index = re.search(
+                r"\bgrantResults\s*\[\s*([A-Za-z_]\w*)\s*\]",
+                condition,
+                re.S,
+            )
+            if variable_index is not None:
+                variable_name = re.escape(variable_index.group(1))
+                if re.search(
+                    rf"\b(?:val|var)\s+{variable_name}\s*=\s*[^;\n]*"
+                    r"\bpermissions\s*\.\s*indexOf\s*\(\s*Manifest\.permission\.RECORD_AUDIO\s*\)",
+                    mapping_window,
+                    re.S,
+                ):
+                    return True
+            same_index_patterns = (
+                r"\bpermissions\s*\[\s*(?P<index>[A-Za-z_]\w*|\d+)\s*\]\s*==\s*"
+                r"Manifest\.permission\.RECORD_AUDIO[^{}]*\bgrantResults\s*\[\s*(?P=index)\s*\]",
+                r"\bgrantResults\s*\[\s*(?P<index2>[A-Za-z_]\w*|\d+)\s*\][^{}]*==[^{}]*"
+                r"\bpermissions\s*\[\s*(?P=index2)\s*\]\s*==\s*Manifest\.permission\.RECORD_AUDIO",
+            )
+            if any(re.search(pattern, condition, re.S) for pattern in same_index_patterns):
+                return True
+            return bool(
+                re.search(
+                    r"\b\[[^\]]*Manifest\.permission\.RECORD_AUDIO[^\]]*\]\s*==\s*true\b",
+                    condition,
+                    re.S,
+                )
+            )
+
         for marker in callback_markers:
             callback_body = block_after_marker(source, marker)
             if callback_body is None:
@@ -246,12 +294,11 @@ def collect_missing():
                     re.S,
                 ):
                     continue
-                if requires_audio and not re.search(
-                    r"\bManifest\.permission\.RECORD_AUDIO\b",
-                    callback_body[:match.end()],
-                    re.S,
-                ):
-                    continue
+                if requires_audio:
+                    condition = match.group(0)
+                    mapping_window = callback_body[max(0, match.start() - 512):match.end()]
+                    if not grant_results_select_audio(condition, mapping_window):
+                        continue
                 opening = match.end() - 1
                 success_body = extract_block(callback_body, opening)
                 if success_body is None:
