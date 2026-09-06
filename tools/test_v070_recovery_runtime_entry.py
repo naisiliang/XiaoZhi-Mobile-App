@@ -1,6 +1,8 @@
 from pathlib import Path
 import re
 
+from v070_source_contract_utils import strip_kotlin_comments, strip_kotlin_literals
+
 
 ROOT = Path(__file__).resolve().parents[1]
 MAIN = (ROOT / "app/src/main/java/com/lchuang/xiaozhimobile/MainActivity.kt").read_text("utf-8")
@@ -11,18 +13,6 @@ CONTROLLER = CONTROLLER_PATH.read_text("utf-8") if CONTROLLER_PATH.exists() else
 
 def collect_missing():
     missing = []
-
-    def strip_comments(source):
-        source = re.sub(r"/\*.*?\*/", "", source, flags=re.S)
-        source = re.sub(r"(?m)//.*$", "", source)
-        return source
-
-    def strip_kotlin_literals(source):
-        source = strip_comments(source)
-        source = re.sub(r'""".*?"""', "", source, flags=re.S)
-        source = re.sub(r'"(?:\\.|[^"\\])*"', '""', source, flags=re.S)
-        source = re.sub(r"'(?:\\.|[^'\\])*'", "''", source, flags=re.S)
-        return source
 
     def function_body(source, function_name):
         source = strip_kotlin_literals(source)
@@ -76,7 +66,7 @@ def collect_missing():
             elif source[index] == "}":
                 depth -= 1
                 if depth == 0:
-                    return strip_comments(source[opening + 1:index])
+                    return strip_kotlin_comments(source[opening + 1:index])
         return None
 
     def require_function_body_any(source, function_names, marker, context):
@@ -214,6 +204,9 @@ def collect_missing():
                         closing += 1
                     after_branch = body[closing + 1:].lstrip() if closing < len(body) else ""
                     if after_branch.startswith("else"):
+                        else_tail = after_branch[4:].lstrip()
+                        if re.search(r"WakeServiceController\s*\.\s*start\s*\(", else_tail, re.S):
+                            continue
                         else_opening = after_branch.find("{")
                         if else_opening >= 0:
                             else_body = extract_block(after_branch, else_opening)
@@ -229,7 +222,14 @@ def collect_missing():
                 start_match = re.match(r"WakeServiceController\s*\.\s*start\s*\(", tail_statement)
                 if start_match:
                     else_match = re.search(r"\belse\b", tail_statement, re.S)
-                    if else_match is None or start_match.end() <= else_match.start():
+                    if else_match is None:
+                        return
+                    denied_tail = tail_statement[else_match.end():].lstrip()
+                    if start_match.end() <= else_match.start() and not re.search(
+                        r"WakeServiceController\s*\.\s*start\s*\(",
+                        denied_tail,
+                        re.S,
+                    ):
                         return
         missing.append(
             f"{context}: missing reachable WakeServiceController.start( in the granted RECORD_AUDIO branch"
@@ -267,6 +267,52 @@ def collect_missing():
                 True,
             ),
         )
+
+        clean_source = strip_kotlin_literals(source)
+        single_permission_pattern = re.compile(
+            r"(?:\b(?:private|public|internal|protected|lateinit|final|override)\s+)*"
+            r"(?:val|var)\s+([A-Za-z_]\w*)"
+            r"(?:\s*:\s*[^=\n]+)?"
+            r"\s*=\s*registerForActivityResult\s*\(\s*"
+            r"ActivityResultContracts\.RequestPermission\s*\(\s*\)\s*\)\s*\{",
+            re.S,
+        )
+        for single_permission in single_permission_pattern.finditer(clean_source):
+            launcher_name = re.escape(single_permission.group(1))
+            if not re.search(
+                rf"\b{launcher_name}\s*\.\s*launch\s*\(\s*Manifest\.permission\.RECORD_AUDIO\s*\)",
+                clean_source,
+                re.S,
+            ):
+                continue
+            callback_body = extract_block(clean_source, single_permission.end() - 1)
+            if callback_body is None:
+                continue
+            granted_match = re.search(
+                r"if\s*\(\s*(?!\!)(?:isGranted|granted|permissionGranted|it)\b"
+                r"\s*(?:==\s*true)?\s*\)\s*\{",
+                callback_body,
+                re.S,
+            )
+            if granted_match is None:
+                granted_match = re.search(
+                    r"if\s*\(\s*(?!\!)(?:isGranted|granted|permissionGranted|it)\b"
+                    r"\s*(?:==\s*true)?\s*\)\s*(?:\r?\n\s*)?"
+                    r"WakeServiceController\s*\.\s*start\s*\(",
+                    callback_body,
+                    re.S,
+                )
+                if granted_match is not None:
+                    return
+            if granted_match is None:
+                continue
+            granted_body = extract_block(callback_body, granted_match.end() - 1)
+            if granted_body is not None and re.search(
+                r"WakeServiceController\s*\.\s*start\s*\(",
+                granted_body,
+                re.S,
+            ):
+                return
 
         def grant_results_select_audio(condition, mapping_window):
             direct_index = (
@@ -367,7 +413,7 @@ def collect_missing():
     )
     require_marker_in_reachable_functions(
         SETTINGS,
-        ("onCreate", "saveSettings", "applyWakeSettingsIfRunning"),
+        ("onCreate",),
         r"WakeServiceController\s*\.\s*(?:start|stop|applyWakeSettings)\s*\(",
         "SettingsActivity wake settings route",
     )

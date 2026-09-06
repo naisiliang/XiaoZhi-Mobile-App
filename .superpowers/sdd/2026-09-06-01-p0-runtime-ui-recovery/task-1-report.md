@@ -13,6 +13,7 @@ Base commit verified before changes:
 - `tools/test_v070_recovery_runtime_entry.py`
 - `tools/test_v070_recovery_typed_pipeline.py`
 - `tools/test_v070_recovery_ui_contract.py`
+- `tools/v070_source_contract_utils.py`
 - `.superpowers/sdd/2026-09-06-v070-full-recovery/phase0-red.md`
 - `.superpowers/sdd/2026-09-06-01-p0-runtime-ui-recovery/task-1-report.md`
 
@@ -30,7 +31,7 @@ Output:
 
 ```text
 Traceback (most recent call last):
-  File "E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full\tools\test_v070_recovery_runtime_entry.py", line 382, in <module>
+  File "E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full\tools\test_v070_recovery_runtime_entry.py", line 428, in <module>
     raise AssertionError("runtime entry recovery contract is still missing:\n- " + "\n- ".join(missing))
 AssertionError: runtime entry recovery contract is still missing:
 - MainActivity typed submit route: missing WakeServiceController\s*\.\s*submitText\s*\(
@@ -54,7 +55,7 @@ Output:
 
 ```text
 Traceback (most recent call last):
-  File "E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full\tools\test_v070_recovery_typed_pipeline.py", line 297, in <module>
+  File "E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full\tools\test_v070_recovery_typed_pipeline.py", line 346, in <module>
     raise AssertionError("typed pipeline recovery contract is still missing:\n- " + "\n- ".join(missing))
 AssertionError: typed pipeline recovery contract is still missing:
 - MainActivity typed submit path: still contains pattern ConversationResultBridge\s*\.\s*submitText\s*\(
@@ -97,10 +98,11 @@ Why this is expected: the planned chat XML layout does not exist yet, MainActivi
 ## Self-review
 
 - Confirmed the task stayed test/evidence only; no production Kotlin, XML, or Gradle files were changed.
-- Confirmed the runtime test now checks a reachable granted-microphone start branch, a permission callback tied to the audio/request signal, controller calls reachable from Settings lifecycle/actions, and the shared controller source.
-- Confirmed the typed test keeps the bridge submit call forbidden, couples the controller implementation to `ACTION_SUBMIT_TEXT`/`EXTRA_TEXT`, checks the service-side `processAssistantInput` data flow or an intent-carrying helper, and forbids direct device execution from Activities.
+- Confirmed the runtime test now checks a reachable granted-microphone start branch, rejects starts in the denied branch, validates both legacy and `RequestPermission()` grant callbacks, scopes Settings calls to `onCreate` reachability, and checks the shared controller source.
+- Confirmed the typed test keeps the bridge submit call forbidden, couples the controller implementation to `ACTION_SUBMIT_TEXT`/`EXTRA_TEXT` in the same Intent receiver or explicit Intent variable, checks the service-side `processAssistantInput` data flow or an intent-carrying helper, and forbids known direct device execution classes/APIs from Activities.
 - Confirmed the UI test parses the MainActivity XML, matches real opening tags, scopes the assistant title to code reachable from `onCreate`, checks the Insets path, and leaves Settings XML to the later parity task.
+- Confirmed the shared Kotlin source scanner preserves literals while removing comments, including comment markers inside normal/raw strings, character literals, and backtick identifiers.
 
 ## Commit
 
-Final evidence commit is recorded after the last test-only tightening commit.
+Pending final evidence refresh and fresh spec/code-quality review.

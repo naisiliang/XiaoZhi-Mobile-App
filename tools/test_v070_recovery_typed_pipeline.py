@@ -1,6 +1,8 @@
 from pathlib import Path
 import re
 
+from v070_source_contract_utils import strip_kotlin_literals
+
 
 ROOT = Path(__file__).resolve().parents[1]
 MAIN = (ROOT / "app/src/main/java/com/lchuang/xiaozhimobile/MainActivity.kt").read_text("utf-8")
@@ -12,18 +14,6 @@ CONTROLLER = CONTROLLER_PATH.read_text("utf-8") if CONTROLLER_PATH.exists() else
 
 def collect_missing():
     missing = []
-
-    def strip_comments(source):
-        source = re.sub(r"/\*.*?\*/", "", source, flags=re.S)
-        source = re.sub(r"(?m)//.*$", "", source)
-        return source
-
-    def strip_kotlin_literals(source):
-        source = strip_comments(source)
-        source = re.sub(r'""".*?"""', "", source, flags=re.S)
-        source = re.sub(r'"(?:\\.|[^"\\])*"', '""', source, flags=re.S)
-        source = re.sub(r"'(?:\\.|[^'\\])*'", "''", source, flags=re.S)
-        return source
 
     MAIN_CLEAN = strip_kotlin_literals(MAIN)
     SETTINGS_CLEAN = strip_kotlin_literals(SETTINGS)
@@ -73,6 +63,38 @@ def collect_missing():
                     return source[opening_index + 1:index]
         return None
 
+    def extract_delimited_block(source, opening_index, opener="(", closer=")"):
+        depth = 0
+        for index in range(opening_index, len(source)):
+            if source[index] == opener:
+                depth += 1
+            elif source[index] == closer:
+                depth -= 1
+                if depth == 0:
+                    return index
+        return None
+
+    def intent_receiver_scope(source, variable_name):
+        """Return only the exact receiver block tied to this Intent assignment."""
+        for constructor in re.finditer(r"\bIntent\s*\(", source, re.S):
+            closing = extract_delimited_block(source, constructor.end() - 1)
+            if closing is None:
+                continue
+            suffix = source[closing + 1:]
+            scoped = re.match(r"\s*\.\s*(?:apply|also|run)\s*\{", suffix, re.S)
+            if scoped is not None:
+                return extract_braced_block(source, closing + 1 + scoped.end() - 1)
+
+        receiver = re.escape(variable_name)
+        for scoped in re.finditer(
+            rf"\b{receiver}\s*\.\s*(?:apply|also|run)\s*\{{|"
+            rf"\bwith\s*\(\s*{receiver}\s*\)\s*\{{",
+            source,
+            re.S,
+        ):
+            return extract_braced_block(source, scoped.end() - 1)
+        return None
+
     def local_function_body(container, function_name):
         container = strip_kotlin_literals(container)
         match = re.search(
@@ -105,42 +127,39 @@ def collect_missing():
             missing.append("WakeServiceController submit route: missing an assigned Intent")
             return
         for index, declaration in enumerate(intent_declarations):
-            variable_name = re.escape(declaration.group(1))
+            variable_name_text = declaration.group(1)
+            variable_name = re.escape(variable_name_text)
             end = intent_declarations[index + 1].start() if index + 1 < len(intent_declarations) else len(body)
             route = body[declaration.end():end]
             assignment_route = body[declaration.start():end]
-            receiver_scope = re.search(
-                rf"\bIntent\s*\([^)]*\)\s*\.(?:apply|also|run)\s*\{{|"
-                rf"\b{variable_name}\s*\.(?:apply|also|run)\s*\{{|"
-                rf"\bwith\s*\(\s*{variable_name}\s*\)\s*\{{",
-                assignment_route,
-                re.S,
-            )
+            receiver_scope = intent_receiver_scope(assignment_route, variable_name_text)
             action_on_intent = re.search(
                 rf"\b{variable_name}\s*\.\s*(?:setAction\s*\(\s*|\baction\s*=\s*)"
                 rf"WakeService\s*\.\s*ACTION_SUBMIT_TEXT\b",
                 route,
                 re.S,
             )
-            action_in_scope = receiver_scope and re.search(
+            action_in_scope = receiver_scope is not None and re.search(
                 r"(?:\bsetAction\s*\(\s*|\baction\s*=\s*)"
                 r"WakeService\s*\.\s*ACTION_SUBMIT_TEXT\b",
-                route,
+                receiver_scope,
                 re.S,
             )
-            if not action_on_intent and not action_in_scope:
-                continue
             extra_on_intent = re.search(
                 rf"\b{variable_name}\s*\.\s*putExtra\s*\(\s*WakeService\s*\.\s*EXTRA_TEXT\b",
                 route,
                 re.S,
             )
-            extra_in_scope = receiver_scope and re.search(
+            extra_in_scope = receiver_scope is not None and re.search(
                 r"\bputExtra\s*\(\s*WakeService\s*\.\s*EXTRA_TEXT\b",
-                route,
+                receiver_scope,
                 re.S,
             )
-            if not extra_on_intent and not extra_in_scope:
+            coupled_configuration = (
+                (action_on_intent is not None and extra_on_intent is not None)
+                or (action_in_scope is not None and extra_in_scope is not None)
+            )
+            if not coupled_configuration:
                 continue
             if not re.search(
                 rf"\b(?:startService|startForegroundService)\s*\([^)]*\b{variable_name}\b[^)]*\)",
@@ -286,8 +305,38 @@ def collect_missing():
         r"\bprocessAssistantInput\s*\(",
         "SettingsActivity typed pipeline local processor",
     )
-    forbid_regex(MAIN_CLEAN, r"\bDeviceActionExecutor\b", "MainActivity direct device executor")
-    forbid_regex(SETTINGS_CLEAN, r"\bDeviceActionExecutor\b", "SettingsActivity direct device executor")
+    direct_device_tokens = (
+        r"DeviceActionExecutor",
+        r"PhoneController",
+        r"MapController",
+        r"AppLauncher",
+        r"LocationProvider",
+        r"MediaVolumeController",
+        r"TorchController",
+        r"CommandRouter",
+        r"ToolDispatcher",
+    )
+    direct_device_calls = (
+        r"openApp",
+        r"openMap",
+        r"searchNearby",
+        r"navigate",
+        r"setMediaVolume",
+        r"mediaPlay",
+        r"mediaPause",
+        r"setTorchMode",
+        r"setFlashlight",
+        r"executeCommand",
+        r"executeAction",
+        r"dispatchTool",
+        r"performDeviceAction",
+    )
+    direct_device_pattern = (
+        r"\b(?:" + "|".join(direct_device_tokens) + r")\b"
+        r"|\.(?:" + "|".join(direct_device_calls) + r")\s*\("
+    )
+    forbid_regex(MAIN_CLEAN, direct_device_pattern, "MainActivity direct device execution")
+    forbid_regex(SETTINGS_CLEAN, direct_device_pattern, "SettingsActivity direct device execution")
 
     return missing
 

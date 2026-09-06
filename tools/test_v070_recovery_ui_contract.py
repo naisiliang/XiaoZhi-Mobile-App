@@ -2,6 +2,8 @@ from pathlib import Path
 import re
 import xml.etree.ElementTree as ET
 
+from v070_source_contract_utils import strip_kotlin_comments, strip_kotlin_literals
+
 
 ROOT = Path(__file__).resolve().parents[1]
 MAIN = (ROOT / "app/src/main/java/com/lchuang/xiaozhimobile/MainActivity.kt").read_text("utf-8")
@@ -14,18 +16,6 @@ def collect_missing():
 
     def strip_xml_comments(source):
         return re.sub(r"<!--.*?-->", "", source, flags=re.S)
-
-    def strip_kotlin_comments(source):
-        source = re.sub(r"/\*.*?\*/", "", source, flags=re.S)
-        source = re.sub(r"(?m)//.*$", "", source)
-        return source
-
-    def strip_kotlin_literals(source):
-        source = strip_kotlin_comments(source)
-        source = re.sub(r'""".*?"""', "", source, flags=re.S)
-        source = re.sub(r'"(?:\\.|[^"\\])*"', '""', source, flags=re.S)
-        source = re.sub(r"'(?:\\.|[^'\\])*'", "''", source, flags=re.S)
-        return source
 
     MAIN_CLEAN = strip_kotlin_comments(MAIN)
     MAIN_STRUCTURE = strip_kotlin_literals(MAIN)
