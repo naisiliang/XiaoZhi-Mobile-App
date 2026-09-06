@@ -12,12 +12,17 @@ class ContextualIntentResolver {
         if (context == null) return low(null)
 
         val currentCandidates = uniqueCurrentCandidates(context, candidates)
+        val historyCandidates = uniqueCurrentCandidates(
+            context,
+            listOfNotNull(history.currentTarget, history.recentOperation, history.sessionTarget),
+        )
+        val allCandidates = (currentCandidates + historyCandidates).distinctBy(ContextCandidate::id)
         val reference = referenceOf(query)
 
         return when (reference) {
             Reference.ORDINAL_FIRST -> resolveOrdinal(1, context, currentCandidates)
             Reference.ORDINAL_SECOND -> resolveOrdinal(2, context, currentCandidates)
-            Reference.NEXT -> resolveNext(context, currentCandidates, history)
+            Reference.NEXT -> resolveNext(context, allCandidates, history)
             Reference.THIS -> resolveAnchors(
                 context,
                 listOfNotNull(history.currentTarget, history.recentOperation, history.sessionTarget),
@@ -33,7 +38,7 @@ class ContextualIntentResolver {
             )
             Reference.CURRENT_VIDEO -> resolveUnique(
                 context,
-                currentCandidates.filter { it.kind == ContextTargetKind.VIDEO },
+                allCandidates.filter { it.kind == ContextTargetKind.VIDEO },
             )
             Reference.UNKNOWN -> low(context)
         }

@@ -37,3 +37,7 @@ The full unit suite, legacy security test, and Phase 0 gate are the required nex
 ## Review note
 
 The delegated implementer did not return after bounded waits and was shut down. The controller implemented the task after the recorded RED. A fresh review will be performed after the task commit before Task 5.
+
+## Fix round 1
+
+Manual review added a regression for resolving `当前视频` from an explicit current-session target when the separate candidate list is empty. The new test first failed with one assertion; the minimal fix merged generation-compatible history candidates for current-video and next resolution. The focused resolver suite, including the new case, then passed. The final full unit suite and Phase 0 gate also passed before the fix commit.

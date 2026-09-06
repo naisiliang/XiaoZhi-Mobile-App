@@ -119,6 +119,21 @@ class ContextualIntentResolverTest {
     }
 
     @Test
+    fun `current video can use an explicit current session target`() {
+        val current = candidate("video", "正在播放", kind = ContextTargetKind.VIDEO)
+
+        val result = resolver.resolve(
+            "当前视频",
+            context,
+            candidates = emptyList(),
+            history = ContextualHistory(currentTarget = current),
+        )
+
+        assertEquals(ContextResolutionConfidence.HIGH, result.confidence)
+        assertEquals("video", result.candidate?.id)
+    }
+
+    @Test
     fun `insufficient context returns low without guessing`() {
         val result = resolver.resolve("打开这个", context, candidates = emptyList())
 
