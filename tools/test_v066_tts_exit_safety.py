@@ -46,7 +46,10 @@ assert "catch (_: Throwable) {\n                        false" in wake, (
     "WakeService must treat stop exceptions as unconfirmed"
 )
 
-process_utterance = function_body(wake, "private fun processUtterance(rawText: String)")
+process_utterance = function_body(
+    wake,
+    "private fun processAssistantInput(rawText: String, source: AssistantRequestSource)",
+)
 local_plan = process_utterance.index("val localPlan = router.plan(normalized)")
 exit_classification = process_utterance.index("exitDetector.classify(normalized)")
 assert local_plan < exit_classification, (
@@ -54,7 +57,7 @@ assert local_plan < exit_classification, (
 )
 assert "localPlan.action is DeviceAction.GoHome" in process_utterance
 assert "localPlan.action.sourceApp != null" in process_utterance
-assert "executeDeviceAction(rawText, normalized, localPlan.action, heard)" in process_utterance
+assert "executeDeviceAction(text, normalized, localPlan.action, heard)" in process_utterance
 
 for noun in ["账户", "账号", "密码", "登录", "页面", "界面"]:
     assert noun in detector, f"generic exit noun missing from detector: {noun}"

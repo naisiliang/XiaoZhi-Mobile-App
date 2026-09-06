@@ -22,7 +22,7 @@ assert "terminal = true" in policy
 assert 'private val knownOneCharacterCommands = setOf("停")' in wake
 
 recovery_start = wake.index("private fun recoverRecognitionFailure")
-recovery_end = wake.index("private fun processUtterance", recovery_start)
+recovery_end = wake.index("private fun processAssistantInput", recovery_start)
 recovery = wake[recovery_start:recovery_end]
 assert "requestConversationExit(decision.spokenReply.orEmpty())" in recovery
 assert "if (decision.resetAttempts) commandRecognitionAttempts = 0" in recovery

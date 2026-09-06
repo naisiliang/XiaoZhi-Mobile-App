@@ -72,8 +72,9 @@ class MainActivity : Activity() {
     private val resultSink = ConversationResultBridge.Sink { result ->
         mainHandler.post {
             when (result.kind) {
-                ConversationResultKind.TEXT -> appendToCurrentSession(ConversationMessage.Role.USER, result.text)
-                ConversationResultKind.VOICE -> appendToCurrentSession(ConversationMessage.Role.USER, result.text)
+                ConversationResultKind.TEXT,
+                ConversationResultKind.VOICE,
+                -> Unit
                 ConversationResultKind.OPERATION -> appendToCurrentSession(ConversationMessage.Role.ASSISTANT, result.text)
             }
         }

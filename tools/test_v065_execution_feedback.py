@@ -128,7 +128,7 @@ assert "safeToolExecutor.execute" in tool_executors, (
 )
 assert "callback" in tool_executors, "registered AI tool executor must return its actual result"
 
-utterance = function_body("processUtterance")
+utterance = function_body("processAssistantInput")
 planned_exit_index = utterance.find("val localPlan = router.plan(normalized)")
 exit_classifier_index = utterance.find("exitDetector.classify(normalized)")
 assert 0 <= planned_exit_index < exit_classifier_index, (
@@ -136,7 +136,7 @@ assert 0 <= planned_exit_index < exit_classifier_index, (
 )
 assert "localPlan.action is DeviceAction.GoHome" in utterance
 assert "localPlan.action.sourceApp != null" in utterance
-assert "executeDeviceAction(rawText, normalized, localPlan.action, heard)" in utterance
+assert "executeDeviceAction(text, normalized, localPlan.action, heard)" in utterance
 
 execute_action = function_body("executeDeviceAction")
 capture_guard = execute_action.find("commandListening.get()")
@@ -165,7 +165,7 @@ assert "generation == sessionGeneration" in execute_action
 
 start_recognition = function_body("startLocalCommandRecognition")
 assert "ttsSpeaking.get()" in start_recognition, "command ASR must refuse capture while TTS speaks"
-process_post = start_recognition.find("processUtterance(text)")
+process_post = start_recognition.find("processAssistantInput(text, AssistantRequestSource.VOICE)")
 capture_cleared = start_recognition.rfind("commandListening.set(false)", 0, process_post)
 assert 0 <= capture_cleared < process_post, "capture flag must clear before utterance processing"
 

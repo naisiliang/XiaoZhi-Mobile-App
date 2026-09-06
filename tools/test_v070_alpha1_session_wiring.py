@@ -277,7 +277,7 @@ def main():
     )
     assert "ConversationRepository(this)" not in source, "WakeService must use the shared session repository"
     assert_call_in_function(source, "handleWakeDetected", "conversationSessionManager.startWakeSession()")
-    assert_call_in_function(source, "processUtterance", "conversationSessionManager.appendUser(rawText)")
+    assert_call_in_function(source, "processAssistantInput", "conversationSessionManager.appendUser(text)")
     assert_call_in_function(source, "processNonExitUtterance", "conversationSessionManager.appendAssistant(answer)")
     assert_call_in_function(source, "executeDeviceAction", "conversationSessionManager.appendAssistant(result.spokenResult)")
     assert_call_in_function(source, "requestConversationExit", 'conversationSessionManager.endSession("conversation_exit")')

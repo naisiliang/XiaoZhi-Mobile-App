@@ -7,7 +7,7 @@ import textwrap
 
 root = Path(__file__).resolve().parents[1]
 wake_source = (root / 'app/src/main/java/com/lchuang/xiaozhimobile/WakeService.kt').read_text(encoding='utf-8')
-process_start = wake_source.index('private fun processUtterance')
+process_start = wake_source.index('private fun processAssistantInput')
 process_end = wake_source.index('private fun classifyAmbiguousExitOrContinue', process_start)
 process_body = wake_source[process_start:process_end]
 assert process_body.index('val localPlan = router.plan(normalized)') < process_body.index('exitDetector.classify(normalized)'), (

@@ -115,7 +115,7 @@ main_on_destroy = method_body(MAIN_ACTIVITY, "onDestroy")
 main_build_ui = method_body(MAIN_ACTIVITY, "buildChatHome")
 main_menu = method_body(MAIN_ACTIVITY, "showHomeMenu")
 main_append = method_body(MAIN_ACTIVITY, "appendToCurrentSession")
-main_result_dispatch = lambda_body(MAIN_ACTIVITY, "mainHandler.post", "MainActivity result dispatch")
+main_result_dispatch = lambda_body(MAIN_ACTIVITY, "private val resultSink", "MainActivity result dispatch")
 history_on_create = method_body(HISTORY_SOURCE, "onCreate")
 
 require(MAIN_ACTIVITY, "private lateinit var repository: ConversationRepository", "MainActivity repository field")
@@ -168,13 +168,16 @@ require(main_build_ui, "composer = EditText(this)", "chat home composer")
 require(main_build_ui, "adapter = conversationAdapter", "chat home adapter binding")
 
 for handler, ingress in (
-    ("onTextResult", "submitText"),
     ("onVoiceResult", "submitVoice"),
     ("onOperationResult", "submitOperation"),
 ):
     handler_body = method_body(MAIN_ACTIVITY, handler)
     require(MAIN_ACTIVITY, f"fun {handler}(text: String)", f"public {handler} handler")
     require(handler_body, f"ConversationResultBridge.{ingress}(text)", f"{handler} external typed bridge ingress")
+
+text_handler = method_body(MAIN_ACTIVITY, "onTextResult")
+require(MAIN_ACTIVITY, "fun onTextResult(text: String)", "public onTextResult handler")
+require(text_handler, "WakeServiceController.submitText(this, text)", "onTextResult assistant-service ingress")
 
 require(ADAPTER_SOURCE, "enum class ConversationResultKind", "typed conversation result kind")
 for result_kind in ("TEXT", "VOICE", "OPERATION"):
@@ -185,14 +188,9 @@ for ingress in ("submitText", "submitVoice", "submitOperation"):
     require(ADAPTER_SOURCE, f"fun {ingress}", f"conversation result bridge {ingress} ingress")
 require(MAIN_ACTIVITY, "when (result.kind)", "typed sink dispatch")
 require(
-    MAIN_ACTIVITY,
-    "ConversationResultKind.TEXT -> appendToCurrentSession(ConversationMessage.Role.USER, result.text)",
-    "MainActivity TEXT shared append path",
-)
-require(
-    MAIN_ACTIVITY,
-    "ConversationResultKind.VOICE -> appendToCurrentSession(ConversationMessage.Role.USER, result.text)",
-    "MainActivity VOICE shared append path",
+    main_result_dispatch,
+    "ConversationResultKind.TEXT,\n                ConversationResultKind.VOICE,\n                -> Unit",
+    "MainActivity user-result service ownership",
 )
 require(
     MAIN_ACTIVITY,
@@ -249,9 +247,7 @@ for marker in (
     require(MAIN_ACTIVITY, marker, "shared repository/session ownership")
 
 for forbidden in (
-    "WakeService",
     "WakePhrase",
-    "KWS",
     "initKeywordSpotter",
     "Accessibility",
     "screenshot",

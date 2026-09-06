@@ -23,6 +23,8 @@ import com.lchuang.xiaozhimobile.conversation.AssistantStateStore
 import com.lchuang.xiaozhimobile.conversation.AssistantStateStoreProvider
 import com.lchuang.xiaozhimobile.runtime.WakeRuntimeStatus
 import com.lchuang.xiaozhimobile.runtime.WakeRuntimeStatusStoreProvider
+import com.lchuang.xiaozhimobile.runtime.AssistantRequestSource
+import com.lchuang.xiaozhimobile.runtime.PendingTextRequestQueue
 import com.lchuang.xiaozhimobile.safety.CentralSafetyPolicyEngine
 import com.lchuang.xiaozhimobile.safety.PermissionBroker
 import com.lchuang.xiaozhimobile.safety.ToolInvocation
@@ -66,6 +68,8 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
     private val running = AtomicBoolean(false)
     private val serviceDestroyed = AtomicBoolean(false)
     private val runtimeLifecycleLock = Any()
+    private val assistantRuntimeReady = AtomicBoolean(false)
+    private val pendingTextRequests = PendingTextRequestQueue()
     private val kwsListening = AtomicBoolean(false)
     private val commandListening = AtomicBoolean(false)
     private val ttsSpeaking = AtomicBoolean(false)
@@ -197,6 +201,9 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
             stopSelf()
             return START_NOT_STICKY
         }
+        if (intent?.action == ACTION_SUBMIT_TEXT) {
+            handleTextIntent(intent)
+        }
         if (intent?.action == ACTION_APPLY_WAKE_SETTINGS && running.get()) {
             startForeground(NOTIFY_ID, notification("正在应用离线唤醒设置…"))
             WakeRuntimeStatusStoreProvider.instance().publish(
@@ -264,6 +271,8 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                             initKeywordSpotter()
                             updateNotification("正在加载离线语音识别模型（2/3）")
                             initOfflineAsr()
+                            assistantRuntimeReady.set(true)
+                            drainPendingTextRequests()
 
                             val requested = settings.wakePhrase.trim().ifBlank { DEFAULT_WAKE_PHRASE }
                             if (settings.wakePhrase != DEFAULT_WAKE_PHRASE && requested != DEFAULT_WAKE_PHRASE) {
@@ -283,6 +292,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                             startKwsCapture()
                         } catch (e: Throwable) {
                             val shouldReport = running.get() && !serviceDestroyed.get()
+                            assistantRuntimeReady.set(false)
                             running.set(false)
                             kwsListening.set(false)
                             if (wakeLock?.isHeld == true) wakeLock?.release()
@@ -300,6 +310,28 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
             }, "xiaozhi-startup").start()
         }
         return START_STICKY
+    }
+
+    private fun handleTextIntent(intent: Intent) {
+        val text = intent.getStringExtra(EXTRA_TEXT)?.trim().orEmpty()
+        if (text.isBlank()) return
+        if (assistantRuntimeReady.get()) {
+            drainPendingTextRequests()
+            mainHandler.post { processAssistantInput(text, AssistantRequestSource.TEXT) }
+            return
+        }
+        if (!pendingTextRequests.offer(text)) {
+            updateNotificationRaw("文字输入过多，请稍后重试")
+        }
+    }
+
+    private fun drainPendingTextRequests() {
+        if (!assistantRuntimeReady.get()) return
+        val pending = pendingTextRequests.drain()
+        if (pending.isEmpty()) return
+        mainHandler.post {
+            pending.forEach { processAssistantInput(it, AssistantRequestSource.TEXT) }
+        }
     }
 
     private fun initKeywordSpotter() {
@@ -550,7 +582,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                 releaseAudioRecord()
                 mainHandler.post {
                     if (!isCurrentCommandSession(generation)) return@post
-                    processUtterance(text)
+                    processAssistantInput(text, AssistantRequestSource.VOICE)
                 }
             } catch (e: CommandAudioCaptureException) {
                 mainHandler.post {
@@ -744,37 +776,74 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
-    private fun processUtterance(rawText: String) {
-        val normalized = VoiceCommandNormalizer.normalize(rawText)
-        updateNotification("你说：$rawText")
-        if (normalized.isBlank() || isLowQualityRecognition(normalized)) {
-            recoverRecognitionFailure(CommandFailureKind.ASR_EMPTY)
+    private fun beginTextConversationIfNeeded() {
+        if (conversationActive || exitInProgress) return
+        synchronized(runtimeLifecycleLock) {
+            stopKwsCapture()
+            try { kwsThread?.join(500) } catch (_: Throwable) {}
+        }
+        sessionGeneration += 1
+        conversationTurns = 0
+        commandRecognitionAttempts = 0
+        successfulDeviceActions = 0
+        lastDeviceCommand = ""
+        lastDeviceCommandAtMs = 0L
+        conversationActive = true
+        memory.startSession()
+        session.start(settings.sessionTimeoutSeconds)
+        conversationSessionManager.startWakeSession()
+    }
+
+    private fun processAssistantInput(rawText: String, source: AssistantRequestSource) {
+        val text = rawText.trim()
+        if (text.isBlank()) return
+        if (source == AssistantRequestSource.TEXT) beginTextConversationIfNeeded()
+        if (!conversationActive || exitInProgress) return
+
+        val normalized = VoiceCommandNormalizer.normalize(text)
+        val heard = if (source == AssistantRequestSource.VOICE) "我听到：$text" else "文字输入：$text"
+        updateNotification(
+            if (source == AssistantRequestSource.VOICE) "你说：$text" else "收到文字：$text"
+        )
+        if (normalized.isBlank() ||
+            (source == AssistantRequestSource.VOICE && isLowQualityRecognition(normalized))
+        ) {
+            if (source == AssistantRequestSource.VOICE) {
+                recoverRecognitionFailure(CommandFailureKind.ASR_EMPTY)
+            } else {
+                reportTextAssistantError("这条文字消息无法识别，请换一种说法。", heard)
+            }
             return
         }
-        val heard = "我听到：$rawText"
-        conversationSessionManager.appendUser(rawText)
+
+        conversationSessionManager.appendUser(text)
         setConversationState(ConversationState.EXECUTING, heard)
         val localPlan = router.plan(normalized)
         if (localPlan is DeviceCommandPlan.Planned &&
             localPlan.action is DeviceAction.GoHome &&
             localPlan.action.sourceApp != null
         ) {
-            executeDeviceAction(rawText, normalized, localPlan.action, heard)
+            executeDeviceAction(text, normalized, localPlan.action, heard)
             return
         }
         when (exitDetector.classify(normalized)) {
             ExitDecision.EXIT -> {
                 requestConversationExit("好的，我先退下了，有需要再叫我")
             }
-            ExitDecision.CONTINUE -> processNonExitUtterance(rawText, normalized, heard)
-            ExitDecision.AMBIGUOUS -> classifyAmbiguousExitOrContinue(rawText, normalized, heard)
+            ExitDecision.CONTINUE -> processNonExitUtterance(text, normalized, heard, source)
+            ExitDecision.AMBIGUOUS -> classifyAmbiguousExitOrContinue(text, normalized, heard, source)
         }
     }
 
-    private fun classifyAmbiguousExitOrContinue(rawText: String, normalized: String, heard: String) {
+    private fun classifyAmbiguousExitOrContinue(
+        rawText: String,
+        normalized: String,
+        heard: String,
+        source: AssistantRequestSource,
+    ) {
         val aiConfigured = settings.apiBaseUrl.isNotBlank() && settings.model.isNotBlank()
         if (!aiConfigured) {
-            processNonExitUtterance(rawText, normalized, heard)
+            processNonExitUtterance(rawText, normalized, heard, source)
             return
         }
         updateNotification("正在判断是否结束当前会话…")
@@ -787,13 +856,18 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                 if (decision == ExitDecision.EXIT) {
                     requestConversationExit("好的，我先退下了，有需要再叫我")
                 } else {
-                    processNonExitUtterance(rawText, normalized, heard)
+                    processNonExitUtterance(rawText, normalized, heard, source)
                 }
             }
         }
     }
 
-    private fun processNonExitUtterance(rawText: String, normalized: String, heard: String) {
+    private fun processNonExitUtterance(
+        rawText: String,
+        normalized: String,
+        heard: String,
+        source: AssistantRequestSource,
+    ) {
         if (!conversationActive || exitInProgress) return
         val deviceLike = router.looksLikeDeviceCommand(normalized)
         when (val localPlan = router.plan(normalized)) {
@@ -807,7 +881,11 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         val aiConfigured = settings.apiBaseUrl.isNotBlank() && settings.model.isNotBlank()
         if (!aiConfigured) {
             conversationTurns += 1
-            recoverRecognitionFailure(CommandFailureKind.UNSUPPORTED_COMMAND)
+            if (source == AssistantRequestSource.TEXT) {
+                reportTextAssistantError("我还没有配置 AI 服务，暂时无法回答这条消息。", heard)
+            } else {
+                recoverRecognitionFailure(CommandFailureKind.UNSUPPORTED_COMMAND)
+            }
             return
         }
 
@@ -820,7 +898,11 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                 if (!conversationActive || exitInProgress || requestGeneration != sessionGeneration) return@post
                 if (result.isFailure) {
                     conversationTurns += 1
-                    recoverRecognitionFailure(CommandFailureKind.AI_UNAVAILABLE)
+                    if (source == AssistantRequestSource.TEXT) {
+                        reportTextAssistantError("抱歉，AI 服务暂时不可用，请稍后再试。", heard)
+                    } else {
+                        recoverRecognitionFailure(CommandFailureKind.AI_UNAVAILABLE)
+                    }
                     return@post
                 }
                 when (val outcome = result.getOrThrow()) {
@@ -866,6 +948,20 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                     AiToolCall(invocation.name, invocation.arguments),
                     callback
                 )
+            }
+        }
+    }
+
+    private fun reportTextAssistantError(message: String, heard: String) {
+        if (!conversationActive || exitInProgress) return
+        conversationSessionManager.appendAssistant(message)
+        setConversationState(ConversationState.SPEAKING, heard)
+        overlay.update("你好，有什么可以帮你？", message, heard)
+        updateNotificationRaw(message)
+        val generation = sessionGeneration
+        speakThen(message) {
+            if (generation == sessionGeneration && !exitInProgress) {
+                continueConversationSession(immediate = true)
             }
         }
     }
@@ -1223,6 +1319,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
 
     override fun onDestroy() {
         serviceDestroyed.set(true)
+        assistantRuntimeReady.set(false)
         if (::memory.isInitialized) memory.clear()
         if (::executionCoordinator.isInitialized) executionCoordinator.cancelPending()
         ttsProgressRegistry.cancelPending()

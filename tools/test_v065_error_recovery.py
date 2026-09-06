@@ -73,7 +73,7 @@ assert "isCurrentCommandSession(generation)" in empty_capture, (
     "a stale no-speech callback must not mutate a newer or closed session"
 )
 
-utterance = function_body("processUtterance")
+utterance = function_body("processAssistantInput")
 assert "recoverRecognitionFailure(CommandFailureKind.ASR_EMPTY)" in utterance, (
     "blank ASR and low-quality one-character ASR must not share unsupported recovery"
 )
@@ -150,7 +150,7 @@ for token in [
     "conversationState != ConversationState.EXITING",
 ]:
     assert token in session_guard, f"captured-session guard missing: {token}"
-decoded_index = start_recognition.index("processUtterance(text)")
+decoded_index = start_recognition.index("processAssistantInput(text, AssistantRequestSource.VOICE)")
 assert "isCurrentCommandSession(generation)" in start_recognition[decoded_index - 240 : decoded_index]
 exception_index = start_recognition.index("retryLocalCommandRecognition(reason)")
 assert "isCurrentCommandSession(generation)" in start_recognition[exception_index - 240 : exception_index]
