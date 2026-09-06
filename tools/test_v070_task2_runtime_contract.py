@@ -73,6 +73,18 @@ def main():
         SERVICE.count("synchronized(runtimeLifecycleLock)") >= 2,
         "startup and wake-setting application must be serialized",
     )
+    capture_body = function_body(SERVICE, "startKwsCapture")
+    require(
+        "synchronized(runtimeLifecycleLock)" in capture_body,
+        "delayed KWS restarts must not race with wake-setting application",
+    )
+    apply_start = SERVICE.index("ACTION_APPLY_WAKE_SETTINGS")
+    startup_start = SERVICE.index('"xiaozhi-startup"')
+    apply_region = SERVICE[apply_start:startup_start]
+    require(
+        "stopKwsCapture()" in apply_region and "kwsThread?.join(500)" in apply_region,
+        "wake-setting application must wait for the previous KWS thread to stop",
+    )
 
     start_catch = re.search(
         r"Thread\(\s*\{[\s\S]*?catch \(e: Throwable\) \{([\s\S]*?)\n\s*\}\s*\}\, \"xiaozhi-startup\"",

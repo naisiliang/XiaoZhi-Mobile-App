@@ -209,6 +209,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                         try {
                             val requested = settings.wakePhrase.trim().ifBlank { DEFAULT_WAKE_PHRASE }
                             stopKwsCapture()
+                            try { kwsThread?.join(500) } catch (_: Throwable) {}
                             val applied = if (requested == DEFAULT_WAKE_PHRASE) {
                                 wakePhraseManager.applyBundledPhrase(DEFAULT_WAKE_PHRASE)
                             } else {
@@ -368,77 +369,79 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun startKwsCapture() {
-        if (!running.get() || kwsListening.get() || commandListening.get()) return
-        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            running.set(false)
-            if (!serviceDestroyed.get()) {
-                WakeRuntimeStatusStoreProvider.instance().publish(
-                    WakeRuntimeStatus.ERROR,
-                    "RECORD_AUDIO permission is not granted",
-                )
-                updateNotification("缺少麦克风权限，请打开 App 授权")
+        synchronized(runtimeLifecycleLock) {
+            if (!running.get() || kwsListening.get() || commandListening.get()) return@synchronized
+            if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                running.set(false)
+                if (!serviceDestroyed.get()) {
+                    WakeRuntimeStatusStoreProvider.instance().publish(
+                        WakeRuntimeStatus.ERROR,
+                        "RECORD_AUDIO permission is not granted",
+                    )
+                    updateNotification("缺少麦克风权限，请打开 App 授权")
+                }
+                return@synchronized
             }
-            return
-        }
-        kwsListening.set(true)
-        kwsThread = Thread({
-            var wakeDetected = false
-            try {
-                val record = newAudioRecord()
-                audioRecord = record
-                if (record.state != AudioRecord.STATE_INITIALIZED) {
-                    throw IllegalStateException("AudioRecord 初始化失败")
-                }
-                record.startRecording()
-                if (record.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
-                    throw IllegalStateException("AudioRecord 未进入录音状态")
-                }
-                WakeRuntimeStatusStoreProvider.instance().publish(
-                    WakeRuntimeStatus.KWS_LISTENING,
-                    "listening for wake phrase",
-                )
-                val shorts = ShortArray(1600) // 100 ms
-                while (running.get() && kwsListening.get()) {
-                    val n = record.read(shorts, 0, shorts.size)
-                    if (n <= 0) continue
-                    val samples = FloatArray(n)
-                    for (i in 0 until n) samples[i] = shorts[i] / 32768.0f
-                    val s = stream ?: break
-                    s.acceptWaveform(samples, SAMPLE_RATE)
-                    val k = spotter ?: break
-                    while (k.isReady(s)) {
-                        k.decode(s)
-                        val result = k.getResult(s)
-                        if (result.keyword.isNotBlank()) {
-                            k.reset(s)
-                            if (result.keyword == wakePhraseManager.activePhrase()) {
-                                wakeDetected = true
-                                kwsListening.set(false)
-                                break
+            kwsListening.set(true)
+            kwsThread = Thread({
+                var wakeDetected = false
+                try {
+                    val record = newAudioRecord()
+                    audioRecord = record
+                    if (record.state != AudioRecord.STATE_INITIALIZED) {
+                        throw IllegalStateException("AudioRecord 初始化失败")
+                    }
+                    record.startRecording()
+                    if (record.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
+                        throw IllegalStateException("AudioRecord 未进入录音状态")
+                    }
+                    WakeRuntimeStatusStoreProvider.instance().publish(
+                        WakeRuntimeStatus.KWS_LISTENING,
+                        "listening for wake phrase",
+                    )
+                    val shorts = ShortArray(1600) // 100 ms
+                    while (running.get() && kwsListening.get()) {
+                        val n = record.read(shorts, 0, shorts.size)
+                        if (n <= 0) continue
+                        val samples = FloatArray(n)
+                        for (i in 0 until n) samples[i] = shorts[i] / 32768.0f
+                        val s = stream ?: break
+                        s.acceptWaveform(samples, SAMPLE_RATE)
+                        val k = spotter ?: break
+                        while (k.isReady(s)) {
+                            k.decode(s)
+                            val result = k.getResult(s)
+                            if (result.keyword.isNotBlank()) {
+                                k.reset(s)
+                                if (result.keyword == wakePhraseManager.activePhrase()) {
+                                    wakeDetected = true
+                                    kwsListening.set(false)
+                                    break
+                                }
                             }
                         }
                     }
+                } catch (e: Throwable) {
+                    kwsListening.set(false)
+                    val shouldReport = running.get() && !serviceDestroyed.get()
+                    running.set(false)
+                    if (shouldReport) {
+                        val detail = e.message ?: e.javaClass.simpleName
+                        WakeRuntimeStatusStoreProvider.instance().publish(
+                            WakeRuntimeStatus.ERROR,
+                            detail,
+                        )
+                        updateNotification("唤醒监听异常：$detail")
+                    }
+                } finally {
+                    releaseAudioRecord()
+                    if (running.get() && wakeDetected) {
+                        mainHandler.post { handleWakeDetected() }
+                    }
                 }
-            } catch (e: Throwable) {
-                kwsListening.set(false)
-                val shouldReport = running.get() && !serviceDestroyed.get()
-                running.set(false)
-                if (shouldReport) {
-                    val detail = e.message ?: e.javaClass.simpleName
-                    WakeRuntimeStatusStoreProvider.instance().publish(
-                        WakeRuntimeStatus.ERROR,
-                        detail,
-                    )
-                    updateNotification("唤醒监听异常：$detail")
-                }
-            } finally {
-                releaseAudioRecord()
-                if (running.get() && wakeDetected) {
-                    mainHandler.post { handleWakeDetected() }
-                }
-            }
-        }, "xiaozhi-kws")
-        kwsThread?.start()
+            }, "xiaozhi-kws")
+            kwsThread?.start()
+        }
     }
 
     private fun stopKwsCapture() {
