@@ -5,6 +5,7 @@ import re
 ROOT = Path(__file__).resolve().parents[1]
 MAIN_SOURCE = (ROOT / "app/src/main/java/com/lchuang/xiaozhimobile/MainActivity.kt").read_text("utf-8")
 SETTINGS_SOURCE = (ROOT / "app/src/main/java/com/lchuang/xiaozhimobile/SettingsActivity.kt").read_text("utf-8")
+SETTINGS_LAYOUT = (ROOT / "app/src/main/res/layout/activity_settings.xml").read_text("utf-8")
 
 
 def extract_block(source, opening_brace, description):
@@ -83,9 +84,10 @@ def require_order(source, markers, context):
 
 
 settings_class = class_body(SETTINGS_SOURCE, "SettingsActivity")
-settings_build_ui = method_body(settings_class, "buildUi")
+settings_bind_views = method_body(settings_class, "bindViews")
 settings_load = method_body(settings_class, "loadSettings")
 settings_save = method_body(settings_class, "saveSettings")
+settings_persist = method_body(settings_class, "persistSettings")
 main_on_create = method_body(MAIN_SOURCE, "onCreate")
 main_build_ui = method_body(MAIN_SOURCE, "buildChatHome")
 main_menu = method_body(MAIN_SOURCE, "showHomeMenu")
@@ -97,28 +99,46 @@ for control in (
     "systemPrompt", "appAliases",
 ):
     require(settings_class, f"private lateinit var {control}: EditText", "SettingsActivity editable control")
-    if not re.search(rf"\b{re.escape(control)}\s*=\s*add(?:Edit|MultilineEdit)\(", settings_build_ui):
-        raise AssertionError(f"SettingsActivity buildUi does not construct migrated control: {control}")
+    xml_id = {
+        "assistantName": "assistant_name",
+        "wakePhrase": "wake_phrase",
+        "wakeReply": "wake_reply",
+        "timeoutReply": "timeout_reply",
+        "timeoutSeconds": "timeout_seconds",
+        "appAliases": "app_aliases",
+        "ttsVoiceName": "tts_voice_name",
+        "ttsSpeechRate": "tts_speech_rate",
+        "ttsPitch": "tts_pitch",
+        "apiBaseUrl": "api_base_url",
+        "apiKey": "api_key",
+        "model": "model",
+        "systemPrompt": "system_prompt",
+    }[control]
+    require(SETTINGS_LAYOUT, f"@+id/{xml_id}", "SettingsActivity XML control")
+    require(settings_bind_views, f"{control} = findViewById(R.id.{xml_id})", "SettingsActivity view binding")
 
 for control in ("defaultMapApp", "apiMode"):
     require(settings_class, f"private lateinit var {control}: Spinner", "SettingsActivity spinner")
-    require(settings_build_ui, f"{control} = Spinner(this)", "SettingsActivity spinner construction")
+    xml_id = "default_map_app" if control == "defaultMapApp" else "api_mode"
+    require(SETTINGS_LAYOUT, f"@+id/{xml_id}", "SettingsActivity spinner XML")
+    require(settings_bind_views, f"{control} = findViewById(R.id.{xml_id})", "SettingsActivity spinner binding")
 
 require(settings_class, "private lateinit var preferOfflineAsr: Switch", "SettingsActivity offline ASR control")
-require(settings_build_ui, "preferOfflineAsr = Switch(this)", "SettingsActivity offline ASR construction")
+require(SETTINGS_LAYOUT, "@+id/prefer_offline_asr", "SettingsActivity offline ASR XML")
+require(settings_bind_views, "preferOfflineAsr = findViewById(R.id.prefer_offline_asr)", "SettingsActivity offline ASR binding")
 
 for marker in (
-    'text = "唤醒"',
-    'text = "声音"',
-    'text = "手机控制与导航"',
-    'text = "AI 对话"',
-    'text = "默认地图"',
-    'apiBaseUrl = addEdit(root, "Base URL，例如 https://api.example.com")',
-    'apiKey = addEdit(root, "API Key（仅保存在本机）")',
-    'model = addEdit(root, "模型名，例如 gpt-5.6")',
-    'text = "API 模式"',
+    'android:tag="语音"',
+    'android:tag="声音"',
+    'android:tag="手机控制"',
+    'android:tag="AI"',
+    'android:text="默认地图"',
+    'android:hint="Base URL，例如 https://api.example.com"',
+    'android:hint="API Key（仅保存在本机）"',
+    'android:hint="模型名，例如 gpt-5.6"',
+    '@+id/api_mode',
 ):
-    require(settings_build_ui, marker, "SettingsActivity migrated settings UI")
+    require(SETTINGS_LAYOUT, marker, "SettingsActivity migrated settings UI")
 
 for marker in (
     "assistantName.setText(settings.assistantName)",
@@ -140,11 +160,11 @@ for marker in (
     "settings.ttsPitch = ttsPitch.text.toString().toFloatOrNull() ?: 1.0f",
     "settings.defaultMapApp = MapAppPreference.entries.getOrElse(defaultMapApp.selectedItemPosition)",
 ):
-    require(settings_save, marker, "SettingsActivity saveSettings binding")
+    require(settings_persist, marker, "SettingsActivity persistSettings binding")
 
-if not re.search(r"setOnClickListener\s*\{\s*saveSettings\(\)\s*\}", settings_build_ui, re.S):
+if not re.search(r"findViewById(?:<[^>]+>)?\(R\.id\.save_settings\).*setOnClickListener", SETTINGS_SOURCE, re.S):
     raise AssertionError("SettingsActivity save button is not wired to saveSettings")
-require(settings_class, "InputType.TYPE_TEXT_VARIATION_PASSWORD", "SettingsActivity API key protection")
+require(SETTINGS_LAYOUT, "android:inputType=\"textPassword\"", "SettingsActivity API key protection")
 
 require(MAIN_SOURCE, "private lateinit var repository: ConversationRepository", "MainActivity chat repository")
 require(MAIN_SOURCE, "private var currentSession: ConversationSession? = null", "MainActivity active session")
@@ -158,9 +178,13 @@ require(main_menu, "Intent(this@MainActivity, SettingsActivity::class.java)", "M
 
 require(main_on_create, "stateStore = AssistantStateStore", "MainActivity diagnostic state source")
 require(MAIN_SOURCE, "private val stateObserver: (AssistantState) -> Unit = { state ->", "MainActivity diagnostic state observer")
-require(MAIN_SOURCE, "mainHandler.post {\n            if (::status.isInitialized) status.text = stateLabel(state)\n        }", "MainActivity diagnostic status update")
+require(MAIN_SOURCE, "mainHandler.post {\n            assistantState = state\n            renderStatus()\n        }", "MainActivity diagnostic status update")
 require(main_on_create, "stateStore.addObserver(stateObserver)", "MainActivity diagnostic observer registration")
-require(main_on_create, "status.text = stateLabel(stateStore.current)", "MainActivity initial diagnostic status")
+require_order(
+    main_on_create,
+    ("assistantState = stateStore.current", "runtimeStatus = runtimeStatusStore.current", "renderStatus()"),
+    "MainActivity initial diagnostic status",
+)
 require(main_build_ui, 'text = "v0.6.5：会话状态机 + 悬浮层手动退出 + 智能退出 + 自然语言媒体音量"', "MainActivity diagnostic summary")
 require(permissions, "Manifest.permission.RECORD_AUDIO", "MainActivity microphone permission")
 require(permissions, "Manifest.permission.CAMERA", "MainActivity camera permission")

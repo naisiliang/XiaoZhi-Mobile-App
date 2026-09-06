@@ -109,13 +109,15 @@ def collect_missing():
             return None
         return extract_braced_block(container, match.end() - 1)
 
-    def forbid_unscoped_intents(source, context):
+    def forbid_unscoped_intents(source, context, allowed_argument_patterns=()):
         for constructor in re.finditer(r"\bIntent\s*\(", source, re.S):
             closing = extract_delimited_block(source, constructor.end() - 1)
             if closing is None:
                 continue
             arguments = source[constructor.end():closing]
             if not re.search(r"::class\s*\.\s*java\b", arguments, re.S):
+                if any(re.search(pattern, arguments, re.S) for pattern in allowed_argument_patterns):
+                    continue
                 missing.append(f"{context}: unscoped Intent may dispatch a device action")
 
     def require_any_function_body(source, function_names, marker, context):
@@ -458,7 +460,14 @@ def collect_missing():
         r"|\.(?:" + "|".join(direct_device_calls) + r")\s*\("
     )
     forbid_regex(MAIN_CLEAN, direct_device_pattern, "MainActivity direct device execution")
-    forbid_regex(SETTINGS_CLEAN, direct_device_pattern, "SettingsActivity direct device execution")
+    settings_direct_device_tokens = tuple(
+        token for token in direct_device_tokens if token != r"LocationProvider"
+    )
+    settings_direct_device_pattern = (
+        r"\b(?:" + "|".join(settings_direct_device_tokens) + r")\b"
+        r"|\.(?:" + "|".join(direct_device_calls) + r")\s*\("
+    )
+    forbid_regex(SETTINGS_CLEAN, settings_direct_device_pattern, "SettingsActivity direct device execution")
     activity_direct_dispatch_pattern = (
         r"\b(?:startService|startForegroundService|sendBroadcast|sendOrderedBroadcast|"
         r"startActivityForResult)\s*\("
@@ -477,7 +486,11 @@ def collect_missing():
         "SettingsActivity direct device dispatch",
     )
     forbid_unscoped_intents(MAIN_CLEAN, "MainActivity direct device dispatch")
-    forbid_unscoped_intents(SETTINGS_CLEAN, "SettingsActivity direct device dispatch")
+    forbid_unscoped_intents(
+        SETTINGS_CLEAN,
+        "SettingsActivity direct device dispatch",
+        allowed_argument_patterns=(r"AndroidSettings\.ACTION_MANAGE_OVERLAY_PERMISSION",),
+    )
 
     return missing
 

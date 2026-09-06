@@ -6,6 +6,7 @@ ROOT = Path(__file__).resolve().parents[1]
 MAIN_ACTIVITY = (ROOT / "app/src/main/java/com/lchuang/xiaozhimobile/MainActivity.kt").read_text("utf-8")
 SETTINGS_SOURCE = (ROOT / "app/src/main/java/com/lchuang/xiaozhimobile/SettingsActivity.kt").read_text("utf-8")
 SETTINGS_STORE = (ROOT / "app/src/main/java/com/lchuang/xiaozhimobile/SettingsStore.kt").read_text("utf-8")
+SETTINGS_LAYOUT = (ROOT / "app/src/main/res/layout/activity_settings.xml").read_text("utf-8")
 MANIFEST = (ROOT / "app/src/main/AndroidManifest.xml").read_text("utf-8")
 
 
@@ -87,9 +88,10 @@ def assert_not_contains(source, forbidden_markers, context):
 
 settings_class = find_class_body(SETTINGS_SOURCE, "SettingsActivity")
 on_create = find_method_body(settings_class, "onCreate")
-build_ui = find_method_body(settings_class, "buildUi")
+bind_views = find_method_body(settings_class, "bindViews")
 load_settings = find_method_body(settings_class, "loadSettings")
 save_settings = find_method_body(settings_class, "saveSettings")
+persist_settings = find_method_body(settings_class, "persistSettings")
 apply_wake_settings = find_method_body(settings_class, "applyWakeSettingsIfRunning")
 
 persisted_settings = [
@@ -135,8 +137,23 @@ for control_name in edit_text_settings:
         f"private lateinit var {control_name}: EditText",
         f"SettingsActivity control declaration for {control_name}",
     )
-    if not re.search(rf"\b{re.escape(control_name)}\s*=\s*add(?:Edit|MultilineEdit)\(", build_ui):
-        fail(f"SettingsActivity.buildUi must create editable control {control_name} with addEdit/addMultilineEdit")
+    xml_id = {
+        "assistantName": "assistant_name",
+        "wakePhrase": "wake_phrase",
+        "wakeReply": "wake_reply",
+        "timeoutReply": "timeout_reply",
+        "timeoutSeconds": "timeout_seconds",
+        "appAliases": "app_aliases",
+        "ttsVoiceName": "tts_voice_name",
+        "ttsSpeechRate": "tts_speech_rate",
+        "ttsPitch": "tts_pitch",
+        "apiBaseUrl": "api_base_url",
+        "apiKey": "api_key",
+        "model": "model",
+        "systemPrompt": "system_prompt",
+    }[control_name]
+    assert_contains(SETTINGS_LAYOUT, f"@+id/{xml_id}", f"SettingsActivity XML control for {control_name}")
+    assert_contains(bind_views, f"{control_name} = findViewById(R.id.{xml_id})", f"SettingsActivity binding for {control_name}")
 
 for control_name in ("defaultMapApp", "apiMode"):
     assert_contains(
@@ -144,11 +161,13 @@ for control_name in ("defaultMapApp", "apiMode"):
         f"private lateinit var {control_name}: Spinner",
         f"SettingsActivity spinner declaration for {control_name}",
     )
-    if not re.search(rf"\b{re.escape(control_name)}\s*=\s*Spinner\(this\)", build_ui):
-        fail(f"SettingsActivity.buildUi must create spinner control {control_name}")
+    xml_id = "default_map_app" if control_name == "defaultMapApp" else "api_mode"
+    assert_contains(SETTINGS_LAYOUT, f"@+id/{xml_id}", f"SettingsActivity XML spinner for {control_name}")
+    assert_contains(bind_views, f"{control_name} = findViewById(R.id.{xml_id})", f"SettingsActivity spinner binding for {control_name}")
 
 assert_contains(settings_class, "private lateinit var preferOfflineAsr: Switch", "offline ASR control declaration")
-assert_contains(build_ui, "preferOfflineAsr = Switch(this)", "offline ASR control construction")
+assert_contains(SETTINGS_LAYOUT, "@+id/prefer_offline_asr", "offline ASR XML control")
+assert_contains(bind_views, "preferOfflineAsr = findViewById(R.id.prefer_offline_asr)", "offline ASR control binding")
 
 assert_contains(MAIN_ACTIVITY, "startActivity(Intent(this@MainActivity, SettingsActivity::class.java))", "MainActivity settings navigation")
 if not re.search(
@@ -159,7 +178,7 @@ if not re.search(
 
 assert_contains(on_create, "settings = SettingsStore(this)", "SettingsActivity.onCreate")
 assert_contains(on_create, "loadSettings()", "SettingsActivity.onCreate")
-if not re.search(r"setOnClickListener\s*\{\s*saveSettings\(\)\s*\}", build_ui, re.S):
+if not re.search(r"findViewById(?:<[^>]+>)?\(R\.id\.save_settings\).*setOnClickListener", SETTINGS_SOURCE, re.S):
     fail("SettingsActivity save button listener must call saveSettings()")
 
 settings_bindings = {
@@ -182,22 +201,21 @@ settings_bindings = {
 }
 for setting_id, (load_marker, save_marker) in settings_bindings.items():
     assert_contains(load_settings, load_marker, f"SettingsActivity.loadSettings for {setting_id}")
-    assert_contains(save_settings, save_marker, f"SettingsActivity.saveSettings for {setting_id}")
+    assert_contains(persist_settings, save_marker, f"SettingsActivity.persistSettings for {setting_id}")
 
-assert_contains(build_ui, "InputType.TYPE_TEXT_VARIATION_PASSWORD", "API key password input")
+assert_contains(SETTINGS_LAYOUT, 'android:inputType="textPassword"', "API key password input")
 if re.search(r"(?:Log\.\w+|Toast\.makeText|append(?:Line)?|text\s*=)[^\n]*apiKey", SETTINGS_SOURCE):
     fail("SettingsActivity must not expose apiKey through logs, status text, notifications, or test details")
 
-if not re.search(r"if\s*\(\s*!isWakeServiceRunning\(\)\s*\)\s*return", apply_wake_settings, re.S):
-    fail("applyWakeSettingsIfRunning must return early when isWakeServiceRunning() is false")
+if not re.search(r"if\s*\(!WakeServiceController\.isRunning\(this\)\)", apply_wake_settings, re.S):
+    fail("applyWakeSettingsIfRunning must return early when the controller reports a stopped service")
 assert_contains(
     apply_wake_settings,
-    "startService(Intent(this, WakeService::class.java).setAction(WakeService.ACTION_APPLY_WAKE_SETTINGS))",
+    "WakeServiceController.applyWakeSettings(this)",
     "SettingsActivity.applyWakeSettingsIfRunning",
 )
-action_markers = re.findall(r"WakeService\.ACTION_[A-Z0-9_]+", apply_wake_settings)
-if action_markers != ["WakeService.ACTION_APPLY_WAKE_SETTINGS"]:
-    fail(f"applyWakeSettingsIfRunning must use only the existing wake action, found: {action_markers}")
+if re.search(r"\b(?:startService|startForegroundService)\s*\(", SETTINGS_SOURCE):
+    fail("SettingsActivity must dispatch wake actions through WakeServiceController")
 
 assert_not_contains(
     SETTINGS_SOURCE,

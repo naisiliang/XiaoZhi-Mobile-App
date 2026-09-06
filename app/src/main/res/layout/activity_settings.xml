@@ -1,0 +1,380 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/settings_scroll"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#F7F8FA"
+    android:clipToPadding="false"
+    android:fillViewport="true"
+    android:paddingStart="20dp"
+    android:paddingTop="20dp"
+    android:paddingEnd="20dp"
+    android:paddingBottom="28dp">
+
+    <LinearLayout
+        android:id="@+id/settings_content"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/settings_title"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="设置"
+            android:textColor="#172033"
+            android:textSize="28sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/settings_subtitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:text="配置会保存到本机；唤醒服务仍使用现有安全执行入口。"
+            android:textColor="#687386"
+            android:textSize="14sp" />
+
+        <include
+            android:id="@+id/section_voice"
+            android:tag="语音"
+            layout="@layout/view_settings_section" />
+
+        <EditText
+            android:id="@+id/assistant_name"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="助手名字，例如：小智 / 小白"
+            android:inputType="text"
+            android:singleLine="true" />
+
+        <EditText
+            android:id="@+id/wake_phrase"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="离线唤醒短语，例如：小智小智"
+            android:inputType="text"
+            android:singleLine="true" />
+
+        <EditText
+            android:id="@+id/wake_reply"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="唤醒后第一句，例如：我在"
+            android:inputType="text"
+            android:singleLine="true" />
+
+        <EditText
+            android:id="@+id/timeout_reply"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="连续会话超时退出话术"
+            android:inputType="text"
+            android:singleLine="true" />
+
+        <EditText
+            android:id="@+id/timeout_seconds"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="连续会话超时秒数，范围 5 - 300"
+            android:inputType="number"
+            android:singleLine="true" />
+
+        <Switch
+            android:id="@+id/prefer_offline_asr"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="优先使用离线语音识别" />
+
+        <Switch
+            android:id="@+id/background_wake_enabled"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="后台保持离线唤醒" />
+
+        <TextView
+            android:id="@+id/runtime_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:textColor="#4A6075"
+            android:textSize="14sp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/start_wake_service"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="启动唤醒" />
+
+            <Button
+                android:id="@+id/stop_wake_service"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
+                android:text="停止唤醒" />
+        </LinearLayout>
+
+        <Button
+            android:id="@+id/apply_wake_settings"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="保存并应用唤醒设置" />
+
+        <include
+            android:id="@+id/section_sound"
+            android:tag="声音"
+            layout="@layout/view_settings_section" />
+
+        <EditText
+            android:id="@+id/tts_voice_name"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="TTS 声音名称（可留空使用默认）"
+            android:inputType="text"
+            android:singleLine="true" />
+
+        <Spinner
+            android:id="@+id/tts_voice"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:spinnerMode="dropdown" />
+
+        <EditText
+            android:id="@+id/tts_speech_rate"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="语速 0.6 - 1.6"
+            android:inputType="numberDecimal"
+            android:singleLine="true" />
+
+        <EditText
+            android:id="@+id/tts_pitch"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="音调 0.6 - 1.4"
+            android:inputType="numberDecimal"
+            android:singleLine="true" />
+
+        <TextView
+            android:id="@+id/tts_voice_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textColor="#687386"
+            android:textSize="13sp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/scan_tts_voices"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="发现声音" />
+
+            <Button
+                android:id="@+id/preview_tts"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
+                android:text="试听声音" />
+        </LinearLayout>
+
+        <include
+            android:id="@+id/section_phone"
+            android:tag="手机控制"
+            layout="@layout/view_settings_section" />
+
+        <TextView
+            android:id="@+id/default_map_label"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="默认地图"
+            android:textColor="#687386"
+            android:textSize="13sp" />
+
+        <Spinner
+            android:id="@+id/default_map_app"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:spinnerMode="dropdown" />
+
+        <EditText
+            android:id="@+id/app_aliases"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="top|start"
+            android:hint="App 别名，每行：别名=真实应用名"
+            android:inputType="textMultiLine"
+            android:minLines="3" />
+
+        <EditText
+            android:id="@+id/app_test_name"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="输入应用名或包名进行匹配测试"
+            android:inputType="text"
+            android:singleLine="true" />
+
+        <TextView
+            android:id="@+id/app_discovery_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textColor="#687386"
+            android:textSize="13sp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/scan_apps"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="扫描已安装应用" />
+
+            <Button
+                android:id="@+id/test_app"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
+                android:text="测试匹配" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/location_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:textColor="#687386"
+            android:textSize="13sp" />
+
+        <Button
+            android:id="@+id/request_location_permission"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="检查 / 授权位置" />
+
+        <include
+            android:id="@+id/section_smart_ui"
+            android:tag="智能 UI"
+            layout="@layout/view_settings_section" />
+
+        <TextView
+            android:id="@+id/overlay_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textColor="#687386"
+            android:textSize="14sp" />
+
+        <Button
+            android:id="@+id/request_overlay_permission"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="授权桌面透明语音 HUD" />
+
+        <TextView
+            android:id="@+id/diagnostics_output"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:textColor="#687386"
+            android:textSize="13sp" />
+
+        <Button
+            android:id="@+id/refresh_diagnostics"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="刷新诊断" />
+
+        <include
+            android:id="@+id/section_ai"
+            android:tag="AI"
+            layout="@layout/view_settings_section" />
+
+        <EditText
+            android:id="@+id/api_base_url"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="Base URL，例如 https://api.example.com"
+            android:inputType="textUri"
+            android:singleLine="true" />
+
+        <EditText
+            android:id="@+id/api_key"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="API Key（仅保存在本机）"
+            android:inputType="textPassword"
+            android:singleLine="true" />
+
+        <EditText
+            android:id="@+id/model"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="模型名，例如 gpt-5.6"
+            android:inputType="text"
+            android:singleLine="true" />
+
+        <Spinner
+            android:id="@+id/api_mode"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:spinnerMode="dropdown" />
+
+        <EditText
+            android:id="@+id/system_prompt"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="top|start"
+            android:hint="系统提示词"
+            android:inputType="textMultiLine"
+            android:minLines="4" />
+
+        <TextView
+            android:id="@+id/ai_test_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textColor="#687386"
+            android:textSize="13sp" />
+
+        <Button
+            android:id="@+id/test_ai_endpoint"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="测试 AI 接口" />
+
+        <include
+            android:id="@+id/section_advanced"
+            android:tag="高级"
+            layout="@layout/view_settings_section" />
+
+        <TextView
+            android:id="@+id/advanced_hint"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="高级诊断只显示安全摘要，不显示 API Key、密码或原始隐私数据。"
+            android:textColor="#687386"
+            android:textSize="13sp" />
+
+        <Button
+            android:id="@+id/save_settings"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="保存全部设置" />
+    </LinearLayout>
+</ScrollView>

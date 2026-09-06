@@ -5,6 +5,7 @@ import re
 ROOT = Path(__file__).resolve().parents[1]
 MAIN_SOURCE = (ROOT / "app/src/main/java/com/lchuang/xiaozhimobile/MainActivity.kt").read_text("utf-8")
 SETTINGS_SOURCE = (ROOT / "app/src/main/java/com/lchuang/xiaozhimobile/SettingsActivity.kt").read_text("utf-8")
+SETTINGS_LAYOUT = (ROOT / "app/src/main/res/layout/activity_settings.xml").read_text("utf-8")
 
 
 def extract_block(source, opening_brace, description):
@@ -67,9 +68,10 @@ def method_body(source, method_name):
 
 
 settings_class = class_body(SETTINGS_SOURCE, "SettingsActivity")
-settings_build_ui = method_body(settings_class, "buildUi")
 settings_load = method_body(settings_class, "loadSettings")
 settings_save = method_body(settings_class, "saveSettings")
+settings_persist = method_body(settings_class, "persistSettings")
+settings_actions = method_body(settings_class, "configureActions")
 main_menu = method_body(MAIN_SOURCE, "showHomeMenu")
 
 for control in ("ttsVoiceName", "ttsSpeechRate", "ttsPitch"):
@@ -77,13 +79,16 @@ for control in ("ttsVoiceName", "ttsSpeechRate", "ttsPitch"):
         raise AssertionError(f"SettingsActivity TTS control declaration is missing: {control}")
 
 for marker in (
-    'text = "声音"',
-    'ttsVoiceName = addEdit(root, "TTS 声音名称（留空使用默认）")',
-    'ttsSpeechRate = addEdit(root, "语速 0.6 - 1.6")',
-    'ttsPitch = addEdit(root, "音调 0.6 - 1.4")',
+    'android:tag="声音"',
+    '@+id/tts_voice_name',
+    '@+id/tts_voice',
+    '@+id/tts_speech_rate',
+    '@+id/tts_pitch',
+    '@+id/scan_tts_voices',
+    '@+id/preview_tts',
 ):
-    if marker not in settings_build_ui:
-        raise AssertionError(f"SettingsActivity TTS UI wiring is missing: {marker}")
+    if marker not in SETTINGS_LAYOUT:
+        raise AssertionError(f"SettingsActivity TTS XML wiring is missing: {marker}")
 
 load_markers = (
     "ttsVoiceName.setText(settings.ttsVoiceName)",
@@ -99,11 +104,15 @@ for marker in load_markers:
     if marker not in settings_load:
         raise AssertionError(f"SettingsActivity TTS load binding is missing: {marker}")
 for marker in save_markers:
-    if marker not in settings_save:
+    if marker not in settings_persist:
         raise AssertionError(f"SettingsActivity TTS save binding is missing: {marker}")
 
-if not re.search(r"setOnClickListener\s*\{\s*saveSettings\(\)\s*\}", settings_build_ui, re.S):
+if not re.search(r"findViewById(?:<[^>]+>)?\(R\.id\.save_settings\).*setOnClickListener", SETTINGS_SOURCE, re.S):
     raise AssertionError("SettingsActivity save action is not wired to persisted TTS settings")
+
+for marker in ("scanTtsVoices()", "previewTts()", "applyTtsSettings()"):
+    if marker not in settings_actions and marker not in SETTINGS_SOURCE:
+        raise AssertionError(f"SettingsActivity TTS action is missing: {marker}")
 
 if 'menu.add("设置").setOnMenuItemClickListener' not in main_menu:
     raise AssertionError("MainActivity home menu does not expose the SettingsActivity entry")
