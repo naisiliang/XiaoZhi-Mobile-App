@@ -76,14 +76,18 @@ def collect_missing():
 
     def intent_receiver_scope(source, variable_name):
         """Return only the exact receiver block tied to this Intent assignment."""
-        for constructor in re.finditer(r"\bIntent\s*\(", source, re.S):
+        constructor = re.search(
+            r"=\s*(?:(?:[A-Za-z_]\w*)\.)*Intent\s*\(",
+            source,
+            re.S,
+        )
+        if constructor is not None:
             closing = extract_delimited_block(source, constructor.end() - 1)
-            if closing is None:
-                continue
-            suffix = source[closing + 1:]
-            scoped = re.match(r"\s*\.\s*(?:apply|also|run)\s*\{", suffix, re.S)
-            if scoped is not None:
-                return extract_braced_block(source, closing + 1 + scoped.end() - 1)
+            if closing is not None:
+                suffix = source[closing + 1:]
+                scoped = re.match(r"\s*\.\s*(?:apply|also|run)\s*\{", suffix, re.S)
+                if scoped is not None:
+                    return extract_braced_block(source, closing + 1 + scoped.end() - 1)
 
         receiver = re.escape(variable_name)
         for scoped in re.finditer(
@@ -121,7 +125,12 @@ def collect_missing():
             missing.append("WakeServiceController submit route: missing function submitText")
             return
         intent_declarations = list(
-            re.finditer(r"\b(?:val|var)\s+([A-Za-z_]\w*)\s*=\s*Intent\s*\(", body, re.S)
+            re.finditer(
+                r"\b(?:val|var)\s+([A-Za-z_]\w*)"
+                r"(?:\s*:\s*[^=\n]+)?\s*=\s*(?:(?:[A-Za-z_]\w*)\.)*Intent\s*\(",
+                body,
+                re.S,
+            )
         )
         if not intent_declarations:
             missing.append("WakeServiceController submit route: missing an assigned Intent")
