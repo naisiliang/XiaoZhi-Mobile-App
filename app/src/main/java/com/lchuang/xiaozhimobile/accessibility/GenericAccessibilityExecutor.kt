@@ -27,8 +27,8 @@ class GenericAccessibilityExecutor(
     private val policyEvaluator: (ToolInvocation) -> ToolPolicyResult =
         CentralSafetyPolicyEngine()::evaluate,
     private val sensitiveScreenDetector: SensitiveScreenDetector = SensitiveScreenDetector(),
-) {
-    fun execute(proposal: UiActionProposal): ToolExecutionResult {
+) : UiActionExecutor {
+    override fun execute(proposal: UiActionProposal): ToolExecutionResult {
         var result: ToolExecutionResult? = null
         val invocation = ToolInvocation(
             name = toolName(proposal.action),

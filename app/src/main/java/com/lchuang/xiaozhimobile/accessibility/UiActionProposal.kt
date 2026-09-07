@@ -1,5 +1,6 @@
 package com.lchuang.xiaozhimobile.accessibility
 
+import com.lchuang.xiaozhimobile.ToolExecutionResult
 import com.lchuang.xiaozhimobile.screen.ContextCandidate
 import com.lchuang.xiaozhimobile.screen.ScreenContext
 
@@ -75,4 +76,8 @@ fun interface AccessibilityNodeFinder {
 
 fun interface AccessibilityActionDriver {
     fun perform(action: UiActionType, node: CurrentAccessibilityNode?): Boolean
+}
+
+fun interface UiActionExecutor {
+    fun execute(proposal: UiActionProposal): ToolExecutionResult
 }
