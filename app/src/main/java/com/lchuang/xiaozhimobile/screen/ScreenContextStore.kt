@@ -43,6 +43,11 @@ class ScreenContextStore(
         return context
     }
 
+    /** Return true only when this exact generation is still the live, unexpired context. */
+    @Synchronized
+    fun isCurrent(context: ScreenContext): Boolean =
+        get(context.packageName, context.windowFingerprint)?.generationId == context.generationId
+
     @Synchronized
     fun invalidate() {
         current = null
