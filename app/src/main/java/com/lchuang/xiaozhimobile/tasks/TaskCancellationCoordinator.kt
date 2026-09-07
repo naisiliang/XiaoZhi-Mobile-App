@@ -97,8 +97,16 @@ class TaskCancellationCoordinator(
 
     fun snapshot(): TaskProgressSnapshot = synchronized(lock) { tracker.snapshot() }
 
-    fun transitionTo(state: TaskProgressState): TaskProgressSnapshot = synchronized(lock) {
-        tracker.transitionTo(state)
+    fun transitionTo(state: TaskProgressState): TaskProgressSnapshot {
+        if (state == TaskProgressState.CANCELLED) return cancel().snapshot
+        return synchronized(lock) {
+            if (state.isTerminal()) {
+                check(activeTool == null && queuedTools.isEmpty()) {
+                    "cannot enter $state while task work remains"
+                }
+            }
+            tracker.transitionTo(state)
+        }
     }
 
     fun update(

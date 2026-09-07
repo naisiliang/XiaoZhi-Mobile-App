@@ -109,4 +109,23 @@ class TaskCancellationCoordinatorTest {
         assertFalse(queuedTemp.exists())
         assertEquals(TaskRunCode.NOT_RUNNABLE, coordinator.runNext().code)
     }
+
+    @Test
+    fun `direct cancellation transition uses the cleanup boundary`() {
+        val temp = Files.createTempFile("task-direct-cancel-", ".part").toFile()
+        val coordinator = TaskCancellationCoordinator()
+        coordinator.enqueue(
+            TaskToolWork(
+                id = "queued-tool",
+                execute = {},
+                cleanup = { check(temp.delete()) },
+            ),
+        )
+
+        val snapshot = coordinator.transitionTo(TaskProgressState.CANCELLED)
+
+        assertEquals(TaskProgressState.CANCELLED, snapshot.state)
+        assertFalse(temp.exists())
+        assertEquals(TaskRunCode.CANCELLED, coordinator.runNext().code)
+    }
 }
