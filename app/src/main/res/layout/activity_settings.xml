@@ -426,6 +426,20 @@
             android:layout_height="wrap_content"
             android:text="测试 AI 接口" />
 
+        <TextView
+            android:id="@+id/provider_capability_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:textColor="#687386"
+            android:textSize="13sp" />
+
+        <Button
+            android:id="@+id/detect_provider_capabilities"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="检测 Provider 能力" />
+
         <include
             android:id="@+id/section_advanced"
             android:tag="高级"

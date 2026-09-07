@@ -28,6 +28,11 @@ import com.lchuang.xiaozhimobile.runtime.WakeRuntimeStatusStoreProvider
 import com.lchuang.xiaozhimobile.runtime.WakeServiceController
 import com.lchuang.xiaozhimobile.accessibility.XiaoZhiAccessibilityService
 import com.lchuang.xiaozhimobile.media.MusicApp
+import com.lchuang.xiaozhimobile.providers.CapabilitySupport
+import com.lchuang.xiaozhimobile.providers.ProviderCapability
+import com.lchuang.xiaozhimobile.providers.ProviderCapabilityProbe
+import com.lchuang.xiaozhimobile.providers.ProviderCapabilityProfile
+import com.lchuang.xiaozhimobile.providers.ProviderConnectionConfig
 import java.util.Locale
 import java.util.concurrent.Executors
 
@@ -69,10 +74,12 @@ class SettingsActivity : Activity() {
     private lateinit var apiMode: Spinner
     private lateinit var systemPrompt: EditText
     private lateinit var aiTestStatus: TextView
+    private lateinit var providerCapabilityStatus: TextView
     private lateinit var overlayStatus: TextView
     private lateinit var diagnosticsOutput: TextView
 
     private val backgroundExecutor = Executors.newSingleThreadExecutor()
+    private lateinit var providerCapabilityProbe: ProviderCapabilityProbe
     private var ttsEngine: TextToSpeech? = null
     private var ttsVoiceManager: TtsVoiceManager? = null
     private var ttsVoiceOptions: List<TtsVoiceManager.VoiceOption> = emptyList()
@@ -93,6 +100,7 @@ class SettingsActivity : Activity() {
         appRegistry = InstalledAppRegistry(this)
         locationProvider = LocationProvider(this)
         aiClient = AiClient(settings)
+        providerCapabilityProbe = ProviderCapabilityProbe()
         setContentView(R.layout.activity_settings)
         bindViews()
         configureSections()
@@ -161,6 +169,7 @@ class SettingsActivity : Activity() {
         apiMode = findViewById(R.id.api_mode)
         systemPrompt = findViewById(R.id.system_prompt)
         aiTestStatus = findViewById(R.id.ai_test_status)
+        providerCapabilityStatus = findViewById(R.id.provider_capability_status)
         overlayStatus = findViewById(R.id.overlay_status)
         diagnosticsOutput = findViewById(R.id.diagnostics_output)
     }
@@ -207,6 +216,7 @@ class SettingsActivity : Activity() {
             renderDiagnostics()
         }
         findViewById<Button>(R.id.test_ai_endpoint).setOnClickListener { testAiEndpoint() }
+        findViewById<Button>(R.id.detect_provider_capabilities).setOnClickListener { detectProviderCapabilities() }
     }
 
     private fun configureInsets() {
@@ -236,6 +246,7 @@ class SettingsActivity : Activity() {
         model.setText(settings.model)
         apiMode.setSelection(settings.apiMode.ordinal)
         systemPrompt.setText(settings.systemPrompt)
+        providerCapabilityStatus.text = "尚未检测 Provider 能力；检测会逐项发送低成本探测请求。"
         ttsSpeechRate.setText(settings.ttsSpeechRate.toString())
         ttsPitch.setText(settings.ttsPitch.toString())
         defaultMapApp.setSelection(settings.defaultMapApp.ordinal)
@@ -529,6 +540,43 @@ class SettingsActivity : Activity() {
                 }
             }
         }
+    }
+
+    private fun detectProviderCapabilities() {
+        persistSettings()
+        providerCapabilityStatus.text = "正在逐项检测 Provider 能力…"
+        val config = ProviderConnectionConfig(
+            baseUrl = settings.apiBaseUrl,
+            model = settings.model,
+            apiMode = settings.apiMode,
+            apiKey = settings.apiKey,
+        )
+        backgroundExecutor.execute {
+            val result = runCatching {
+                providerCapabilityProbe.detect(config)
+            }
+            runOnUiThread {
+                providerCapabilityStatus.text = result.fold(
+                    onSuccess = ::formatProviderCapabilityProfile,
+                    onFailure = { "Provider 能力检测失败：${it.message?.take(120) ?: "配置或网络不可用"}" },
+                )
+            }
+        }
+    }
+
+    private fun formatProviderCapabilityProfile(profile: ProviderCapabilityProfile): String {
+        val statuses = ProviderCapability.entries.joinToString(" · ") { capability ->
+            "${capability.displayName}=${when (profile.status(capability)) {
+                CapabilitySupport.SUPPORTED -> "支持"
+                CapabilitySupport.UNSUPPORTED -> "不支持"
+                CapabilitySupport.UNKNOWN -> "未知"
+            }}"
+        }
+        val local = if (profile.localSkills.isEmpty()) "无已加载本地 Skills" else profile.localSkills.joinToString("、")
+        val native = if (profile.nativeSkills.isEmpty()) "未发现" else profile.nativeSkills.joinToString("、")
+        return "Provider 能力（真实逐项检测）：$statuses\n" +
+            "本地 XiaoZhi Skills（独立）：$local\n" +
+            "Provider Native Skills（独立）：$native"
     }
 
     private fun renderRuntimeStatus(status: WakeRuntimeStatus) {
