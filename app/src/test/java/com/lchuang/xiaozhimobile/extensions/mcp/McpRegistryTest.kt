@@ -117,7 +117,12 @@ class McpRegistryTest {
         val registry = McpRegistry()
         registry.register(configured)
         registry.installToolSchema("research.server", """{"tools":[{"name":"open_web"}]}""")
-        val transport = RecordingTransport(McpTransportResult.Success("""{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"""))
+        val transport = RecordingTransport(
+            responseFactory = { payload: String ->
+                val requestId = Regex("\"id\":(\\d+)").find(payload)!!.groupValues[1]
+                McpTransportResult.Success("""{"jsonrpc":"2.0","id":$requestId,"result":{"ok":true}}""")
+            },
+        )
         registry.attachClient(
             "research.server",
             McpClient(configured, transport) { "super-secret-token" },
@@ -219,6 +224,25 @@ class McpRegistryTest {
         assertTrue(registry.tools("research.server").isEmpty())
     }
 
+    @Test
+    fun nestedJsonCollectionsAreBoundedBeforeTransport() {
+        val configured = server()
+        val registry = McpRegistry()
+        registry.register(configured)
+        registry.installToolSchema("research.server", """{"tools":[{"name":"open_web"}]}""")
+        val transport = RecordingTransport(McpTransportResult.Success("""{"jsonrpc":"2.0","id":1,"result":{}}"""))
+        registry.attachClient("research.server", McpClient(configured, transport))
+
+        val result = registry.invoke(
+            "research.server",
+            "open_web",
+            mapOf("items" to (0..64).toList()),
+        )
+
+        assertEquals(McpCallResult.Failed(McpCallCode.INVALID_REQUEST), result)
+        assertEquals(0, transport.callCount)
+    }
+
     private fun server(
         endpoint: String = "https://example.com/mcp",
         permissions: Set<ExtensionPermission> = setOf(ExtensionPermission.NETWORK),
@@ -233,9 +257,14 @@ class McpRegistryTest {
     )
 
     private class RecordingTransport(
-        private val response: McpTransportResult,
+        private val responseFactory: (String) -> McpTransportResult,
         override val serverType: McpServerType = McpServerType.STREAMABLE_HTTP,
     ) : McpTransport {
+        constructor(
+            response: McpTransportResult,
+            serverType: McpServerType = McpServerType.STREAMABLE_HTTP,
+        ) : this({ response }, serverType)
+
         var payload: String? = null
         var credential: String? = null
         var callCount: Int = 0
@@ -244,7 +273,7 @@ class McpRegistryTest {
             this.payload = payload
             this.credential = credential
             callCount += 1
-            return response
+            return responseFactory(payload)
         }
     }
 

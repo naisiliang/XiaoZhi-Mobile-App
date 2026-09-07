@@ -166,11 +166,17 @@ class McpClient(
                 ?: throw IllegalArgumentException("non-finite number")
             is Double -> value.takeIf { it.isFinite() }?.toString()
                 ?: throw IllegalArgumentException("non-finite number")
-            is Map<*, *> -> value.entries.joinToString(",", "{", "}") { (key, nested) ->
-                require(key is String && key.length <= MAX_KEY_LENGTH) { "object key is invalid" }
-                "${encodeString(key)}:${encodeValue(nested, depth + 1)}"
+            is Map<*, *> -> {
+                require(value.size <= MAX_COLLECTION_ITEMS) { "object has too many fields" }
+                value.entries.joinToString(",", "{", "}") { (key, nested) ->
+                    require(key is String && key.length <= MAX_KEY_LENGTH) { "object key is invalid" }
+                    "${encodeString(key)}:${encodeValue(nested, depth + 1)}"
+                }
             }
-            is List<*> -> value.joinToString(",", "[", "]") { nested -> encodeValue(nested, depth + 1) }
+            is List<*> -> {
+                require(value.size <= MAX_COLLECTION_ITEMS) { "array has too many items" }
+                value.joinToString(",", "[", "]") { nested -> encodeValue(nested, depth + 1) }
+            }
             else -> throw IllegalArgumentException("unsupported JSON value")
         }
     }
@@ -204,6 +210,7 @@ class McpClient(
         private const val MAX_TIMEOUT_MS = 120_000L
         private const val MAX_ARGUMENTS = 32
         private const val MAX_JSON_DEPTH = 8
+        private const val MAX_COLLECTION_ITEMS = 64
         private const val MAX_REQUEST_BYTES = 64 * 1024
         private const val MAX_RESPONSE_BYTES = 64 * 1024
         private const val MAX_STRING_LENGTH = 16 * 1024
