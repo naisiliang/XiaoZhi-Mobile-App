@@ -8,7 +8,10 @@
 - Task 4: complete (`4c1660e`; focused diagnostics/health/notifier tests, full
   Phase 0 gate, and full Gradle build passed; fresh local spec/quality/security
   review found no unresolved Critical or Important issue)
-- Task 5: pending
+- Task 5: complete (`e2e823e`, `3d789a2`, `6bc84ab`, `88bcd8c`; focused
+  RED/GREEN hardening tests, full Phase 0 gate, full unit tests, and full
+  Gradle build passed; fresh local spec/quality/security review found no
+  unresolved Critical or Important issue)
 - Task 6: pending
 - Task 7: pending
 - Task 8: pending
