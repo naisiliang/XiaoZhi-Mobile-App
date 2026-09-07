@@ -184,12 +184,12 @@ class XzPackValidator(
             XzPackValidationResult.Valid(ExtensionPackage(manifest, entries.toList()))
         } catch (error: XzPackLimitException) {
             XzPackValidationResult.Invalid(error.code, error.message ?: "package exceeds limit")
+        } catch (_: CharacterCodingException) {
+            XzPackValidationResult.Invalid(XzPackValidationCode.MANIFEST_INVALID, "manifest is not UTF-8")
         } catch (_: ZipException) {
             XzPackValidationResult.Invalid(XzPackValidationCode.ZIP_INVALID)
         } catch (_: IOException) {
             XzPackValidationResult.Invalid(XzPackValidationCode.ZIP_INVALID)
-        } catch (_: CharacterCodingException) {
-            XzPackValidationResult.Invalid(XzPackValidationCode.MANIFEST_INVALID, "manifest is not UTF-8")
         } finally {
             runCatching { zip.close() }
         }
@@ -246,6 +246,11 @@ internal object XzPackPath {
         ".csv", ".gif", ".jpeg", ".jpg", ".json", ".md", ".png", ".svg", ".txt",
         ".webp", ".yaml", ".yml",
     )
+    private val DISALLOWED_EXTENSIONS = setOf(
+        ".apk", ".bat", ".bin", ".class", ".cmd", ".com", ".dll", ".dex", ".elf", ".exe",
+        ".jar", ".js", ".kts", ".kt", ".mjs", ".native", ".php", ".pl", ".ps1", ".py",
+        ".rb", ".scr", ".sh", ".so", ".vbs", ".wasm",
+    )
 
     fun normalize(raw: String): String {
         if (raw.isBlank() || raw.contains('\\') || raw.contains('\u0000')) {
@@ -277,11 +282,13 @@ internal object XzPackPath {
 
     fun isAllowedFileType(path: String): Boolean {
         val fileName = path.substringAfterLast('/').lowercase(Locale.ROOT)
+        val extension = fileName.substringAfterLast('.', missingDelimiterValue = "")
+            .let { suffix -> if (suffix.isEmpty()) "" else ".$suffix" }
         return when {
             fileName == "readme.md" || fileName == "skill.md" -> true
-            fileName.substringAfterLast('.', missingDelimiterValue = "")
-                .isEmpty() -> false
-            else -> ALLOWED_EXTENSIONS.any { extension -> fileName.endsWith(extension) }
+            extension.isEmpty() -> false
+            extension in DISALLOWED_EXTENSIONS -> false
+            else -> extension in ALLOWED_EXTENSIONS
         }
     }
 }
