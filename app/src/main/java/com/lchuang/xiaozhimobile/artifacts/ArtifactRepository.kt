@@ -34,28 +34,27 @@ class ArtifactRepository private constructor(
         require(privateFile.length() == artifact.size) { "artifact size does not match content" }
         val digest = ArtifactDigest.sha256(privateFile)
         require(digest.equals(artifact.sha256, ignoreCase = true)) { "artifact digest does not match content" }
-        val existing = metadataStore.findArtifact(artifact.artifactId)
-        if (existing != null && existing.version == artifact.version) {
-            require(existing.copy(privatePath = privateFile.path, sha256 = existing.sha256.lowercase()) ==
-                artifact.copy(privatePath = privateFile.path, sha256 = artifact.sha256.lowercase())) {
-                "artifact versions are immutable"
-            }
-            return existing
-        }
         val parentVersion = artifact.parentVersion ?: artifact.version.takeIf { it > 1 }?.minus(1)
-        if (artifact.version > 1) {
-            require(parentVersion == artifact.version - 1) { "artifact version lineage is incomplete" }
-            require(metadataStore.findVersion(artifact.artifactId, parentVersion) != null) {
-                "artifact parent version is missing"
-            }
-        }
         val normalized = artifact.copy(
             privatePath = privateFile.path,
             sha256 = artifact.sha256.lowercase(),
             parentVersion = parentVersion,
         )
-        metadataStore.saveArtifact(normalized)
-        metadataStore.insertVersion(ArtifactVersion.fromArtifact(normalized))
+        val versionValue = ArtifactVersion.fromArtifact(normalized)
+        val existingVersion = metadataStore.findVersion(normalized.artifactId, normalized.version)
+        if (existingVersion != null) {
+            require(existingVersion == versionValue) { "artifact versions are immutable" }
+            return normalized
+        }
+        if (normalized.version > 1) {
+            require(normalized.parentVersion == normalized.version - 1) {
+                "artifact version lineage is incomplete"
+            }
+            require(metadataStore.findVersion(normalized.artifactId, normalized.parentVersion) != null) {
+                "artifact parent version is missing"
+            }
+        }
+        metadataStore.saveArtifactWithVersion(normalized, versionValue)
         return normalized
     }
 
@@ -171,11 +170,10 @@ class ArtifactRepository private constructor(
 }
 
 private interface ArtifactMetadataStore {
-    fun saveArtifact(artifact: Artifact)
+    fun saveArtifactWithVersion(artifact: Artifact, version: ArtifactVersion)
     fun findArtifact(artifactId: String): Artifact?
     fun listArtifacts(): List<Artifact>
     fun remove(artifactId: String): Boolean
-    fun insertVersion(version: ArtifactVersion)
     fun findVersion(artifactId: String, version: Int): ArtifactVersion?
     fun listVersions(artifactId: String): List<ArtifactVersion>
     fun close()
@@ -185,7 +183,10 @@ private class InMemoryArtifactMetadataStore : ArtifactMetadataStore {
     private val artifacts = linkedMapOf<String, Artifact>()
     private val versions = linkedMapOf<Pair<String, Int>, ArtifactVersion>()
 
-    override fun saveArtifact(artifact: Artifact) {
+    override fun saveArtifactWithVersion(artifact: Artifact, version: ArtifactVersion) {
+        val key = version.artifactId to version.version
+        require(key !in versions) { "artifact version already exists" }
+        versions[key] = version
         artifacts[artifact.artifactId] = artifact
     }
 
@@ -197,12 +198,6 @@ private class InMemoryArtifactMetadataStore : ArtifactMetadataStore {
         val removed = artifacts.remove(artifactId) != null
         versions.keys.filter { it.first == artifactId }.toList().forEach(versions::remove)
         return removed
-    }
-
-    override fun insertVersion(version: ArtifactVersion) {
-        val key = version.artifactId to version.version
-        require(key !in versions) { "artifact version already exists" }
-        versions[key] = version
     }
 
     override fun findVersion(artifactId: String, version: Int): ArtifactVersion? = versions[artifactId to version]
@@ -217,8 +212,34 @@ private class InMemoryArtifactMetadataStore : ArtifactMetadataStore {
 private class SqliteArtifactMetadataStore(context: Context) : ArtifactMetadataStore {
     private val database = ArtifactMetadataDatabase(context)
 
-    override fun saveArtifact(artifact: Artifact) {
-        val values = ContentValues().apply {
+    override fun saveArtifactWithVersion(artifact: Artifact, version: ArtifactVersion) {
+        val db = database.writableDatabase
+        db.beginTransaction()
+        try {
+            val values = artifactValues(artifact)
+            if (db.update("artifacts", values, "artifact_id = ?", arrayOf(artifact.artifactId)) == 0) {
+                db.insertOrThrow("artifacts", null, values)
+            }
+            val versionValues = ContentValues().apply {
+                put("artifact_id", version.artifactId)
+                put("version", version.version)
+                put("private_path", version.privatePath)
+                put("size", version.size)
+                put("sha256", version.sha256)
+                put("created_at", version.createdAt)
+                put("source_agent", version.sourceAgent)
+                if (version.parentVersion == null) putNull("parent_version") else put("parent_version", version.parentVersion)
+                put("mime_type", version.mimeType)
+                put("display_name", version.displayName)
+            }
+            db.insertOrThrow("artifact_versions", null, versionValues)
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    private fun artifactValues(artifact: Artifact): ContentValues = ContentValues().apply {
             put("artifact_id", artifact.artifactId)
             put("session_id", artifact.sessionId)
             put("mime_type", artifact.mimeType)
@@ -231,13 +252,6 @@ private class SqliteArtifactMetadataStore(context: Context) : ArtifactMetadataSt
             put("version", artifact.version)
             put("status", artifact.status.name)
             if (artifact.parentVersion == null) putNull("parent_version") else put("parent_version", artifact.parentVersion)
-        }
-        database.writableDatabase.insertWithOnConflict(
-            "artifacts",
-            null,
-            values,
-            SQLiteDatabase.CONFLICT_REPLACE,
-        )
     }
 
     override fun findArtifact(artifactId: String): Artifact? = queryArtifact(
@@ -269,29 +283,13 @@ private class SqliteArtifactMetadataStore(context: Context) : ArtifactMetadataSt
         val db = database.writableDatabase
         db.beginTransaction()
         return try {
-            val removed = db.delete("artifacts", "artifact_id = ?", arrayOf(artifactId)) > 0
             db.delete("artifact_versions", "artifact_id = ?", arrayOf(artifactId))
+            val removed = db.delete("artifacts", "artifact_id = ?", arrayOf(artifactId)) > 0
             db.setTransactionSuccessful()
             removed
         } finally {
             db.endTransaction()
         }
-    }
-
-    override fun insertVersion(version: ArtifactVersion) {
-        val values = ContentValues().apply {
-            put("artifact_id", version.artifactId)
-            put("version", version.version)
-            put("private_path", version.privatePath)
-            put("size", version.size)
-            put("sha256", version.sha256)
-            put("created_at", version.createdAt)
-            put("source_agent", version.sourceAgent)
-            if (version.parentVersion == null) putNull("parent_version") else put("parent_version", version.parentVersion)
-            put("mime_type", version.mimeType)
-            put("display_name", version.displayName)
-        }
-        database.writableDatabase.insertOrThrow("artifact_versions", null, values)
     }
 
     override fun findVersion(artifactId: String, version: Int): ArtifactVersion? {
@@ -372,6 +370,11 @@ private class ArtifactMetadataDatabase(context: Context) : SQLiteOpenHelper(
     null,
     VERSION,
 ) {
+    override fun onConfigure(db: SQLiteDatabase) {
+        super.onConfigure(db)
+        db.setForeignKeyConstraintsEnabled(true)
+    }
+
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(CREATE_ARTIFACTS)
         db.execSQL(CREATE_VERSIONS)

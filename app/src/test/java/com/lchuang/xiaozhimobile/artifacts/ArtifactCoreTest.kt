@@ -83,6 +83,40 @@ class ArtifactCoreTest {
     }
 
     @Test
+    fun savingAnOlderVersionDoesNotReplaceTheCurrentVersion() {
+        val workspace = workspace()
+        val repository = ArtifactRepository(workspace)
+        val firstFile = workspace.allocateVersionFile("artifact-immutable", 1, "txt")
+        firstFile.writeText("v1")
+        val first = repository.registerCompleted(
+            artifactId = "artifact-immutable",
+            sessionId = "session-1",
+            mimeType = "text/plain",
+            displayName = "notes.txt",
+            privateFile = firstFile,
+            sourceAgent = "xiaobai",
+        )
+        val secondFile = workspace.allocateVersionFile("artifact-immutable", 2, "txt")
+        secondFile.writeText("v2")
+        repository.registerCompleted(
+            artifactId = first.artifactId,
+            sessionId = first.sessionId,
+            mimeType = first.mimeType,
+            displayName = first.displayName,
+            privateFile = secondFile,
+            sourceAgent = first.sourceAgent,
+            version = 2,
+            parentVersion = 1,
+        )
+
+        repository.save(first)
+
+        assertEquals(2, repository.find(first.artifactId)?.version)
+        assertEquals(listOf(1, 2), repository.versions(first.artifactId).map { it.version })
+        repository.close()
+    }
+
+    @Test
     fun repositoryRejectsExternalOrMismatchedArtifacts() {
         val workspace = workspace()
         val repository = ArtifactRepository(workspace)

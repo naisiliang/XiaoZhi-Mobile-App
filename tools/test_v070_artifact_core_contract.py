@@ -47,7 +47,16 @@ for marker in (
 ):
     require(marker in combined, f"private workspace safety marker missing: {marker}")
 
-for marker in ("SQLiteOpenHelper", "CREATE TABLE", "session_id", "source_agent", "sha256"):
+for marker in (
+    "SQLiteOpenHelper",
+    "CREATE TABLE",
+    "session_id",
+    "source_agent",
+    "sha256",
+    "saveArtifactWithVersion",
+    "setForeignKeyConstraintsEnabled",
+    "insertOrThrow",
+):
     require(marker in sources["ArtifactRepository.kt"], f"artifact metadata DB marker missing: {marker}")
 
 for marker in ("MessageDigest", "SHA-256", "maxBytes", "copyBounded"):
