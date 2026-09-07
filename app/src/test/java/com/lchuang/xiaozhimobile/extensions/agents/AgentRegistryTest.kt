@@ -30,6 +30,29 @@ class AgentRegistryTest {
     }
 
     @Test
+    fun firstPartyAgentsOwnOnlyTheirDeclaredCapabilityDomains() {
+        val registry = AgentRegistry()
+        val ppt = registry.find("ppt-expert")!!
+        val image = registry.find("image-designer")!!
+        val files = registry.find("file-assistant")!!
+        val research = registry.find("research-assistant")!!
+
+        assertTrue(ppt.allowedTools.isNotEmpty())
+        assertTrue(ppt.allowedTools.all { it.startsWith("ppt_") })
+        assertTrue(image.allowedTools.isNotEmpty())
+        assertTrue(image.allowedTools.all { it.startsWith("image_") })
+        assertTrue(files.allowedTools.isNotEmpty())
+        assertTrue(files.allowedTools.all { it.startsWith("file_") || it.startsWith("artifact_") })
+        assertTrue(research.allowedTools.isNotEmpty())
+        assertTrue(research.allowedTools.all { it == "open_web" || it.startsWith("research_") })
+        assertFalse(research.allowedTools.any { it in PHONE_OR_DEVICE_TOOLS })
+        assertTrue(ExtensionPermission.FILES in ppt.permissions)
+        assertTrue(ExtensionPermission.IMAGE_GENERATION in image.permissions)
+        assertTrue(ExtensionPermission.FILES in files.permissions)
+        assertTrue(ExtensionPermission.NETWORK in research.permissions)
+    }
+
+    @Test
     fun parsesIndependentAgentBudgetsAndDelegationConfiguration() {
         val agent = AgentDefinition.parse(
             """
@@ -125,6 +148,48 @@ class AgentRegistryTest {
                 "parent.agent",
                 "collect",
                 AgentBudget(maxDelegationDepth = 2, maxToolCalls = 1, maxExecutionTimeMs = 1000),
+            ),
+        )
+    }
+
+    @Test
+    fun orchestratorEnforcesArtifactBudgetAcrossDelegation() {
+        val child = AgentDefinition(
+            id = "child.agent",
+            version = "1.0.0",
+            name = "child",
+            allowedTools = setOf("file_create_text"),
+            permissions = setOf(ExtensionPermission.FILES),
+            maxDelegationDepth = 2,
+            maxToolCalls = 4,
+            maxExecutionTimeMs = 1000,
+            maxArtifactSizeBytes = 1024,
+            workflow = listOf(AgentStep("file_create_text", mapOf("artifact_size_bytes" to "400"))),
+        )
+        val parent = child.copy(
+            id = "parent.agent",
+            name = "parent",
+            delegationTargets = listOf(child.id),
+        )
+        val registry = AgentRegistry(emptyList(), setOf("file_create_text"))
+        assertTrue(registry.register(parent) is AgentRegistryResult.Registered)
+        assertTrue(registry.register(child) is AgentRegistryResult.Registered)
+
+        assertEquals(
+            AgentRunResult.Denied(
+                AgentRunCode.ARTIFACT_BUDGET_EXCEEDED,
+                "child.agent",
+                trace = listOf("parent.agent", "child.agent"),
+            ),
+            AgentOrchestrator(registry).run(
+                "parent.agent",
+                "make files",
+                AgentBudget(
+                    maxDelegationDepth = 2,
+                    maxToolCalls = 4,
+                    maxExecutionTimeMs = 1000,
+                    maxArtifactSizeBytes = 512,
+                ),
             ),
         )
     }
@@ -231,6 +296,15 @@ class AgentRegistryTest {
                 toolCalls = 1,
             ),
             AgentOrchestrator(registry).run("prompt.agent", "find"),
+        )
+    }
+
+    private companion object {
+        val PHONE_OR_DEVICE_TOOLS = setOf(
+            "open_app", "navigate", "search_nearby", "media_play", "media_pause",
+            "media_next", "media_previous", "volume_up", "volume_down", "set_volume",
+            "flashlight_on", "flashlight_off", "ui_click", "ui_select", "ui_back", "ui_next",
+            "send_text_message",
         )
     }
 

@@ -9,7 +9,7 @@
 - Task 5: complete (`46dfa7d`; delegated review unavailable after a bounded wait, fresh local spec/quality/security review found no unresolved Critical or Important issue)
 - Task 6: complete (`9fe8cdd`; delegated review bounded separately, fresh local spec/quality/security review found no unresolved Critical or Important issue)
 - Task 7: complete (`de7a652`; delegated review bounded separately, fresh local spec/quality/security review found no unresolved Critical or Important issue)
-- Task 8: pending
+- Task 8: implementation complete (commit recorded with Task 8 report; progress ledger updated after commit)
 - Task 9: pending
 
 The recovery branch remains isolated from `main` and

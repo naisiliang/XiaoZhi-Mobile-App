@@ -27,6 +27,7 @@ enum class AgentRunCode {
     INPUT_TOO_LARGE,
     MAX_DELEGATION_DEPTH_EXCEEDED,
     TOOL_BUDGET_EXCEEDED,
+    ARTIFACT_BUDGET_EXCEEDED,
     EXECUTION_TIMEOUT,
     DELEGATION_CYCLE,
     TOOL_NOT_ALLOWED,
@@ -110,6 +111,13 @@ class AgentOrchestrator(
             if (normalized !in definition.allowedTools.map { it.lowercase(Locale.ROOT) }.toSet()) {
                 return AgentRunResult.Denied(AgentRunCode.TOOL_NOT_ALLOWED, agentId, path)
             }
+            val artifactBytes = artifactBytesFor(step.arguments)
+                ?: return AgentRunResult.Denied(AgentRunCode.ARTIFACT_BUDGET_EXCEEDED, agentId, path)
+            if (artifactBytes > definition.maxArtifactSizeBytes ||
+                artifactBytes > budget.maxArtifactSizeBytes - state.artifactBytes
+            ) {
+                return AgentRunResult.Denied(AgentRunCode.ARTIFACT_BUDGET_EXCEEDED, agentId, path)
+            }
             val invocation = ToolInvocation(
                 name = step.tool,
                 arguments = step.arguments.mapValues { (_, value) -> value.replace("{input}", input) },
@@ -123,6 +131,7 @@ class AgentOrchestrator(
             invocations += invocation
             state.toolCalls++
             localToolCalls++
+            state.artifactBytes += artifactBytes
         }
 
         if (isExpired(currentDeadline)) {
@@ -171,8 +180,15 @@ class AgentOrchestrator(
         return if (Long.MAX_VALUE - start < durationNanos) Long.MAX_VALUE else start + durationNanos
     }
 
+    private fun artifactBytesFor(arguments: Map<String, String>): Long? {
+        val raw = arguments["artifact_size_bytes"] ?: arguments["artifactSizeBytes"] ?: return 0L
+        val value = raw.toLongOrNull() ?: return null
+        return value.takeIf { it >= 0L }
+    }
+
     private data class ExecutionState(
         var toolCalls: Int = 0,
+        var artifactBytes: Long = 0L,
     )
 
     companion object {
