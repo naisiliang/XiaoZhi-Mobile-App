@@ -58,5 +58,5 @@ or Important issue. The frozen-file diff check was clean.
 - Task 4: `61624fd`
 - Task 5: `31b42f9`
 
-Checkpoint commit: pending; this document is included in
-`checkpoint: v070 phase3 music video`.
+Checkpoint commit: `4c8be4b0f3beb9bfff8d775bcfa4afd6966e39bf`
+(`checkpoint: v070 phase3 music video`).
