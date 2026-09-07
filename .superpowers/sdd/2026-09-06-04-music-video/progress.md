@@ -1,0 +1,14 @@
+# SDD ledger — plan: 2026-09-06-04-music-video.md
+
+## Task status
+
+- Task 1: complete (`dec5749`; delegated review unavailable, local review found no unresolved Critical or Important issue)
+- Task 2: pending
+- Task 3: pending
+- Task 4: pending
+- Task 5: pending
+- Task 6: pending
+
+Task 1 persists and resolves the configured default music app without changing
+the frozen wake-word/KWS surface. Device validation remains
+`DEVICE_GATE_PENDING`.
