@@ -59,8 +59,8 @@ data class ExtensionManifest(
             }
 
             val objectValue = try {
-                ManifestJsonParser(json).parseObject()
-            } catch (error: ManifestJsonException) {
+                DeclarativeJsonParser(json).parseObject()
+            } catch (error: DeclarativeJsonException) {
                 throw ExtensionManifestException(
                     XzPackValidationCode.MANIFEST_INVALID,
                     "manifest is not a JSON object",
@@ -233,26 +233,26 @@ class ExtensionManifestException(
     cause: Throwable? = null,
 ) : IllegalArgumentException(message, cause)
 
-private class ManifestJsonException(message: String) : IllegalArgumentException(message)
+internal class DeclarativeJsonException(message: String) : IllegalArgumentException(message)
 
 /** Small strict JSON reader for the manifest shape; it rejects duplicate object keys. */
-private class ManifestJsonParser(private val source: String) {
+internal class DeclarativeJsonParser(private val source: String) {
     private var index = 0
     private var depth = 0
 
     fun parseObject(): Map<String, Any?> {
         val result = parseValue()
         if (result !is Map<*, *> || result.keys.any { it !is String }) {
-            throw ManifestJsonException("manifest root must be an object")
+            throw DeclarativeJsonException("manifest root must be an object")
         }
         skipWhitespace()
-        if (index != source.length) throw ManifestJsonException("trailing JSON content")
+        if (index != source.length) throw DeclarativeJsonException("trailing JSON content")
         return result.keys.filterIsInstance<String>().associateWith { result[it] }
     }
 
     private fun parseValue(): Any? {
         skipWhitespace()
-        if (index >= source.length) throw ManifestJsonException("unexpected end of JSON")
+        if (index >= source.length) throw DeclarativeJsonException("unexpected end of JSON")
         return when (source[index]) {
             '{' -> parseObjectValue()
             '[' -> parseArrayValue()
@@ -261,7 +261,7 @@ private class ManifestJsonParser(private val source: String) {
             'f' -> parseLiteral("false", false)
             'n' -> parseLiteral("null", null)
             '-', in '0'..'9' -> parseNumber()
-            else -> throw ManifestJsonException("unexpected JSON token")
+            else -> throw DeclarativeJsonException("unexpected JSON token")
         }
     }
 
@@ -277,10 +277,10 @@ private class ManifestJsonParser(private val source: String) {
         while (true) {
             skipWhitespace()
             if (index >= source.length || source[index] != '"') {
-                throw ManifestJsonException("object key must be a string")
+                throw DeclarativeJsonException("object key must be a string")
             }
             val key = parseString()
-            if (result.containsKey(key)) throw ManifestJsonException("duplicate object key")
+            if (result.containsKey(key)) throw DeclarativeJsonException("duplicate object key")
             skipWhitespace()
             expect(':')
             result[key] = parseValue()
@@ -318,9 +318,9 @@ private class ManifestJsonParser(private val source: String) {
             val character = source[index++]
             when {
                 character == '"' -> return output.toString()
-                character.code < 0x20 -> throw ManifestJsonException("control character in string")
+                character.code < 0x20 -> throw DeclarativeJsonException("control character in string")
                 character != '\\' -> output.append(character)
-                index >= source.length -> throw ManifestJsonException("unterminated escape")
+                index >= source.length -> throw DeclarativeJsonException("unterminated escape")
                 else -> when (val escaped = source[index++]) {
                     '"', '\\', '/' -> output.append(escaped)
                     'b' -> output.append('\b')
@@ -329,35 +329,35 @@ private class ManifestJsonParser(private val source: String) {
                     'r' -> output.append('\r')
                     't' -> output.append('\t')
                     'u' -> output.append(parseUnicodeEscape())
-                    else -> throw ManifestJsonException("invalid string escape")
+                    else -> throw DeclarativeJsonException("invalid string escape")
                 }
             }
         }
-        throw ManifestJsonException("unterminated string")
+        throw DeclarativeJsonException("unterminated string")
     }
 
     private fun parseUnicodeEscape(): Char {
-        if (index + 4 > source.length) throw ManifestJsonException("short unicode escape")
+        if (index + 4 > source.length) throw DeclarativeJsonException("short unicode escape")
         val hex = source.substring(index, index + 4)
         if (!hex.all { it in "0123456789abcdefABCDEF" }) {
-            throw ManifestJsonException("invalid unicode escape")
+            throw DeclarativeJsonException("invalid unicode escape")
         }
         index += 4
         return hex.toInt(16).toChar()
     }
 
     private fun parseLiteral(literal: String, value: Any?): Any? {
-        if (!source.startsWith(literal, index)) throw ManifestJsonException("invalid JSON literal")
+        if (!source.startsWith(literal, index)) throw DeclarativeJsonException("invalid JSON literal")
         index += literal.length
         return value
     }
 
-    private fun parseNumber(): ManifestJsonNumber {
+    private fun parseNumber(): DeclarativeJsonNumber {
         val start = index
         if (consume('-')) Unit
         if (consume('0')) {
             if (index < source.length && source[index].isDigit()) {
-                throw ManifestJsonException("leading zero in number")
+                throw DeclarativeJsonException("leading zero in number")
             }
         } else {
             requireDigits()
@@ -370,18 +370,18 @@ private class ManifestJsonParser(private val source: String) {
             if (index < source.length && (source[index] == '+' || source[index] == '-')) index += 1
             requireDigits()
         }
-        return ManifestJsonNumber(source.substring(start, index))
+        return DeclarativeJsonNumber(source.substring(start, index))
     }
 
     private fun requireDigits() {
         val start = index
         while (index < source.length && source[index].isDigit()) index += 1
-        if (start == index) throw ManifestJsonException("number requires digits")
+        if (start == index) throw DeclarativeJsonException("number requires digits")
     }
 
     private fun expect(expected: Char) {
         if (index >= source.length || source[index] != expected) {
-            throw ManifestJsonException("expected $expected")
+            throw DeclarativeJsonException("expected $expected")
         }
         index += 1
     }
@@ -395,12 +395,12 @@ private class ManifestJsonParser(private val source: String) {
     }
 
     private fun skipWhitespace() {
-        while (index < source.length && source[index] in " \\t\\r\\n") index += 1
+        while (index < source.length && source[index] in " \t\r\n") index += 1
     }
 
     private fun enterContainer() {
         depth += 1
-        if (depth > 16) throw ManifestJsonException("manifest nesting is too deep")
+        if (depth > 16) throw DeclarativeJsonException("manifest nesting is too deep")
     }
 
     private fun leaveContainer() {
@@ -408,4 +408,4 @@ private class ManifestJsonParser(private val source: String) {
     }
 }
 
-private data class ManifestJsonNumber(val raw: String)
+internal data class DeclarativeJsonNumber(val raw: String)
