@@ -10,7 +10,7 @@
 - Task 6: complete (`9fe8cdd`; delegated review bounded separately, fresh local spec/quality/security review found no unresolved Critical or Important issue)
 - Task 7: complete (`de7a652`; delegated review bounded separately, fresh local spec/quality/security review found no unresolved Critical or Important issue)
 - Task 8: complete (`889add3`; delegated review bounded separately, fresh local spec/quality/security review found no unresolved Critical or Important issue)
-- Task 9: pending
+- Task 9: complete (`cc7d785` checkpoint, `b68cc3d` frozen-path gate fix; delegated review bounded separately, fresh local spec/quality/security review found and fixed one Important gate-path defect, then found no unresolved Critical or Important issue)
 
 The recovery branch remains isolated from `main` and
 `feature/v0.7.0-smart-agent`. Device validation remains
