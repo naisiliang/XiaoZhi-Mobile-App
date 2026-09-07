@@ -125,6 +125,10 @@ class AgentOrchestrator(
             localToolCalls++
         }
 
+        if (isExpired(currentDeadline)) {
+            return AgentRunResult.Denied(AgentRunCode.EXECUTION_TIMEOUT, agentId, path)
+        }
+
         for (target in definition.delegationTargets) {
             if (isExpired(currentDeadline)) {
                 return AgentRunResult.Denied(AgentRunCode.EXECUTION_TIMEOUT, agentId, path)

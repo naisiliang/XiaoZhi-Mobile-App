@@ -62,6 +62,11 @@ class AgentRegistry(
         if (definition.delegationTargets.any { !ID_PATTERN.matches(it) }) {
             return AgentRegistryResult.Rejected(AgentRegistryCode.INVALID_DELEGATION)
         }
+        if (definition.skills.size > MAX_LIST_ITEMS || definition.delegationTargets.size > MAX_LIST_ITEMS ||
+            definition.permissions.size > MAX_LIST_ITEMS
+        ) {
+            return AgentRegistryResult.Rejected(AgentRegistryCode.INVALID_DELEGATION)
+        }
         if (definition.workflow.size > definition.maxToolCalls) {
             return AgentRegistryResult.Rejected(AgentRegistryCode.BUDGET_EXCEEDED)
         }
@@ -126,6 +131,7 @@ class AgentRegistry(
         private val TOOL_PATTERN = Regex("[a-z][a-z0-9_.-]{0,63}")
         private const val MAX_ARGUMENTS = 32
         private const val MAX_ARGUMENT_LENGTH = 4 * 1024
+        private const val MAX_LIST_ITEMS = 64
 
         private val DEFAULT_KNOWN_TOOLS = setOf(
             "open_app", "navigate", "search_nearby", "open_web",
