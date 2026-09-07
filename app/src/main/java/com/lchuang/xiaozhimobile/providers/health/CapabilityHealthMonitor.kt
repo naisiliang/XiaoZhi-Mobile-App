@@ -1,5 +1,6 @@
 package com.lchuang.xiaozhimobile.providers.health
 
+import com.lchuang.xiaozhimobile.diagnostics.DiagnosticRecorder
 import com.lchuang.xiaozhimobile.providers.ProviderCapability
 
 enum class CapabilityHealthState {
@@ -26,6 +27,7 @@ class CapabilityHealthMonitor(
     private val degradedAfter: Int = DEFAULT_DEGRADED_AFTER,
     private val unhealthyAfter: Int = DEFAULT_UNHEALTHY_AFTER,
     private val suspendedAfter: Int = DEFAULT_SUSPENDED_AFTER,
+    private val diagnosticRecorder: DiagnosticRecorder? = null,
 ) {
     init {
         require(degradedAfter >= 1)
@@ -64,7 +66,9 @@ class CapabilityHealthMonitor(
             else -> CapabilityHealthState.HEALTHY
         }
         statuses[capability] = MutableStatus(state, failures, reason.take(MAX_REASON_LENGTH))
-        return snapshotOf(capability)
+        return snapshotOf(capability).also { status ->
+            recordDiagnostic("capability_failure", status, reason.isNotBlank())
+        }
     }
 
     @Synchronized
@@ -72,14 +76,18 @@ class CapabilityHealthMonitor(
         val current = statuses[capability]
         if (current?.state == CapabilityHealthState.SUSPENDED) return snapshotOf(capability)
         statuses[capability] = MutableStatus(CapabilityHealthState.HEALTHY, 0, "")
-        return snapshotOf(capability)
+        return snapshotOf(capability).also { status ->
+            recordDiagnostic("capability_success", status, reasonPresent = false)
+        }
     }
 
     /** Explicit user recheck is required to clear SUSPENDED, including security suspensions. */
     @Synchronized
     fun recheck(capability: ProviderCapability): CapabilityHealthStatus {
         statuses[capability] = MutableStatus(CapabilityHealthState.HEALTHY, 0, "")
-        return snapshotOf(capability)
+        return snapshotOf(capability).also { status ->
+            recordDiagnostic("capability_recheck", status, reasonPresent = false)
+        }
     }
 
     @Synchronized
@@ -92,6 +100,24 @@ class CapabilityHealthMonitor(
             state = current.state,
             consecutiveFailures = current.consecutiveFailures,
             lastFailureReason = current.lastFailureReason,
+        )
+    }
+
+    private fun recordDiagnostic(
+        action: String,
+        status: CapabilityHealthStatus,
+        reasonPresent: Boolean,
+    ) {
+        diagnosticRecorder?.record(
+            sessionId = "",
+            module = "provider_health",
+            action = action,
+            resultCode = status.state.name,
+            safeMetadata = mapOf(
+                "capability" to status.capability.name,
+                "consecutiveFailures" to status.consecutiveFailures.toString(),
+                "reasonPresent" to reasonPresent.toString(),
+            ),
         )
     }
 
