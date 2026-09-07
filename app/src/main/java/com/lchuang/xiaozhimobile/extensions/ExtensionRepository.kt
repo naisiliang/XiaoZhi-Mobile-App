@@ -81,6 +81,11 @@ class ExtensionRepository(val rootDirectory: File) {
     ): StoredExtension {
         require(stagedArchive.isFile) { "staged archive must be a file" }
         val manifest = extensionPackage.manifest
+        if (!confirmedPermissions.all { it in manifest.permissions } ||
+            (enabled && confirmedPermissions != manifest.permissions)
+        ) {
+            throw ExtensionStorageException("extension state is not confirmed for manifest permissions")
+        }
         val extensionDirectory = childDirectory(manifest.id)
         if (!extensionDirectory.exists() && !extensionDirectory.mkdirs()) {
             throw ExtensionStorageException("unable to create extension directory")
@@ -97,19 +102,33 @@ class ExtensionRepository(val rootDirectory: File) {
             archiveTemp.delete()
             throw ExtensionStorageException("unable to create state temp file", error)
         }
+        var enabledStateTemp: File? = null
         try {
-            FileInputStream(stagedArchive).use { input ->
-                FileOutputStream(archiveTemp).use { output -> input.copyTo(output, BUFFER_SIZE) }
-            }
+            // Commit a disabled state first. If the archive or the final state
+            // commit fails, a restart cannot accidentally reactivate new data.
             writeState(
                 stateTemp,
                 id = manifest.id,
                 version = manifest.version,
-                enabled = enabled,
+                enabled = false,
                 permissions = confirmedPermissions,
             )
-            replaceAtomically(archiveTemp, archiveFile)
             replaceAtomically(stateTemp, File(extensionDirectory, STATE_NAME))
+            FileInputStream(stagedArchive).use { input ->
+                FileOutputStream(archiveTemp).use { output -> input.copyTo(output, BUFFER_SIZE) }
+            }
+            replaceAtomically(archiveTemp, archiveFile)
+            if (enabled) {
+                enabledStateTemp = File.createTempFile("state-", ".tmp", extensionDirectory)
+                writeState(
+                    enabledStateTemp,
+                    id = manifest.id,
+                    version = manifest.version,
+                    enabled = true,
+                    permissions = confirmedPermissions,
+                )
+                replaceAtomically(enabledStateTemp, File(extensionDirectory, STATE_NAME))
+            }
             return StoredExtension(
                 id = manifest.id,
                 version = manifest.version,
@@ -120,11 +139,13 @@ class ExtensionRepository(val rootDirectory: File) {
         } catch (error: IOException) {
             archiveTemp.delete()
             stateTemp.delete()
+            enabledStateTemp?.delete()
             if (error is ExtensionStorageException) throw error
             throw ExtensionStorageException("unable to install private extension", error)
         } catch (error: RuntimeException) {
             archiveTemp.delete()
             stateTemp.delete()
+            enabledStateTemp?.delete()
             throw ExtensionStorageException("unable to install private extension", error)
         }
     }
