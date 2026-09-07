@@ -4,7 +4,7 @@
 
 - Task 1: complete (`a617313` implementation, `050c469` terminal-category guard; delegated review bounded separately, fresh local spec/quality/security review found no unresolved Critical or Important issue)
 - Task 2: complete (`86ce178` implementation and process-bound invalidation; focused tests, full Phase 0 gate, and full Gradle build passed; fresh local spec/quality/security review found no unresolved Critical or Important issue)
-- Task 3: pending
+- Task 3: complete (`a845f8f`, `fae7df8`; focused tests, full Phase 0 gate, and full Gradle build passed; fresh local spec/quality/security review found no unresolved Critical or Important issue)
 - Task 4: pending
 - Task 5: pending
 - Task 6: pending
