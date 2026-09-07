@@ -14,9 +14,11 @@ data class AppAdapterResolution(
 
 /** Selects app semantics while preserving one generic, centrally guarded executor. */
 class AppAdapterRegistry(
-    private val adapters: List<AppAdapter>,
+    adapters: List<AppAdapter>,
     private val genericExecutor: UiActionExecutor,
 ) {
+    private val adapters: List<AppAdapter> = adapters.toList()
+
     init {
         require(adapters.all { it.id.isNotBlank() }) { "App adapter id must not be blank" }
         require(adapters.map(AppAdapter::id).distinct().size == adapters.size) {

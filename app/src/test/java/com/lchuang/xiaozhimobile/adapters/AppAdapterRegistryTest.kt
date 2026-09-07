@@ -152,6 +152,21 @@ class AppAdapterRegistryTest {
     }
 
     @Test
+    fun registryKeepsItsOwnAdapterSnapshot() {
+        val fixture = Fixture()
+        val adapter = RecordingAdapter(fixture.context.packageName)
+        val configuredAdapters = mutableListOf<AppAdapter>(adapter)
+        val registry = AppAdapterRegistry(
+            adapters = configuredAdapters,
+            genericExecutor = UiActionExecutor { ToolExecutionResult(true, "通用执行", "GENERIC_OK") },
+        )
+
+        configuredAdapters.clear()
+
+        assertEquals(adapter, registry.adapterFor(fixture.context.packageName))
+    }
+
+    @Test
     fun mapAdapterEnrichesSemanticObjectsWithoutChangingMapController() {
         val fixture = Fixture(
             packageName = "com.autonavi.minimap",
@@ -174,6 +189,7 @@ class AppAdapterRegistryTest {
         assertEquals(AppPageKind.MAP_SEARCH, adapter.classifyPage(fixture.context))
         val objects = adapter.extractSemanticObjects(fixture.context)
         assertNotNull(objects.singleOrNull { it.id == "search-button" })
+        assertEquals(null, objects.singleOrNull { it.id == "map-root" })
         assertEquals(fixture.context.generationId, objects.first().generationId)
     }
 

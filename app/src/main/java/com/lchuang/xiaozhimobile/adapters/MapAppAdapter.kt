@@ -31,7 +31,7 @@ class MapAppAdapter : AppAdapter {
 
         fun visit(node: ScreenNode) {
             val label = semanticLabel(node)
-            if (!label.isNullOrBlank()) {
+            if (node.clickable && !label.isNullOrBlank()) {
                 position += 1
                 objects += ContextCandidate(
                     id = node.id,
