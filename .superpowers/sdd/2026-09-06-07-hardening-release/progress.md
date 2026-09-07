@@ -12,7 +12,10 @@
   RED/GREEN hardening tests, full Phase 0 gate, full unit tests, and full
   Gradle build passed; fresh local spec/quality/security review found no
   unresolved Critical or Important issue)
-- Task 6: pending
+- Task 6: complete (responsive UI evidence captured on API 35 emulator at all
+  four required dp sizes and both font scales; 24/24 hierarchy boundary checks
+  passed; IME composer controls stayed above the keyboard; source UI contracts
+  passed; real spoken custom-wake acceptance remains DEVICE_GATE_PENDING)
 - Task 7: pending
 - Task 8: pending
 
