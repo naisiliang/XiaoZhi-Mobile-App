@@ -7,6 +7,8 @@ import android.hardware.camera2.CameraManager
 import android.media.AudioManager
 import android.net.Uri
 import android.view.KeyEvent
+import com.lchuang.xiaozhimobile.media.MediaKeyAction
+import com.lchuang.xiaozhimobile.media.MediaKeyDispatcher
 
 class PhoneController(
     private val context: Context,
@@ -42,6 +44,18 @@ class PhoneController(
     fun mediaPause() = dispatchMedia(KeyEvent.KEYCODE_MEDIA_PAUSE)
     fun mediaNext() = dispatchMedia(KeyEvent.KEYCODE_MEDIA_NEXT)
     fun mediaPrevious() = dispatchMedia(KeyEvent.KEYCODE_MEDIA_PREVIOUS)
+    /** Exposes the existing Media Key path for the generic media-session fallback. */
+    fun mediaKeyDispatcher(): MediaKeyDispatcher = MediaKeyDispatcher { action ->
+        runCatching {
+            when (action) {
+                MediaKeyAction.PLAY -> mediaPlay()
+                MediaKeyAction.PAUSE -> mediaPause()
+                MediaKeyAction.PREVIOUS -> mediaPrevious()
+                MediaKeyAction.NEXT -> mediaNext()
+            }
+            true
+        }.getOrDefault(false)
+    }
     fun mediaPlayPause() = dispatchMedia(KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE)
     fun mediaStop() {
         dispatchMedia(KeyEvent.KEYCODE_MEDIA_STOP)
