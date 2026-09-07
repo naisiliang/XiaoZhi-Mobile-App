@@ -33,6 +33,8 @@ for marker in (
     "UNKNOWN_TOOL",
     "TOOL_NOT_ALLOWED",
     "BUDGET_EXCEEDED",
+    "CentralSafetyPolicyEngine",
+    "ToolDecision.BLOCK",
     "enabledIds",
 ):
     require(marker in registry, f"missing guarded skill registry contract: {marker}")

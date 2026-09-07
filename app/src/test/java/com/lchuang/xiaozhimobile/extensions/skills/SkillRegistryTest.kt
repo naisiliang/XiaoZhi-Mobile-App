@@ -58,6 +58,21 @@ class SkillRegistryTest {
     }
 
     @Test
+    fun centralSafetyPolicyStillDeniesDangerousToolEvenIfCallerListsItAsKnown() {
+        val definition = SkillDefinition.parse(
+            skillJson(
+                workflow = """[{"tool":"delete_file","arguments":{}}]""",
+                allowedTools = "[\"delete_file\"]",
+                toolBudget = 1,
+            ),
+        )
+
+        val result = SkillRegistry(setOf("delete_file")).register(definition)
+
+        assertEquals(SkillRegistryResult.Rejected(SkillRegistryCode.UNKNOWN_TOOL), result)
+    }
+
+    @Test
     fun promptCannotExpandPermissionOrInjectAnExtraInvocation() {
         val definition = SkillDefinition.parse(
             skillJson(

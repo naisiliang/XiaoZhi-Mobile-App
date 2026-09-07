@@ -1,5 +1,8 @@
 package com.lchuang.xiaozhimobile.extensions.skills
 
+import com.lchuang.xiaozhimobile.safety.CentralSafetyPolicyEngine
+import com.lchuang.xiaozhimobile.safety.ToolDecision
+import com.lchuang.xiaozhimobile.safety.ToolInvocation
 import com.lchuang.xiaozhimobile.tools.ToolRegistry
 import java.util.Locale
 
@@ -8,6 +11,7 @@ enum class SkillRegistryCode {
     UNKNOWN_TOOL,
     TOOL_NOT_ALLOWED,
     BUDGET_EXCEEDED,
+    SKILL_NOT_FOUND,
 }
 
 sealed interface SkillRegistryResult {
@@ -29,12 +33,16 @@ class SkillRegistry(
     private val knownToolNames = knownTools.map { it.trim().lowercase(Locale.ROOT) }.toSet()
     private val definitionsById = linkedMapOf<String, SkillDefinition>()
     private val enabledIds = linkedSetOf<String>()
+    private val safetyPolicy = CentralSafetyPolicyEngine()
 
     fun register(definition: SkillDefinition): SkillRegistryResult {
         if (definitionsById.containsKey(definition.id)) {
             return SkillRegistryResult.Rejected(SkillRegistryCode.DUPLICATE_ID)
         }
-        if (definition.allowedTools.any { it.lowercase(Locale.ROOT) !in knownToolNames }) {
+        if (definition.allowedTools.any {
+                it.lowercase(Locale.ROOT) !in knownToolNames ||
+                    safetyPolicy.evaluate(ToolInvocation(it)).decision == ToolDecision.BLOCK
+            }) {
             return SkillRegistryResult.Rejected(SkillRegistryCode.UNKNOWN_TOOL)
         }
         val allowed = definition.allowedTools.map { it.lowercase(Locale.ROOT) }.toSet()
@@ -64,14 +72,14 @@ class SkillRegistry(
 
     fun enable(skillId: String): SkillRegistryResult {
         val definition = definitionsById[skillId]
-            ?: return SkillRegistryResult.Rejected(SkillRegistryCode.UNKNOWN_TOOL, "skill not found")
+            ?: return SkillRegistryResult.Rejected(SkillRegistryCode.SKILL_NOT_FOUND)
         enabledIds += skillId
         return SkillRegistryResult.Enabled(definition)
     }
 
     fun disable(skillId: String): SkillRegistryResult {
         val definition = definitionsById[skillId]
-            ?: return SkillRegistryResult.Rejected(SkillRegistryCode.UNKNOWN_TOOL, "skill not found")
+            ?: return SkillRegistryResult.Rejected(SkillRegistryCode.SKILL_NOT_FOUND)
         enabledIds -= skillId
         return SkillRegistryResult.Disabled(definition)
     }
