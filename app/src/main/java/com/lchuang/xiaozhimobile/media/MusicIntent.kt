@@ -44,6 +44,7 @@ data class MusicIntent(
 enum class MusicClarificationReason {
     CONFLICTING_COMMANDS,
     MULTIPLE_RESULTS,
+    AMBIGUOUS_TARGET,
     MISSING_SEARCH_TARGET,
     MISSING_PLAY_TARGET,
 }
