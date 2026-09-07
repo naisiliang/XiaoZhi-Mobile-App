@@ -127,13 +127,17 @@ private object MessagingTreeSemantics {
 
     fun currentChat(context: ScreenContext): ContextCandidate? {
         if (classify(context) == AppPageKind.LIST) return null
-        val node = flatten(context.root).firstOrNull { candidate ->
+        val nodes = flatten(context.root)
+        val chatMatches = nodes.filter { candidate ->
             val label = semanticLabel(candidate)
             !label.isNullOrBlank() && !isControlLabel(label) && isChatRole(candidate)
-        } ?: flatten(context.root).firstOrNull { candidate ->
+        }
+        if (chatMatches.size > 1) return null
+
+        val node = chatMatches.singleOrNull() ?: nodes.filter { candidate ->
             val label = semanticLabel(candidate)
             !label.isNullOrBlank() && !isControlLabel(label) && isToolbarTitle(candidate)
-        }
+        }.singleOrNull()
         return node?.let { candidate(it, context) }
     }
 

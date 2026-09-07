@@ -62,6 +62,22 @@ class MessagingAppAdapterTest {
     }
 
     @Test
+    fun multipleCurrentChatIdentitiesAreNotGuessed() {
+        val store = ScreenContextStore(clockMs = { 1_000L })
+        val root = ScreenNode(
+            id = "chat-container",
+            role = "chat",
+            children = listOf(
+                ScreenNode(id = "chat-title-a", role = "chat_title", text = "李四"),
+                ScreenNode(id = "chat-title-b", role = "chat_title", text = "王五"),
+            ),
+        )
+        val context = store.publish("com.tencent.mm", "com.tencent.mm:1", root)
+
+        assertNull(WeChatMessagingAdapter().currentChatCandidate(context))
+    }
+
+    @Test
     fun qqAdapterIsPackageScoped() {
         val fixture = Fixture.chat(packageName = "com.tencent.mobileqq", contact = "王五")
         val adapter = QqMessagingAdapter()
