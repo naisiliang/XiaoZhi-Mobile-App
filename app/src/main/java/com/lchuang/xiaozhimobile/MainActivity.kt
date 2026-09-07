@@ -116,6 +116,7 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         if (::assistantTitle.isInitialized) renderAssistantTitle()
+        if (::status.isInitialized) renderScreenIntelligenceStatus()
     }
 
     override fun onDestroy() {
@@ -261,7 +262,12 @@ class MainActivity : Activity() {
 
     private fun renderStatus() {
         if (!::status.isInitialized) return
-        status.text = when (runtimeStatus) {
+        renderScreenIntelligenceStatus()
+    }
+
+    private fun renderScreenIntelligenceStatus() {
+        if (!::status.isInitialized) return
+        val runtimeLabel = when (runtimeStatus) {
             WakeRuntimeStatus.KWS_LISTENING -> stateLabel(assistantState)
             WakeRuntimeStatus.SESSION_ACTIVE -> {
                 if (assistantState == AssistantState.WAITING_WAKE) {
@@ -277,6 +283,8 @@ class MainActivity : Activity() {
                 if (detail == null) "唤醒服务异常" else "唤醒服务异常：$detail"
             }
         }
+        val smartUiLabel = if (settings.smartUiEnabled) "智能界面已开启" else "智能界面未开启"
+        status.text = "$runtimeLabel · $smartUiLabel"
     }
 
     private fun requestNeededPermissions() {

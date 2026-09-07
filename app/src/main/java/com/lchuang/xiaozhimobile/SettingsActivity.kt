@@ -1,6 +1,7 @@
 package com.lchuang.xiaozhimobile
 
 import android.Manifest
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -9,6 +10,7 @@ import android.os.Bundle
 import android.provider.Settings as AndroidSettings
 import android.speech.tts.TextToSpeech
 import android.view.View
+import android.view.accessibility.AccessibilityManager
 import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.EditText
@@ -24,6 +26,7 @@ import com.lchuang.xiaozhimobile.runtime.WakeRuntimeStatus
 import com.lchuang.xiaozhimobile.runtime.WakeRuntimeStatusStore
 import com.lchuang.xiaozhimobile.runtime.WakeRuntimeStatusStoreProvider
 import com.lchuang.xiaozhimobile.runtime.WakeServiceController
+import com.lchuang.xiaozhimobile.accessibility.XiaoZhiAccessibilityService
 import java.util.Locale
 import java.util.concurrent.Executors
 
@@ -53,6 +56,10 @@ class SettingsActivity : Activity() {
     private lateinit var appAliases: EditText
     private lateinit var appTestName: EditText
     private lateinit var appDiscoveryStatus: TextView
+    private lateinit var smartUiEnabled: Switch
+    private lateinit var accessibilityStatus: TextView
+    private lateinit var visionConsentStatus: TextView
+    private lateinit var visionCaptureStatus: TextView
     private lateinit var apiBaseUrl: EditText
     private lateinit var apiKey: EditText
     private lateinit var model: EditText
@@ -91,6 +98,7 @@ class SettingsActivity : Activity() {
         runtimeStatusStore.addObserver(runtimeObserver)
         renderRuntimeStatus(runtimeStatusStore.current)
         renderOverlayStatus()
+        renderScreenIntelligenceStatus()
         refreshLocationStatus()
         renderDiagnostics()
         ttsEngine = TextToSpeech(this) { status -> handleTtsInit(status) }
@@ -100,6 +108,7 @@ class SettingsActivity : Activity() {
         super.onResume()
         if (::overlayStatus.isInitialized) renderOverlayStatus()
         if (::locationStatus.isInitialized) refreshLocationStatus()
+        if (::accessibilityStatus.isInitialized) renderScreenIntelligenceStatus()
         if (::diagnosticsOutput.isInitialized) renderDiagnostics()
     }
 
@@ -135,6 +144,10 @@ class SettingsActivity : Activity() {
         appAliases = findViewById(R.id.app_aliases)
         appTestName = findViewById(R.id.app_test_name)
         appDiscoveryStatus = findViewById(R.id.app_discovery_status)
+        smartUiEnabled = findViewById(R.id.smart_ui_enabled)
+        accessibilityStatus = findViewById(R.id.accessibility_status)
+        visionConsentStatus = findViewById(R.id.vision_consent_status)
+        visionCaptureStatus = findViewById(R.id.vision_capture_status)
         apiBaseUrl = findViewById(R.id.api_base_url)
         apiKey = findViewById(R.id.api_key)
         model = findViewById(R.id.model)
@@ -176,6 +189,8 @@ class SettingsActivity : Activity() {
         findViewById<Button>(R.id.scan_apps).setOnClickListener { scanApps() }
         findViewById<Button>(R.id.test_app).setOnClickListener { testAppMatch() }
         findViewById<Button>(R.id.request_location_permission).setOnClickListener { requestLocationPermission() }
+        findViewById<Button>(R.id.open_accessibility_settings).setOnClickListener { openAccessibilitySettings() }
+        findViewById<Button>(R.id.refresh_screen_intelligence).setOnClickListener { renderScreenIntelligenceStatus() }
         findViewById<Button>(R.id.request_overlay_permission).setOnClickListener { requestOverlayPermission() }
         findViewById<Button>(R.id.refresh_diagnostics).setOnClickListener {
             renderOverlayStatus()
@@ -205,6 +220,7 @@ class SettingsActivity : Activity() {
         timeoutSeconds.setText(settings.sessionTimeoutSeconds.toString())
         backgroundWakeEnabled.isChecked = WakeServiceController.isBackgroundWakeEnabled(this)
         preferOfflineAsr.isChecked = settings.preferOfflineAsr
+        smartUiEnabled.isChecked = settings.smartUiEnabled
         ttsVoiceName.setText(settings.ttsVoiceName)
         apiBaseUrl.setText(settings.apiBaseUrl)
         apiKey.setText(settings.apiKey)
@@ -246,6 +262,7 @@ class SettingsActivity : Activity() {
         settings.timeoutReply = timeoutReply.text.toString()
         settings.sessionTimeoutSeconds = timeoutSeconds.text.toString().toIntOrNull() ?: 20
         settings.preferOfflineAsr = preferOfflineAsr.isChecked
+        settings.smartUiEnabled = smartUiEnabled.isChecked
         settings.ttsVoiceName = ttsVoiceName.text.toString()
         settings.apiBaseUrl = apiBaseUrl.text.toString()
         settings.apiKey = apiKey.text.toString()
@@ -398,6 +415,44 @@ class SettingsActivity : Activity() {
                 )
             }
         }
+    }
+
+    private fun renderScreenIntelligenceStatus() {
+        if (!::smartUiEnabled.isInitialized) return
+        val accessibilityEnabled = isXiaoZhiAccessibilityEnabled()
+        accessibilityStatus.text = if (accessibilityEnabled) {
+            "Accessibility：已由用户在系统设置中开启；当前页面语义信息可用。"
+        } else {
+            "Accessibility：未开启；请由用户在系统设置中手动开启，小白不会代替你开启。"
+        }
+        if (!smartUiEnabled.isChecked) {
+            visionConsentStatus.text = "Vision 授权：智能界面操作总开关已关闭。"
+            visionCaptureStatus.text = "当前会话屏幕捕获：未捕获。"
+        } else {
+            visionConsentStatus.text = "Vision 授权：仅当前会话按需请求；当前会话未获得授权。"
+            visionCaptureStatus.text = "当前会话屏幕捕获：未捕获；仅在非敏感页面授权后捕获当前帧，不保存原始截图。"
+        }
+    }
+
+    private fun openAccessibilitySettings() {
+        runCatching {
+            startActivity(Intent(AndroidSettings.ACTION_ACCESSIBILITY_SETTINGS))
+        }.onFailure {
+            Toast.makeText(this, "无法打开无障碍设置", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun isXiaoZhiAccessibilityEnabled(): Boolean {
+        val manager = getSystemService(AccessibilityManager::class.java) ?: return false
+        return runCatching {
+            manager.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
+                .asSequence()
+                .mapNotNull { it.resolveInfo?.serviceInfo }
+                .any {
+                    it.packageName == packageName &&
+                        it.name == XiaoZhiAccessibilityService::class.java.name
+                }
+        }.getOrDefault(false)
     }
 
     private fun renderOverlayStatus() {

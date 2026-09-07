@@ -489,7 +489,10 @@ def collect_missing():
     forbid_unscoped_intents(
         SETTINGS_CLEAN,
         "SettingsActivity direct device dispatch",
-        allowed_argument_patterns=(r"AndroidSettings\.ACTION_MANAGE_OVERLAY_PERMISSION",),
+        allowed_argument_patterns=(
+            r"AndroidSettings\.ACTION_MANAGE_OVERLAY_PERMISSION",
+            r"AndroidSettings\.ACTION_ACCESSIBILITY_SETTINGS",
+        ),
     )
 
     return missing

@@ -85,6 +85,11 @@ class SettingsStore(context: Context) {
         get() = prefs.getBoolean("prefer_offline_asr", false)
         set(value) = prefs.edit().putBoolean("prefer_offline_asr", value).apply()
 
+    /** User opt-in for ordinary, non-sensitive screen understanding/actions. */
+    var smartUiEnabled: Boolean
+        get() = prefs.getBoolean("smart_ui_enabled", false)
+        set(value) = prefs.edit().putBoolean("smart_ui_enabled", value).apply()
+
     fun migrateLegacyApiUrlIfNeeded() {
         if (prefs.getBoolean("v060_api_base_migrated", false)) return
         val legacy = prefs.getString("api_url", "")?.trim().orEmpty()

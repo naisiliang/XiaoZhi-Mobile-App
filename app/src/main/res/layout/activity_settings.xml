@@ -273,6 +273,48 @@
             android:tag="智能 UI"
             layout="@layout/view_settings_section" />
 
+        <Switch
+            android:id="@+id/smart_ui_enabled"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="启用智能界面操作（仅普通、非敏感页面）" />
+
+        <TextView
+            android:id="@+id/accessibility_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:textColor="#687386"
+            android:textSize="13sp" />
+
+        <Button
+            android:id="@+id/open_accessibility_settings"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="打开系统无障碍设置" />
+
+        <TextView
+            android:id="@+id/vision_consent_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:textColor="#687386"
+            android:textSize="13sp" />
+
+        <TextView
+            android:id="@+id/vision_capture_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:textColor="#687386"
+            android:textSize="13sp" />
+
+        <Button
+            android:id="@+id/refresh_screen_intelligence"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="刷新智能界面状态" />
+
         <TextView
             android:id="@+id/overlay_status"
             android:layout_width="match_parent"
