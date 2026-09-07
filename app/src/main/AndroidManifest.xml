@@ -58,6 +58,14 @@
             android:exported="false" />
 
         <activity
+            android:name=".extensions.ui.ExtensionCenterActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".extensions.ui.AgentCenterActivity"
+            android:exported="false" />
+
+        <activity
             android:name=".MainActivity"
             android:exported="true">
             <intent-filter>

@@ -258,8 +258,17 @@ def assert_frozen_wake_hash_unchanged():
 def main():
     source = WAKE_SERVICE.read_text("utf-8")
     main_activity_source = MAIN_ACTIVITY.read_text("utf-8")
-    assert '"${name}将在后续版本接入"' in main_activity_source, (
-        "MainActivity must use brace-delimited Kotlin interpolation for unavailable feature names"
+    assert "startActivity(Intent(this@MainActivity, ExtensionCenterActivity::class.java))" in main_activity_source, (
+        "MainActivity must launch the real extension center"
+    )
+    assert "startActivity(Intent(this@MainActivity, AgentCenterActivity::class.java))" in main_activity_source, (
+        "MainActivity must launch the real agent center"
+    )
+    assert "showUnavailable(\"插件与技能\")" not in main_activity_source, (
+        "MainActivity must not keep a plugin placeholder"
+    )
+    assert "showUnavailable(\"Agents\")" not in main_activity_source, (
+        "MainActivity must not keep an agent placeholder"
     )
     assert_source_contains(
         source,

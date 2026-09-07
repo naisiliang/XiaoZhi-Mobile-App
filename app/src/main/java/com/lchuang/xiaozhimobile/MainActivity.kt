@@ -12,7 +12,6 @@ import android.view.View
 import android.widget.EditText
 import android.widget.PopupMenu
 import android.widget.TextView
-import android.widget.Toast
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -30,6 +29,8 @@ import com.lchuang.xiaozhimobile.conversation.ConversationResultKind
 import com.lchuang.xiaozhimobile.conversation.ConversationSession
 import com.lchuang.xiaozhimobile.conversation.ConversationSessionManager
 import com.lchuang.xiaozhimobile.conversation.ConversationSessionStore
+import com.lchuang.xiaozhimobile.extensions.ui.AgentCenterActivity
+import com.lchuang.xiaozhimobile.extensions.ui.ExtensionCenterActivity
 import com.lchuang.xiaozhimobile.runtime.WakeRuntimeStatus
 import com.lchuang.xiaozhimobile.runtime.WakeRuntimeStatusStore
 import com.lchuang.xiaozhimobile.runtime.WakeRuntimeStatusStoreProvider
@@ -191,11 +192,11 @@ class MainActivity : Activity() {
                 true
             }
             menu.add("插件与技能").setOnMenuItemClickListener {
-                showUnavailable("插件与技能")
+                startActivity(Intent(this@MainActivity, ExtensionCenterActivity::class.java))
                 true
             }
             menu.add("Agents").setOnMenuItemClickListener {
-                showUnavailable("Agents")
+                startActivity(Intent(this@MainActivity, AgentCenterActivity::class.java))
                 true
             }
             menu.add("设置").setOnMenuItemClickListener {
@@ -210,10 +211,6 @@ class MainActivity : Activity() {
         sessionManager.endSession("new-session")
         currentSession = null
         conversationAdapter.submitSession(null)
-    }
-
-    private fun showUnavailable(name: String) {
-        Toast.makeText(this, "${name}将在后续版本接入", Toast.LENGTH_SHORT).show()
     }
 
     private fun submitText() {
