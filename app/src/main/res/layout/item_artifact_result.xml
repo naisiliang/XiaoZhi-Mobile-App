@@ -82,6 +82,12 @@
                     android:text="编辑" />
 
                 <TextView
+                    android:id="@+id/artifact_regenerate"
+                    style="@style/ArtifactCardAction"
+                    android:layout_marginStart="4dp"
+                    android:text="再生成" />
+
+                <TextView
                     android:id="@+id/artifact_restore"
                     style="@style/ArtifactCardAction"
                     android:layout_marginStart="4dp"

@@ -2,12 +2,14 @@ package com.lchuang.xiaozhimobile.conversation
 
 import com.lchuang.xiaozhimobile.artifacts.Artifact
 import com.lchuang.xiaozhimobile.artifacts.ArtifactStatus
+import com.lchuang.xiaozhimobile.image.ImageArtifact
 
 enum class ArtifactCardAction {
     OPEN,
     SAVE,
     SHARE,
     EDIT,
+    REGENERATE,
     RESTORE,
 }
 
@@ -55,6 +57,17 @@ data class ArtifactResultCard(
                 sha256 = artifact.sha256,
                 actions = actions,
             )
+        }
+
+        fun fromImageArtifact(
+            image: ImageArtifact,
+            hasPreviousVersion: Boolean,
+        ): ArtifactResultCard {
+            val card = fromArtifact(image.artifact, hasPreviousVersion)
+            val actions = card.actions.toMutableSet().apply {
+                add(ArtifactCardAction.REGENERATE)
+            }
+            return card.copy(actions = actions)
         }
     }
 }

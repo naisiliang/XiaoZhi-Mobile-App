@@ -143,6 +143,7 @@ class ConversationAdapter(
             ArtifactCardAction.SAVE to itemView.findViewById<TextView>(R.id.artifact_save),
             ArtifactCardAction.SHARE to itemView.findViewById<TextView>(R.id.artifact_share),
             ArtifactCardAction.EDIT to itemView.findViewById<TextView>(R.id.artifact_edit),
+            ArtifactCardAction.REGENERATE to itemView.findViewById<TextView>(R.id.artifact_regenerate),
             ArtifactCardAction.RESTORE to itemView.findViewById<TextView>(R.id.artifact_restore),
         )
 
