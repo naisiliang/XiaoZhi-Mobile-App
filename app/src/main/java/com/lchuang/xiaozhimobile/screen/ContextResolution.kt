@@ -47,12 +47,13 @@ data class ContextualHistory(
 data class ContextResolution(
     val confidence: ContextResolutionConfidence,
     val candidate: ContextCandidate? = null,
-    private val candidateOptions: List<ContextCandidate> = emptyList(),
+    private var candidateOptions: List<ContextCandidate> = emptyList(),
     val generationId: GenerationId? = null,
     val packageName: String? = null,
     val windowFingerprint: String? = null,
 ) {
     init {
+        candidateOptions = Collections.unmodifiableList(candidateOptions.toList())
         val resolvedCandidates = if (candidate != null) {
             listOf(candidate)
         } else {
@@ -86,6 +87,6 @@ data class ContextResolution(
         }
     }
 
-    val candidates: List<ContextCandidate> = Collections.unmodifiableList(candidateOptions.toList())
+    val candidates: List<ContextCandidate> = candidateOptions
     val requiresClarification: Boolean = confidence == ContextResolutionConfidence.MEDIUM
 }

@@ -2,6 +2,12 @@ package com.lchuang.xiaozhimobile.screen
 
 import java.util.Locale
 
+/**
+ * Resolves a semantic reference into a context-bound target.
+ *
+ * The returned resolution is a snapshot. An executor must revalidate its
+ * generation against the store immediately before performing any UI action.
+ */
 class ContextualIntentResolver(
     private val contextStore: ScreenContextStore,
 ) {
@@ -12,33 +18,42 @@ class ContextualIntentResolver(
         history: ContextualHistory = ContextualHistory(),
     ): ContextResolution {
         if (context == null) return low(null)
-        if (!contextStore.isCurrent(context)) return low(context)
+        val activeContext = contextStore.currentIfMatches(context) ?: return low(context)
 
-        val currentCandidates = uniqueCurrentCandidates(context, candidates)
+        val historyReferences = historyTargets(history)
+        if (hasConflictingCurrentCandidates(activeContext, candidates + historyReferences)) return low(activeContext)
+
+        val currentCandidates = uniqueCurrentCandidates(activeContext, candidates)
         val historyCandidates = uniqueCurrentCandidates(
-            context,
-            historyTargets(history),
+            activeContext,
+            historyReferences,
         )
-        val allCandidates = (currentCandidates + historyCandidates).distinctBy(ContextCandidate::id)
         val reference = referenceOf(query)
 
         return when (reference) {
-            Reference.ORDINAL_FIRST -> resolveOrdinal(1, context, currentCandidates)
-            Reference.ORDINAL_SECOND -> resolveOrdinal(2, context, currentCandidates)
-            Reference.NEXT -> resolveNext(context, currentCandidates, history)
-            Reference.THIS -> resolveAnchors(context, historyTargets(history))
-            Reference.THAT -> resolveAnchors(context, historyTargets(history))
-            Reference.RECENT_THAT -> resolveAnchors(context, listOfNotNull(history.recentOperation))
-            Reference.PRONOUN -> resolveAnchors(context, historyTargets(history))
+            Reference.ORDINAL_FIRST -> resolveOrdinal(1, activeContext, currentCandidates)
+            Reference.ORDINAL_SECOND -> resolveOrdinal(2, activeContext, currentCandidates)
+            Reference.NEXT -> resolveNext(activeContext, currentCandidates, history)
+            Reference.THIS -> resolveUnique(
+                activeContext,
+                (currentCandidates + historyCandidates).distinctBy(ContextCandidate::id),
+            )
+            Reference.THAT -> resolveAnchors(activeContext, historyReferences)
+            Reference.RECENT_THAT -> resolveAnchors(activeContext, listOfNotNull(history.recentOperation))
+            Reference.PRONOUN -> resolveAnchors(activeContext, historyReferences)
             Reference.CURRENT -> resolveAnchors(
-                context,
-                listOfNotNull(history.currentTarget, history.currentAppTarget, history.sessionTarget),
+                activeContext,
+                currentCandidates + listOfNotNull(
+                    history.currentTarget,
+                    history.currentAppTarget,
+                    history.sessionTarget,
+                ),
             )
             Reference.CURRENT_VIDEO -> resolveUnique(
-                context,
-                allCandidates.filter { it.kind == ContextTargetKind.VIDEO },
+                activeContext,
+                currentVideoCandidates(activeContext, currentCandidates, history),
             )
-            Reference.UNKNOWN -> low(context)
+            Reference.UNKNOWN -> low(activeContext)
         }
     }
 
@@ -111,6 +126,15 @@ class ContextualIntentResolver(
         history.sessionTarget,
     )
 
+    private fun currentVideoCandidates(
+        context: ScreenContext,
+        currentCandidates: List<ContextCandidate>,
+        history: ContextualHistory,
+    ): List<ContextCandidate> = (currentCandidates + uniqueCurrentCandidates(
+        context,
+        listOfNotNull(history.currentTarget, history.sessionTarget),
+    )).distinctBy(ContextCandidate::id).filter { it.kind == ContextTargetKind.VIDEO }
+
     private fun resolveUnique(
         context: ScreenContext,
         candidates: List<ContextCandidate>,
@@ -129,6 +153,15 @@ class ContextualIntentResolver(
     ): List<ContextCandidate> = candidates
         .filter { it.matches(context) }
         .distinctBy(ContextCandidate::id)
+
+    private fun hasConflictingCurrentCandidates(
+        context: ScreenContext,
+        candidates: List<ContextCandidate>,
+    ): Boolean = candidates
+        .filter { it.matches(context) }
+        .groupBy(ContextCandidate::id)
+        .values
+        .any { sameIdCandidates -> sameIdCandidates.distinct().size > 1 }
 
     private fun ContextCandidate.matches(context: ScreenContext): Boolean =
         generationId == context.generationId &&
@@ -161,30 +194,38 @@ class ContextualIntentResolver(
     private fun referenceOf(query: String): Reference {
         val normalized = query.lowercase(Locale.ROOT).replace(WHITESPACE, " ").trim()
         if (normalized.isBlank()) return Reference.UNKNOWN
+        if (containsNegation(normalized)) return Reference.UNKNOWN
+
         val first = hasOrdinal(normalized, "一", "first")
         val second = hasOrdinal(normalized, "二", "second")
         val ordinalConflict = first && second
-        val ordinalNegated = (first || second) && containsNegation(normalized)
-        if (normalized.contains("第一次") || normalized.contains("first time") ||
-            ordinalConflict || ordinalNegated
+        if (normalized.contains("第一次") || normalized.contains("第一时间") ||
+            normalized.contains("first time") ||
+            ordinalConflict
         ) {
             return Reference.UNKNOWN
         }
-        return when {
-            normalized.contains("当前视频") || normalized.contains("current video") ->
-                Reference.CURRENT_VIDEO
-            first -> Reference.ORDINAL_FIRST
-            second -> Reference.ORDINAL_SECOND
-            isNextReference(normalized) -> Reference.NEXT
-            hasPronoun(normalized) -> Reference.PRONOUN
-            normalized.contains("这个") || normalized.contains("此项") || hasEnglishReference(normalized, "this") ->
-                Reference.THIS
-            normalized.contains("刚才那个") || hasRecentEnglishThat(normalized) -> Reference.RECENT_THAT
-            normalized.contains("那个") || hasEnglishReference(normalized, "that") -> Reference.THAT
-            normalized.contains("当前目标") || normalized == "当前" || normalized == "current" ||
-                normalized.contains("current target") -> Reference.CURRENT
-            else -> Reference.UNKNOWN
-        }
+
+        val recentThat = normalized.contains("刚才那个") || hasRecentEnglishThat(normalized)
+        val signals = listOfNotNull(
+            Reference.CURRENT_VIDEO.takeIf {
+                normalized.contains("当前视频") || normalized.contains("current video")
+            },
+            Reference.ORDINAL_FIRST.takeIf { first },
+            Reference.ORDINAL_SECOND.takeIf { second },
+            Reference.NEXT.takeIf { isNextReference(normalized) },
+            Reference.PRONOUN.takeIf { hasPronoun(normalized) },
+            Reference.THIS.takeIf {
+                normalized.contains("这个") || normalized.contains("此项") ||
+                    hasEnglishReference(normalized, "this")
+            },
+            Reference.RECENT_THAT.takeIf { recentThat },
+            Reference.THAT.takeIf {
+                !recentThat && (normalized.contains("那个") || hasEnglishReference(normalized, "that"))
+            },
+            Reference.CURRENT.takeIf { hasCurrentReference(normalized) },
+        )
+        return signals.singleOrNull() ?: Reference.UNKNOWN
     }
 
     private fun hasOrdinal(normalized: String, chineseNumber: String, englishWord: String): Boolean {
@@ -197,10 +238,12 @@ class ContextualIntentResolver(
     }
 
     private fun containsNegation(normalized: String): Boolean =
-        NEGATION_MARKERS.any(normalized::contains)
+        CHINESE_NEGATION_MARKERS.any(normalized::contains) || ENGLISH_NEGATION_MARKERS.any { marker ->
+            Regex("(^|[^a-z])${Regex.escape(marker)}(?=$|[^a-z])").containsMatchIn(normalized)
+        }
 
     private fun isNextReference(normalized: String): Boolean =
-        normalized == "下一个" || normalized == "下一步" || normalized == "next" ||
+        normalized.contains("下一个") || normalized.contains("下一步") || normalized == "next" ||
             Regex("(^|[^a-z])next\\s+(one|item|entry|video|target|step)(?=$|[^a-z])")
                 .containsMatchIn(normalized)
 
@@ -210,6 +253,10 @@ class ContextualIntentResolver(
 
     private fun hasRecentEnglishThat(normalized: String): Boolean =
         normalized.contains("just now") && hasEnglishReference(normalized, "that")
+
+    private fun hasCurrentReference(normalized: String): Boolean =
+        normalized.contains("当前目标") || normalized == "当前" || normalized.endsWith("当前") ||
+            normalized == "current" || normalized.contains("current target")
 
     private fun hasPronoun(normalized: String): Boolean =
         Regex("(?:^|[^a-z])(he|she|him|her)(?=$|[^a-z])").containsMatchIn(normalized) ||
@@ -232,6 +279,7 @@ class ContextualIntentResolver(
         val WHITESPACE = Regex("\\s+")
         val ORDINAL_SUFFIXES = listOf("个", "项", "家", "位", "条", "张", "人", "步", "段", "页")
         val ORDINAL_CONNECTORS = listOf("和", "与", "、", ",", "，")
-        val NEGATION_MARKERS = listOf("不要", "别", "不是", "不能", "not", "don't", "do not")
+        val CHINESE_NEGATION_MARKERS = listOf("不要", "别", "不是", "不能", "不打开", "不播放", "不选择", "不点")
+        val ENGLISH_NEGATION_MARKERS = listOf("not", "don't", "do not", "never", "cannot", "can't")
     }
 }
