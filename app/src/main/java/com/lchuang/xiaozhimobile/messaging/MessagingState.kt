@@ -1,0 +1,18 @@
+package com.lchuang.xiaozhimobile.messaging
+
+/** Explicit lifecycle for a guarded ordinary-text message request. */
+enum class MessagingState {
+    IDLE,
+    RESOLVING_CONTACT,
+    NEEDS_CONTACT_SELECTION,
+    OPENING_CHAT,
+    PREPARING_MESSAGE,
+    WAITING_CONFIRMATION,
+    SENDING,
+    SENT,
+    SEND_FAILED,
+    SEND_UNVERIFIED,
+    CANCELLED,
+    EXPIRED,
+    BLOCKED,
+}
