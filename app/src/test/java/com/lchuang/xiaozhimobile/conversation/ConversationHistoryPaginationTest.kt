@@ -37,7 +37,7 @@ class ConversationHistoryPaginationTest {
         }
 
         val page = ConversationHistoryPagination.page(
-            rows = sessions.drop(2),
+            rows = sessions,
             offset = 2,
             limit = 2,
         )
@@ -45,6 +45,25 @@ class ConversationHistoryPaginationTest {
         assertEquals(listOf("session-2"), page.sessions.map { it.id })
         assertEquals(2, page.offset)
         assertEquals(2, page.limit)
+        assertFalse(page.hasMore)
+    }
+
+    @Test
+    fun query_window_shaping_does_not_apply_the_database_offset_twice() {
+        val sessions = (0 until 3).map { index ->
+            ConversationSession(
+                id = "session-$index",
+                startedAtMs = index.toLong(),
+            )
+        }
+
+        val page = ConversationHistoryPagination.fromQueryRows(
+            rows = sessions.drop(2),
+            offset = 2,
+            limit = 2,
+        )
+
+        assertEquals(listOf("session-2"), page.sessions.map { it.id })
         assertFalse(page.hasMore)
     }
 

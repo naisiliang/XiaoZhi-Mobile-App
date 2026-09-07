@@ -56,7 +56,7 @@ class SqliteConversationRepository(
         offset: Int = 0,
     ): ConversationHistoryPage {
         ConversationHistoryPagination.validate(offset, limit)
-        return ConversationHistoryPagination.page(
+        return ConversationHistoryPagination.fromQueryRows(
             rows = loadSessions(queryLimit = limit + 1, queryOffset = offset),
             offset = offset,
             limit = limit,

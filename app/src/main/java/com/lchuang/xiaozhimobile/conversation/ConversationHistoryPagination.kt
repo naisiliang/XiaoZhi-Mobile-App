@@ -18,6 +18,16 @@ object ConversationHistoryPagination {
         limit: Int,
     ): ConversationHistoryPage {
         validate(offset, limit)
+        return fromQueryRows(rows.drop(offset), offset, limit)
+    }
+
+    /** Shapes rows returned by a query that already applied [offset]. */
+    fun fromQueryRows(
+        rows: List<ConversationSession>,
+        offset: Int,
+        limit: Int,
+    ): ConversationHistoryPage {
+        validate(offset, limit)
         return ConversationHistoryPage(
             sessions = rows.take(limit),
             offset = offset,

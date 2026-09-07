@@ -305,7 +305,7 @@ class ConversationRepository(context: Context) : ConversationSessionRepository {
             queryLimit = limit + 1,
             queryOffset = offset,
         )
-        return ConversationHistoryPagination.page(rows, offset, limit)
+        return ConversationHistoryPagination.fromQueryRows(rows, offset, limit)
     }
 
     fun close() {
