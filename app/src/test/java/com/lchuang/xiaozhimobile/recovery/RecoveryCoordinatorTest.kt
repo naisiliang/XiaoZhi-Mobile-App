@@ -133,6 +133,29 @@ class RecoveryCoordinatorTest {
     }
 
     @Test
+    fun `terminal error categories cannot be downgraded into automatic retries`() {
+        listOf(
+            ExecutionErrorCode.MESSAGE_SEND_FAILED,
+            ExecutionErrorCode.MESSAGE_SEND_UNVERIFIED,
+            ExecutionErrorCode.SAFETY_BLOCKED,
+            ExecutionErrorCode.USER_CANCELLED,
+        ).forEach { code ->
+            val decision = RecoveryCoordinator().decide(
+                ExecutionError(
+                    code = code,
+                    userMessage = "动作已停止",
+                    recoveryLevel = RecoveryLevel.A_SAFE_RETRY,
+                    sideEffect = ExecutionSideEffect.NONE,
+                ),
+            )
+
+            assertTrue("$code must stop", decision is RecoveryDecision.StopActionKeepSession)
+            assertFalse("$code must not retry", decision.autoRetry)
+            assertEquals(RecoveryLevel.D_STOP_ACTION_KEEP_SESSION, decision.level)
+        }
+    }
+
+    @Test
     fun `degrade ask and stop decisions never terminate the conversation`() {
         val coordinator = RecoveryCoordinator()
         val cases = listOf(

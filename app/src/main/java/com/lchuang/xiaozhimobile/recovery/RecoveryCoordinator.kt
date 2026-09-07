@@ -80,8 +80,13 @@ class RecoveryCoordinator(
             sideEffect = error.sideEffect,
         ),
     ): RecoveryDecision {
-        if (error.code == ExecutionErrorCode.MESSAGE_SEND_UNVERIFIED) {
-            return stop(error, "message send result is unverified; manual verification is required")
+        if (error.code.defaultRecoveryLevel == RecoveryLevel.D_STOP_ACTION_KEEP_SESSION) {
+            val reason = if (error.code == ExecutionErrorCode.MESSAGE_SEND_UNVERIFIED) {
+                "message send result is unverified; manual verification is required"
+            } else {
+                "the error category is terminal and cannot be retried automatically"
+            }
+            return stop(error, reason)
         }
 
         if (hasUnsafeSideEffect(error.sideEffect, context.sideEffect)) {
