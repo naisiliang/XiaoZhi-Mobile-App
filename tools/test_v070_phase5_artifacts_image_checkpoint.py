@@ -8,9 +8,9 @@ GOLDEN = "324dd5a53d404490bc4a32ed1f9ce8c45671ed24"
 CHECKPOINT_REPORT = ROOT / ".superpowers/sdd/2026-09-06-06-artifacts-image/task-9-report.md"
 
 FROZEN_PATHS = (
-    "app/src/main/java/com/lchuang/xiaozhimobile/wake/WakePhraseCompiler.kt",
-    "app/src/main/java/com/lchuang/xiaozhimobile/wake/WakePhraseManager.kt",
-    "app/src/main/java/com/lchuang/xiaozhimobile/wake/Pinyin4jProvider.kt",
+    "app/src/main/java/com/lchuang/xiaozhimobile/WakePhraseCompiler.kt",
+    "app/src/main/java/com/lchuang/xiaozhimobile/WakePhraseManager.kt",
+    "app/src/main/java/com/lchuang/xiaozhimobile/Pinyin4jProvider.kt",
 )
 
 PREDECESSOR_GATES = (
