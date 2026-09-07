@@ -9,6 +9,7 @@ enum class MessagingState {
     OPENING_CHAT,
     PREPARING_MESSAGE,
     WAITING_CONFIRMATION,
+    REVALIDATING,
     SENDING,
     SENT,
     SEND_FAILED,

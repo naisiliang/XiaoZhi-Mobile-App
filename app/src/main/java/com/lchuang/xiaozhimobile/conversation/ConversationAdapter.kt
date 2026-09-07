@@ -7,13 +7,17 @@ import android.view.ViewGroup
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
 import com.lchuang.xiaozhimobile.R
+import com.lchuang.xiaozhimobile.messaging.MessageConfirmationCard
 import java.text.DateFormat
 import java.util.Date
 
-class ConversationAdapter : RecyclerView.Adapter<ConversationAdapter.MessageViewHolder>() {
+class ConversationAdapter(
+    private val confirmationListener: ConfirmationListener? = null,
+) : RecyclerView.Adapter<ConversationAdapter.MessageViewHolder>() {
     sealed interface Row {
         data class SessionHeader(val session: ConversationSession) : Row
         data class Message(val message: ConversationMessage) : Row
+        data class Confirmation(val card: MessageConfirmationCard) : Row
     }
 
     private val rows = mutableListOf<Row>()
@@ -41,6 +45,29 @@ class ConversationAdapter : RecyclerView.Adapter<ConversationAdapter.MessageView
         notifyDataSetChanged()
     }
 
+    fun submitConfirmation(card: MessageConfirmationCard) {
+        val existing = rows.indexOfFirst { row ->
+            row is Row.Confirmation && row.card.tokenId == card.tokenId
+        }
+        if (existing >= 0) {
+            rows[existing] = Row.Confirmation(card)
+            notifyItemChanged(existing)
+        } else {
+            rows += Row.Confirmation(card)
+            notifyItemInserted(rows.lastIndex)
+        }
+    }
+
+    fun removeConfirmation(tokenId: String) {
+        val index = rows.indexOfFirst { row ->
+            row is Row.Confirmation && row.card.tokenId == tokenId
+        }
+        if (index >= 0) {
+            rows.removeAt(index)
+            notifyItemRemoved(index)
+        }
+    }
+
     override fun getItemViewType(position: Int): Int = when (val row = rows[position]) {
         is Row.SessionHeader -> VIEW_TYPE_SESSION_HEADER
         is Row.Message -> when (row.message.role) {
@@ -51,6 +78,7 @@ class ConversationAdapter : RecyclerView.Adapter<ConversationAdapter.MessageView
             ConversationMessage.Role.CONFIRMATION,
             -> VIEW_TYPE_OPERATION
         }
+        is Row.Confirmation -> VIEW_TYPE_CONFIRMATION
     }
 
     override fun getItemId(position: Int): Long = when (val row = rows[position]) {
@@ -61,6 +89,7 @@ class ConversationAdapter : RecyclerView.Adapter<ConversationAdapter.MessageView
             key = key * 31 + row.message.text.hashCode()
             key
         }
+        is Row.Confirmation -> ("confirmation:${row.card.tokenId}").hashCode().toLong()
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): MessageViewHolder {
@@ -68,10 +97,11 @@ class ConversationAdapter : RecyclerView.Adapter<ConversationAdapter.MessageView
             VIEW_TYPE_USER -> R.layout.item_message_user
             VIEW_TYPE_ASSISTANT -> R.layout.item_message_assistant
             VIEW_TYPE_OPERATION, VIEW_TYPE_SESSION_HEADER -> R.layout.item_message_operation
+            VIEW_TYPE_CONFIRMATION -> R.layout.item_message_confirmation
             else -> error("Unknown conversation row type: $viewType")
         }
         val view = LayoutInflater.from(parent.context).inflate(layout, parent, false)
-        return MessageViewHolder(view)
+        return MessageViewHolder(view, confirmationListener)
     }
 
     override fun onBindViewHolder(holder: MessageViewHolder, position: Int) {
@@ -80,7 +110,10 @@ class ConversationAdapter : RecyclerView.Adapter<ConversationAdapter.MessageView
 
     override fun getItemCount(): Int = rows.size
 
-    class MessageViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
+    class MessageViewHolder(
+        itemView: View,
+        private val confirmationListener: ConfirmationListener?,
+    ) : RecyclerView.ViewHolder(itemView) {
         private val role = itemView.findViewById<TextView>(R.id.message_role)
         private val content = itemView.findViewById<TextView>(R.id.message_text)
 
@@ -100,6 +133,22 @@ class ConversationAdapter : RecyclerView.Adapter<ConversationAdapter.MessageView
                     }
                     content.text = row.message.text
                 }
+                is Row.Confirmation -> {
+                    role.text = "消息确认"
+                    content.text = row.card.body
+                    itemView.findViewById<TextView>(R.id.message_confirmation_contact).text =
+                        "发送给 ${row.card.contactDisplayName}"
+                    itemView.findViewById<TextView>(R.id.message_confirmation_title).text =
+                        row.card.conversationTitle
+                    itemView.findViewById<TextView>(R.id.message_confirmation_confirm)
+                        .setOnClickListener {
+                            confirmationListener?.onAction(row.card, ConfirmationAction.CONFIRM)
+                        }
+                    itemView.findViewById<TextView>(R.id.message_confirmation_cancel)
+                        .setOnClickListener {
+                            confirmationListener?.onAction(row.card, ConfirmationAction.CANCEL)
+                        }
+                }
             }
         }
 
@@ -117,7 +166,17 @@ class ConversationAdapter : RecyclerView.Adapter<ConversationAdapter.MessageView
         const val VIEW_TYPE_ASSISTANT = 2
         const val VIEW_TYPE_OPERATION = 3
         const val VIEW_TYPE_SESSION_HEADER = 4
+        const val VIEW_TYPE_CONFIRMATION = 5
     }
+}
+
+enum class ConfirmationAction {
+    CONFIRM,
+    CANCEL,
+}
+
+fun interface ConfirmationListener {
+    fun onAction(card: MessageConfirmationCard, action: ConfirmationAction)
 }
 
 enum class ConversationResultKind {

@@ -5,6 +5,7 @@ import com.lchuang.xiaozhimobile.accessibility.UiActionType
 import com.lchuang.xiaozhimobile.screen.ContextCandidate
 import com.lchuang.xiaozhimobile.screen.GenerationId
 import com.lchuang.xiaozhimobile.screen.ScreenContext
+import com.lchuang.xiaozhimobile.screen.ScreenContextStore
 import java.util.Locale
 
 /** An ordinary text request resolved against one current messaging app. */
@@ -58,12 +59,23 @@ data class MessageConfirmationCard(
             "windowFingerprint=$windowFingerprint)"
 }
 
+/** A validated, one-shot handoff for the later send/result-verification task. */
+data class MessageSendRequest(
+    val pendingMessage: PendingMessage,
+) {
+    override fun toString(): String =
+        "MessageSendRequest(packageName=${pendingMessage.packageName}, " +
+            "contactId=${pendingMessage.contactId}, generationId=${pendingMessage.generationId}, " +
+            "windowFingerprint=${pendingMessage.windowFingerprint})"
+}
+
 data class MessagingCoordinatorResult(
     val state: MessagingState,
     val contactOptions: List<ContactCandidate> = emptyList(),
     val openChatProposal: UiActionProposal? = null,
     val confirmationCard: MessageConfirmationCard? = null,
     val pendingMessage: PendingMessage? = null,
+    val sendRequest: MessageSendRequest? = null,
     val errorCode: String? = null,
 ) {
     init {
@@ -89,6 +101,7 @@ class MessagingCoordinator(
     adapters: List<MessagingAppAdapter>,
     private val clockMs: () -> Long = { System.currentTimeMillis() },
     private val sensitiveContentDetector: SensitiveContentDetector = SensitiveContentDetector(),
+    private val contextStore: ScreenContextStore = ScreenContextStore(),
 ) {
     private val adapters: List<MessagingAppAdapter> = adapters.toList()
 
@@ -212,6 +225,105 @@ class MessagingCoordinator(
         return prepareConfirmation(chatContext, selectedContact, currentChat)
     }
 
+    /** Revalidate the live screen and exact body before handing off one send request. */
+    fun confirm(
+        tokenId: String,
+        currentContext: ScreenContext?,
+        confirmedBody: String,
+    ): MessagingCoordinatorResult {
+        if (currentState != MessagingState.WAITING_CONFIRMATION) {
+            return result(errorCode = "MESSAGE_CONFIRMATION_NOT_EXPECTED")
+        }
+        transition(MessagingState.REVALIDATING)
+
+        val pending = pendingMessage ?: return invalidateConfirmation("MESSAGE_PENDING_MISSING")
+        val token = confirmationToken ?: return invalidateConfirmation("MESSAGE_CONFIRMATION_MISSING")
+        if (token.tokenId != tokenId) {
+            return invalidateConfirmation("MESSAGE_CONFIRMATION_INVALID")
+        }
+        if (!token.isValid(pending, clockMs())) {
+            return invalidateConfirmation("MESSAGE_CONFIRMATION_EXPIRED")
+        }
+        if (confirmedBody != pending.body) {
+            return invalidateConfirmation("MESSAGE_BODY_CHANGED")
+        }
+
+        val requestedContext = currentContext
+            ?: return invalidateConfirmation("SCREEN_CONTEXT_STALE")
+        if (!matchesPendingContext(requestedContext, pending)) {
+            return invalidateConfirmation("SCREEN_CONTEXT_STALE")
+        }
+        val activeContext = contextStore.currentIfMatches(requestedContext)
+            ?: return invalidateConfirmation("SCREEN_CONTEXT_STALE")
+        return completeConfirmation(activeContext, pending)
+    }
+
+    /** Cancel the currently displayed card and delete its in-memory token. */
+    fun cancel(tokenId: String): MessagingCoordinatorResult {
+        if (currentState != MessagingState.WAITING_CONFIRMATION) {
+            return result(errorCode = "MESSAGE_CONFIRMATION_NOT_EXPECTED")
+        }
+        val token = confirmationToken ?: return invalidateConfirmation("MESSAGE_CONFIRMATION_MISSING")
+        if (token.tokenId != tokenId) {
+            return result(errorCode = "MESSAGE_CONFIRMATION_INVALID")
+        }
+        clearRequestState()
+        transition(MessagingState.CANCELLED)
+        return result()
+    }
+
+    private fun completeConfirmation(
+        activeContext: ScreenContext,
+        pending: PendingMessage,
+    ): MessagingCoordinatorResult {
+        val selectedAdapter = adapter
+            ?: return invalidateConfirmation("MESSAGE_APP_NOT_SUPPORTED")
+        val currentChat = selectedAdapter.currentChatCandidate(activeContext)
+            ?: return invalidateConfirmation("MESSAGE_CONTACT_AMBIGUOUS")
+        if (!sameSemanticName(currentChat.label, pending.contactDisplayName) ||
+            !sameSemanticName(currentChat.label, pending.conversationTitle)
+        ) {
+            return invalidateConfirmation("MESSAGE_CONTACT_CHANGED")
+        }
+        if (selectedAdapter.messageInputCandidate(activeContext) == null ||
+            selectedAdapter.sendButtonCandidate(activeContext) == null
+        ) {
+            return invalidateConfirmation("MESSAGE_CONTROLS_CHANGED")
+        }
+
+        // Consume the token before producing the one-shot send handoff. A
+        // second confirm call cannot manufacture a second request.
+        confirmationToken = null
+        transition(MessagingState.SENDING)
+        return result(
+            pendingMessage = pending,
+            sendRequest = MessageSendRequest(pending),
+        )
+    }
+
+    private fun matchesPendingContext(
+        currentContext: ScreenContext,
+        pending: PendingMessage,
+    ): Boolean = currentContext.generationId == pending.generationId &&
+        currentContext.packageName == pending.packageName &&
+        currentContext.windowFingerprint == pending.windowFingerprint
+
+    private fun invalidateConfirmation(errorCode: String): MessagingCoordinatorResult {
+        clearRequestState()
+        transition(MessagingState.EXPIRED)
+        return result(errorCode = errorCode)
+    }
+
+    private fun clearRequestState() {
+        request = null
+        context = null
+        adapter = null
+        selectedContact = null
+        contactOptions = emptyList()
+        pendingMessage = null
+        confirmationToken = null
+    }
+
     private fun openOrPrepare(
         selectedAdapter: MessagingAppAdapter,
         selectedContext: ScreenContext,
@@ -323,13 +435,7 @@ class MessagingCoordinator(
     }
 
     private fun blocked(errorCode: String): MessagingCoordinatorResult {
-        request = null
-        context = null
-        adapter = null
-        selectedContact = null
-        contactOptions = emptyList()
-        pendingMessage = null
-        confirmationToken = null
+        clearRequestState()
         transition(MessagingState.BLOCKED)
         return result(errorCode = errorCode)
     }
@@ -339,6 +445,7 @@ class MessagingCoordinator(
         openChatProposal: UiActionProposal? = null,
         confirmationCard: MessageConfirmationCard? = null,
         pendingMessage: PendingMessage? = this.pendingMessage,
+        sendRequest: MessageSendRequest? = null,
         errorCode: String? = null,
     ): MessagingCoordinatorResult = MessagingCoordinatorResult(
         state = currentState,
@@ -346,6 +453,7 @@ class MessagingCoordinator(
         openChatProposal = openChatProposal,
         confirmationCard = confirmationCard,
         pendingMessage = pendingMessage,
+        sendRequest = sendRequest,
         errorCode = errorCode,
     )
 
