@@ -1,5 +1,6 @@
 package com.lchuang.xiaozhimobile
 
+import com.lchuang.xiaozhimobile.tools.ToolRegistry
 import org.json.JSONObject
 
 class AiOrchestrator(
@@ -10,7 +11,7 @@ class AiOrchestrator(
         "open_app", "navigate", "search_nearby", "open_web",
         "media_play", "media_pause", "media_next", "media_previous",
         "volume_up", "volume_down", "set_volume", "flashlight_on", "flashlight_off"
-    )
+    ) + ToolRegistry.definitions().map(AiToolDefinition::name)
 
     private val toolDefinitions = listOf(
         AiToolDefinition("open_app", "打开手机上已安装的应用", mapOf("name" to "string"), listOf("name")),
@@ -26,7 +27,7 @@ class AiOrchestrator(
         AiToolDefinition("set_volume", "把媒体音量设为百分比", mapOf("percent" to "integer"), listOf("percent")),
         AiToolDefinition("flashlight_on", "打开手电筒"),
         AiToolDefinition("flashlight_off", "关闭手电筒")
-    )
+    ) + ToolRegistry.definitions()
 
     fun respond(userText: String, memory: AiConversationMemory, callback: (Result<AiOutcome>) -> Unit) {
         val clean = userText.trim()
@@ -150,7 +151,8 @@ class AiOrchestrator(
         val base = """
             你是安卓手机上的$identity。回答简洁自然，适合语音播报。
             当用户要求执行手机动作时，只能选择已经提供的安全工具；不能声称动作已经成功，必须等待本地执行结果。
-            禁止建议或调用删除数据、发送消息、付款转账、安装卸载应用、修改密码、读取隐私数据、运行 shell 或任意 Intent/URI。
+            普通微信/QQ文字消息只能选择 send_text_message；本地会解析唯一联系人并在发送前要求二次确认和页面重验证。
+            禁止图片、文件、语音消息、群管理、删除数据、付款转账、安装卸载应用、修改密码、读取隐私数据、运行 shell 或任意 Intent/URI。
             普通问答使用中文直接回答。
         """.trimIndent()
         if (nativeTools) return base + "\n如果接口支持 tool_calls，请优先使用一个最合适的工具；每次最多一个工具。"
