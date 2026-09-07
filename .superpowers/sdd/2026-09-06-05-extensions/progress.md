@@ -5,7 +5,7 @@
 - Task 1: complete (`be73abe`, `298ac2b`, `4a610dd`; delegated reviews unavailable, local review found no unresolved Critical or Important issue)
 - Task 2: complete (`e491e15`, `1f32562`; delegated reviews unavailable, local review found no unresolved Critical or Important issue)
 - Task 3: complete (`0fd55ef`, `9cc44ca`; delegated reviews unavailable, local review found no unresolved Critical or Important issue)
-- Task 4: pending
+- Task 4: complete (`3f4eebd`, `24fee56`; delegated reviews unavailable, local review found no unresolved Critical or Important issue)
 - Task 5: pending
 - Task 6: pending
 - Task 7: pending
