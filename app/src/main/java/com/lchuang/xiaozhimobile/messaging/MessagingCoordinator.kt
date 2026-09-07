@@ -76,6 +76,7 @@ data class MessagingCoordinatorResult(
     val confirmationCard: MessageConfirmationCard? = null,
     val pendingMessage: PendingMessage? = null,
     val sendRequest: MessageSendRequest? = null,
+    val sendResult: SendVerificationResult? = null,
     val errorCode: String? = null,
 ) {
     init {
@@ -102,6 +103,7 @@ class MessagingCoordinator(
     private val clockMs: () -> Long = { System.currentTimeMillis() },
     private val sensitiveContentDetector: SensitiveContentDetector = SensitiveContentDetector(),
     private val contextStore: ScreenContextStore = ScreenContextStore(),
+    private val sendResultVerifier: SendResultVerifier = SendResultVerifier(),
 ) {
     private val adapters: List<MessagingAppAdapter> = adapters.toList()
 
@@ -113,6 +115,7 @@ class MessagingCoordinator(
     private var contactOptions: List<ContactCandidate> = emptyList()
     private var pendingMessage: PendingMessage? = null
     private var confirmationToken: MessageConfirmationToken? = null
+    private var activeSendRequest: MessageSendRequest? = null
     private val transitions = mutableListOf(MessagingState.IDLE)
 
     val state: MessagingState
@@ -294,11 +297,51 @@ class MessagingCoordinator(
         // Consume the token before producing the one-shot send handoff. A
         // second confirm call cannot manufacture a second request.
         confirmationToken = null
+        val sendRequest = MessageSendRequest(pending)
+        activeSendRequest = sendRequest
         transition(MessagingState.SENDING)
         return result(
             pendingMessage = pending,
-            sendRequest = MessageSendRequest(pending),
+            sendRequest = sendRequest,
         )
+    }
+
+    /** Classify one external send attempt; no retry path is exposed. */
+    fun verifySendResult(
+        currentContext: ScreenContext?,
+        actionSucceeded: Boolean,
+    ): MessagingCoordinatorResult {
+        if (currentState != MessagingState.SENDING) {
+            return result(errorCode = "MESSAGE_SEND_RESULT_NOT_EXPECTED")
+        }
+        transition(MessagingState.VERIFYING_SEND_RESULT)
+        val sendRequest = activeSendRequest
+        val verification = if (sendRequest == null) {
+            SendVerificationResult(
+                state = SendVerificationState.SEND_UNVERIFIED,
+                debugCode = "MESSAGE_SEND_REQUEST_MISSING",
+            )
+        } else {
+            val pending = sendRequest.pendingMessage
+            val liveContext = currentContext?.takeIf { candidate ->
+                candidate.packageName == pending.packageName &&
+                    candidate.windowFingerprint == pending.windowFingerprint &&
+                    contextStore.currentIfMatches(candidate) != null
+            }
+            sendResultVerifier.verify(
+                expectedBody = pending.body,
+                context = liveContext,
+                actionSucceeded = actionSucceeded,
+            )
+        }
+        clearRequestState()
+        val terminalState = when (verification.state) {
+            SendVerificationState.SENT -> MessagingState.SENT
+            SendVerificationState.SEND_FAILED -> MessagingState.SEND_FAILED
+            SendVerificationState.SEND_UNVERIFIED -> MessagingState.SEND_UNVERIFIED
+        }
+        transition(terminalState)
+        return result(sendResult = verification)
     }
 
     private fun matchesPendingContext(
@@ -322,6 +365,7 @@ class MessagingCoordinator(
         contactOptions = emptyList()
         pendingMessage = null
         confirmationToken = null
+        activeSendRequest = null
     }
 
     private fun openOrPrepare(
@@ -446,6 +490,7 @@ class MessagingCoordinator(
         confirmationCard: MessageConfirmationCard? = null,
         pendingMessage: PendingMessage? = this.pendingMessage,
         sendRequest: MessageSendRequest? = null,
+        sendResult: SendVerificationResult? = null,
         errorCode: String? = null,
     ): MessagingCoordinatorResult = MessagingCoordinatorResult(
         state = currentState,
@@ -454,6 +499,7 @@ class MessagingCoordinator(
         confirmationCard = confirmationCard,
         pendingMessage = pendingMessage,
         sendRequest = sendRequest,
+        sendResult = sendResult,
         errorCode = errorCode,
     )
 
