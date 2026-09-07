@@ -8,9 +8,14 @@ import java.net.SocketTimeoutException
 import java.net.URL
 import java.net.UnknownHostException
 import java.util.concurrent.Executors
+import java.util.concurrent.ExecutorService
 
-class AiClient(private val settings: SettingsStore) {
-    private val executor = Executors.newSingleThreadExecutor()
+class AiClient(private val settings: SettingsStore) : AutoCloseable {
+    private val executor: ExecutorService = Executors.newSingleThreadExecutor()
+
+    override fun close() {
+        executor.shutdownNow()
+    }
 
     private data class HttpResult(val code: Int, val raw: String, val latencyMs: Long)
     private class HttpFailure(val code: Int, val body: String, val latencyMs: Long) : RuntimeException("HTTP $code")

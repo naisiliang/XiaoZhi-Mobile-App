@@ -129,6 +129,7 @@ class SettingsActivity : Activity() {
         if (::runtimeStatusStore.isInitialized) {
             runtimeStatusStore.removeObserver(runtimeObserver)
         }
+        if (::aiClient.isInitialized) aiClient.close()
         backgroundExecutor.shutdownNow()
         ttsEngine?.stop()
         ttsEngine?.shutdown()

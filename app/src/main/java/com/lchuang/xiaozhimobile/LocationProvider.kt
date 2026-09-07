@@ -36,20 +36,35 @@ class LocationProvider(private val context: Context) {
 
         val delivered = AtomicBoolean(false)
         val handler = Handler(Looper.getMainLooper())
-        val finish: (Result<Location>) -> Unit = { result ->
-            if (delivered.compareAndSet(false, true)) callback(result)
+        var cancellationSignal: CancellationSignal? = null
+        var legacyListener: LocationListener? = null
+        var timeoutRunnable: Runnable? = null
+        fun cleanupRequest() {
+            try { cancellationSignal?.cancel() } catch (_: Throwable) {}
+            legacyListener?.let { listener ->
+                try { manager.removeUpdates(listener) } catch (_: Throwable) {}
+            }
+            timeoutRunnable?.let(handler::removeCallbacks)
         }
-        handler.postDelayed({
+        val finish: (Result<Location>) -> Unit = { result ->
+            if (delivered.compareAndSet(false, true)) {
+                cleanupRequest()
+                callback(result)
+            }
+        }
+        val timeout = Runnable {
             if (!delivered.get()) {
                 bestLastKnown(manager, fine)?.let { finish(Result.success(it)) }
                     ?: finish(Result.failure(IllegalStateException("TIMEOUT")))
             }
-        }, timeoutMs.coerceAtLeast(500L))
+        }
+        timeoutRunnable = timeout
+        handler.postDelayed(timeout, timeoutMs.coerceAtLeast(500L))
 
         try {
             if (Build.VERSION.SDK_INT >= 30) {
-                val cancellation = CancellationSignal()
-                manager.getCurrentLocation(provider, cancellation, context.mainExecutor) { location ->
+                cancellationSignal = CancellationSignal()
+                manager.getCurrentLocation(provider, cancellationSignal, context.mainExecutor) { location ->
                     if (location != null) finish(Result.success(location))
                     else bestLastKnown(manager, fine)?.let { finish(Result.success(it)) }
                         ?: finish(Result.failure(IllegalStateException("TIMEOUT")))
@@ -65,6 +80,7 @@ class LocationProvider(private val context: Context) {
                     override fun onProviderEnabled(provider: String) {}
                     override fun onProviderDisabled(provider: String) {}
                 }
+                legacyListener = listener
                 @Suppress("DEPRECATION")
                 manager.requestSingleUpdate(provider, listener, Looper.getMainLooper())
             }
