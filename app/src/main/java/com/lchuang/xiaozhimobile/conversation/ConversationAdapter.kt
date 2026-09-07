@@ -13,11 +13,13 @@ import java.util.Date
 
 class ConversationAdapter(
     private val confirmationListener: ConfirmationListener? = null,
+    private val artifactListener: ArtifactCardListener? = null,
 ) : RecyclerView.Adapter<ConversationAdapter.MessageViewHolder>() {
     sealed interface Row {
         data class SessionHeader(val session: ConversationSession) : Row
         data class Message(val message: ConversationMessage) : Row
         data class Confirmation(val card: MessageConfirmationCard) : Row
+        data class Artifact(val card: ArtifactResultCard) : Row
     }
 
     private val rows = mutableListOf<Row>()
@@ -68,6 +70,21 @@ class ConversationAdapter(
         }
     }
 
+    fun submitArtifact(card: ArtifactResultCard) {
+        val existing = rows.indexOfFirst { row ->
+            row is Row.Artifact &&
+                row.card.artifactId == card.artifactId &&
+                row.card.version == card.version
+        }
+        if (existing >= 0) {
+            rows[existing] = Row.Artifact(card)
+            notifyItemChanged(existing)
+        } else {
+            rows += Row.Artifact(card)
+            notifyItemInserted(rows.lastIndex)
+        }
+    }
+
     override fun getItemViewType(position: Int): Int = when (val row = rows[position]) {
         is Row.SessionHeader -> VIEW_TYPE_SESSION_HEADER
         is Row.Message -> when (row.message.role) {
@@ -79,6 +96,7 @@ class ConversationAdapter(
             -> VIEW_TYPE_OPERATION
         }
         is Row.Confirmation -> VIEW_TYPE_CONFIRMATION
+        is Row.Artifact -> VIEW_TYPE_ARTIFACT
     }
 
     override fun getItemId(position: Int): Long = when (val row = rows[position]) {
@@ -90,6 +108,7 @@ class ConversationAdapter(
             key
         }
         is Row.Confirmation -> ("confirmation:${row.card.tokenId}").hashCode().toLong()
+        is Row.Artifact -> ("artifact:${row.card.artifactId}:${row.card.version}").hashCode().toLong()
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): MessageViewHolder {
@@ -98,10 +117,11 @@ class ConversationAdapter(
             VIEW_TYPE_ASSISTANT -> R.layout.item_message_assistant
             VIEW_TYPE_OPERATION, VIEW_TYPE_SESSION_HEADER -> R.layout.item_message_operation
             VIEW_TYPE_CONFIRMATION -> R.layout.item_message_confirmation
+            VIEW_TYPE_ARTIFACT -> R.layout.item_artifact_result
             else -> error("Unknown conversation row type: $viewType")
         }
         val view = LayoutInflater.from(parent.context).inflate(layout, parent, false)
-        return MessageViewHolder(view, confirmationListener)
+        return MessageViewHolder(view, confirmationListener, artifactListener)
     }
 
     override fun onBindViewHolder(holder: MessageViewHolder, position: Int) {
@@ -113,9 +133,18 @@ class ConversationAdapter(
     class MessageViewHolder(
         itemView: View,
         private val confirmationListener: ConfirmationListener?,
+        private val artifactListener: ArtifactCardListener?,
     ) : RecyclerView.ViewHolder(itemView) {
         private val role = itemView.findViewById<TextView>(R.id.message_role)
         private val content = itemView.findViewById<TextView>(R.id.message_text)
+        private val artifactMeta = itemView.findViewById<TextView>(R.id.artifact_meta)
+        private val artifactButtons = mapOf(
+            ArtifactCardAction.OPEN to itemView.findViewById<TextView>(R.id.artifact_open),
+            ArtifactCardAction.SAVE to itemView.findViewById<TextView>(R.id.artifact_save),
+            ArtifactCardAction.SHARE to itemView.findViewById<TextView>(R.id.artifact_share),
+            ArtifactCardAction.EDIT to itemView.findViewById<TextView>(R.id.artifact_edit),
+            ArtifactCardAction.RESTORE to itemView.findViewById<TextView>(R.id.artifact_restore),
+        )
 
         fun bind(row: Row) {
             when (row) {
@@ -149,7 +178,26 @@ class ConversationAdapter(
                             confirmationListener?.onAction(row.card, ConfirmationAction.CANCEL)
                         }
                 }
+                is Row.Artifact -> {
+                    role.text = "文件结果"
+                    content.text = row.card.displayName
+                    artifactMeta?.text = "v${row.card.version} · ${formatBytes(row.card.size)} · ${row.card.mimeType}"
+                    artifactButtons.forEach { (action, button) ->
+                        button?.apply {
+                            visibility = if (action in row.card.actions) View.VISIBLE else View.GONE
+                            setOnClickListener {
+                                artifactListener?.onAction(row.card, action)
+                            }
+                        }
+                    }
+                }
             }
+        }
+
+        private fun formatBytes(size: Long): String = when {
+            size < 1024L -> "$size B"
+            size < 1024L * 1024L -> "${size / 1024L} KB"
+            else -> "${size / (1024L * 1024L)} MB"
         }
 
         private fun statusLabel(status: ConversationSession.Status): String = when (status) {
@@ -167,6 +215,7 @@ class ConversationAdapter(
         const val VIEW_TYPE_OPERATION = 3
         const val VIEW_TYPE_SESSION_HEADER = 4
         const val VIEW_TYPE_CONFIRMATION = 5
+        const val VIEW_TYPE_ARTIFACT = 6
     }
 }
 
@@ -177,6 +226,10 @@ enum class ConfirmationAction {
 
 fun interface ConfirmationListener {
     fun onAction(card: MessageConfirmationCard, action: ConfirmationAction)
+}
+
+fun interface ArtifactCardListener {
+    fun onAction(card: ArtifactResultCard, action: ArtifactCardAction)
 }
 
 enum class ConversationResultKind {
