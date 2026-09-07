@@ -15,6 +15,10 @@ object ToolPolicyRegistry {
         "set_volume" to ToolPolicyResult(ToolDecision.ALLOW),
         "flashlight_on" to ToolPolicyResult(ToolDecision.ALLOW),
         "flashlight_off" to ToolPolicyResult(ToolDecision.ALLOW),
+        "ui_click" to ToolPolicyResult(ToolDecision.ALLOW),
+        "ui_select" to ToolPolicyResult(ToolDecision.ALLOW),
+        "ui_back" to ToolPolicyResult(ToolDecision.ALLOW),
+        "ui_next" to ToolPolicyResult(ToolDecision.ALLOW),
         "send_text_message" to ToolPolicyResult(ToolDecision.CONFIRM)
     )
 
