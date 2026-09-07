@@ -135,8 +135,15 @@ abstract class MusicSemanticAdapter(
         val values = listOfNotNull(node.role, node.className, node.text, node.contentDescription)
             .map(::normalize)
         return values.any { value ->
-            markers.any { marker -> value == marker || value.contains(marker) }
+            markers.any { marker -> matchesMarker(value, marker) }
         }
+    }
+
+    private fun matchesMarker(value: String, marker: String): Boolean {
+        if (value == marker) return true
+        if (marker.any { it.code > 127 }) return value.contains(marker)
+        return Regex("(^|[^a-z0-9])${Regex.escape(marker)}(?=$|[^a-z0-9])")
+            .containsMatchIn(value)
     }
 
     private fun candidate(
