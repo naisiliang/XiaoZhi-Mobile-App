@@ -5,6 +5,7 @@
 - Base: `7fa443f`
 - Feature commit: `cbd4988 feat: add wechat qq messaging adapters`
 - Hardening commit: `bf9dfc7 fix: recognize messaging search result pages`
+- Hardening commit: `96e2ba7 fix: reject ambiguous current chats`
 - Branch: `recovery/v0.7.0-golden-first-full`
 - Worktree: `E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full`
 
@@ -45,10 +46,15 @@ and two fresh delegated reviewers were requested again for the final range
 `7fa443f..bf9dfc`. All four remained running through bounded waits and were
 closed without a verdict. They are recorded as unavailable, not CLEAN.
 
+After the current-chat ambiguity hardening, a third fresh pair was requested
+for `7fa443f..96e2ba7`. Both again timed out and were closed without a verdict;
+they remain unavailable, not CLEAN.
+
 The controller performed a read-only spec-compliance and code-quality/
 security review of the final range. It found no unresolved Critical or
 Important issue: package scope and context identity are preserved, ambiguous
-contacts fail closed, and no direct UI action or coordinate cache exists.
+contacts and ambiguous current chats fail closed, and no direct UI action or
+coordinate cache exists.
 
 ## Verification
 
