@@ -43,6 +43,14 @@ class MessagingAppAdapterTest {
     }
 
     @Test
+    fun searchResultsAreResolvedAsSemanticContactRows() {
+        val fixture = Fixture.searchResult(packageName = "com.tencent.mm", contact = "张三")
+        val adapter = WeChatMessagingAdapter()
+
+        assertEquals(1, adapter.resolveContactCandidates(fixture.context, "张三").size)
+    }
+
+    @Test
     fun currentChatAndMessageControlsAreSemanticOnly() {
         val fixture = Fixture.chat(packageName = "com.tencent.mm", contact = "李四")
         val adapter = WeChatMessagingAdapter()
@@ -103,6 +111,24 @@ class MessagingAppAdapterTest {
                             role = "send_button",
                             text = "发送",
                             className = "android.widget.Button",
+                            clickable = true,
+                        ),
+                    ),
+                )
+                return Fixture(store.publish(packageName, "$packageName:1", root))
+            }
+
+            fun searchResult(packageName: String, contact: String): Fixture {
+                val store = ScreenContextStore(clockMs = { 1_000L })
+                val root = ScreenNode(
+                    id = "search-root",
+                    role = "search_results",
+                    text = "搜索结果",
+                    children = listOf(
+                        ScreenNode(
+                            id = "search-row",
+                            role = "row",
+                            text = contact,
                             clickable = true,
                         ),
                     ),

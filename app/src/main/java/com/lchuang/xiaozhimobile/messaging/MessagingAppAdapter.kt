@@ -92,8 +92,14 @@ private object MessagingTreeSemantics {
         val labels = nodes.flatMap(::labels).map(::normalize)
         val roles = nodes.flatMap(::roles).map(::normalize)
         return when {
-            roles.any { it.contains("contact_list") || it.contains("contactlist") || it == "contacts" } ||
-                labels.any { it == "联系人" || it == "通讯录" || it == "contacts" } -> AppPageKind.LIST
+            roles.any {
+                it.contains("contact_list") || it.contains("contactlist") || it == "contacts" ||
+                    it == "search" || it.contains("search_result") ||
+                    it.contains("searchresult") || it.contains("contact_search")
+            } || labels.any {
+                it == "联系人" || it == "通讯录" || it == "contacts" ||
+                    it == "搜索结果" || it == "search results"
+            } -> AppPageKind.LIST
             nodes.any(::isChatRole) || nodes.any(::isMessageControl) -> AppPageKind.OTHER
             else -> AppPageKind.UNKNOWN
         }
