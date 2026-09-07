@@ -4,7 +4,7 @@ import com.lchuang.xiaozhimobile.screen.GenerationId
 import java.util.UUID
 
 /** A short-lived, exact binding for the message shown to the user. */
-data class MessageConfirmationToken(
+class MessageConfirmationToken internal constructor(
     val tokenId: String,
     val packageName: String,
     val contactId: String,
