@@ -8,7 +8,7 @@
 - Task 4: complete (`3f4eebd`, `24fee56`; delegated reviews unavailable, local review found no unresolved Critical or Important issue)
 - Task 5: complete (`452473b`, `a4e2119`; delegated reviews unavailable after two 90s windows, fresh local spec/quality/security review found no unresolved Critical or Important issue)
 - Task 6: complete (`ccb294d`; delegated reviews unavailable after a 90s window, fresh local spec/quality/security review found no unresolved Critical or Important issue)
-- Task 7: pending
+- Task 7: complete (`efc8457`; delegated reviews unavailable after two 60s windows, fresh local spec/quality/security review found no unresolved Critical or Important issue)
 - Task 8: pending
 
 The recovery branch remains isolated from `main` and
