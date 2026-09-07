@@ -113,6 +113,7 @@ abstract class MusicSemanticAdapter(
     )
 
     private fun isInteractableControl(node: ScreenNode): Boolean {
+        if (isResultNode(node)) return false
         if (node.clickable) return true
         val roles = listOfNotNull(node.role, node.className).map(::normalize)
         return roles.any { role ->
@@ -124,7 +125,7 @@ abstract class MusicSemanticAdapter(
     private fun isResultNode(node: ScreenNode): Boolean {
         if (!node.clickable) return false
         val role = normalize(listOfNotNull(node.role, node.className).joinToString(" "))
-        if (role.contains("button") || role.contains("search") || role.contains("input")) {
+        if (role.contains("button") || role.contains("input") || role.contains("editor")) {
             return false
         }
         return RESULT_ROLE_MARKERS.any(role::contains) && semanticLabel(node).isNotBlank()
