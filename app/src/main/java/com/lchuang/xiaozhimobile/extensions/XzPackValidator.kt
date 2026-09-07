@@ -241,6 +241,8 @@ class XzPackValidator(
 }
 
 internal object XzPackPath {
+    private const val MAX_PATH_LENGTH = 512
+    private const val MAX_PATH_SEGMENTS = 16
     private val ALLOWED_ROOTS = setOf("skills", "agents", "tools", "assets")
     private val ALLOWED_EXTENSIONS = setOf(
         ".csv", ".gif", ".jpeg", ".jpg", ".json", ".md", ".png", ".svg", ".txt",
@@ -253,7 +255,7 @@ internal object XzPackPath {
     )
 
     fun normalize(raw: String): String {
-        if (raw.isBlank() || raw.contains('\\') || raw.contains('\u0000')) {
+        if (raw.isBlank() || raw.length > MAX_PATH_LENGTH || raw.contains('\\') || raw.contains('\u0000')) {
             throw XzPackPathException(XzPackValidationCode.PATH_TRAVERSAL, "unsafe archive path")
         }
         val path = if (raw.endsWith('/')) {
@@ -268,7 +270,7 @@ internal object XzPackPath {
             throw XzPackPathException(XzPackValidationCode.PATH_TRAVERSAL, "absolute archive path")
         }
         val segments = path.split('/')
-        if (segments.any { it.isEmpty() || it == "." || it == ".." }) {
+        if (segments.size > MAX_PATH_SEGMENTS || segments.any { it.isEmpty() || it == "." || it == ".." }) {
             throw XzPackPathException(XzPackValidationCode.PATH_TRAVERSAL, "traversal archive path")
         }
         return segments.joinToString("/")

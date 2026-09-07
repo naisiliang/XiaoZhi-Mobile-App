@@ -86,6 +86,27 @@ class XzPackValidatorTest {
     }
 
     @Test
+    fun rejectsMalformedManifestEncoding() {
+        val bytes = archiveBytes(
+            "manifest.json" to byteArrayOf('{'.code.toByte(), 0xC3.toByte(), 0x28, '}'.code.toByte()),
+        )
+
+        assertCode(bytes, XzPackValidationCode.MANIFEST_INVALID)
+    }
+
+    @Test
+    fun enforcesStreamingEntryLimitBeforeRetainingPayload() {
+        val validatorWithSmallLimit = XzPackValidator(maxEntryBytes = 3)
+
+        val result = validatorWithSmallLimit.validate(
+            archive("manifest.json" to manifest()),
+        )
+
+        assertTrue(result is XzPackValidationResult.Invalid)
+        assertEquals(XzPackValidationCode.ENTRY_TOO_LARGE, (result as XzPackValidationResult.Invalid).code)
+    }
+
+    @Test
     fun rejectsDuplicateManifestFileKeys() {
         val duplicateFileManifest = """
             {"id":"demo.safe","version":"1.0.0","name":"Duplicate","files":{"README.md":"${"0".repeat(64)}","README.md":"${"1".repeat(64)}"}}
@@ -161,11 +182,17 @@ class XzPackValidatorTest {
         .replace("\"", "\\\"")
 
     private fun archive(vararg entries: Pair<String, String>): ByteArray {
+        return archiveBytes(*entries.map { (name, content) ->
+            name to content.toByteArray(StandardCharsets.UTF_8)
+        }.toTypedArray())
+    }
+
+    private fun archiveBytes(vararg entries: Pair<String, ByteArray>): ByteArray {
         val output = ByteArrayOutputStream()
         ZipOutputStream(output).use { zip ->
             entries.forEach { (name, content) ->
                 zip.putNextEntry(ZipEntry(name))
-                zip.write(content.toByteArray(StandardCharsets.UTF_8))
+                zip.write(content)
                 zip.closeEntry()
             }
         }
