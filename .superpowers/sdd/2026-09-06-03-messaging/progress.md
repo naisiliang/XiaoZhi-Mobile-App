@@ -4,8 +4,8 @@
 
 - Task 1: complete (`c1c72bd`, hardening `b2cdb33`; delegated review unavailable, local review found no unresolved Critical or Important issue)
 - Task 2: complete (`6732b3a`; delegated review unavailable, local review found no unresolved Critical or Important issue)
-- Task 3: complete (`cbd4988`, hardening `bf9dfc7`; delegated review unavailable, local review found no unresolved Critical or Important issue)
-- Task 4: pending
+- Task 3: complete (`cbd4988`, hardening `bf9dfc7` and `96e2ba7`; delegated review unavailable, local review found no unresolved Critical or Important issue)
+- Task 4: complete (`7f257d1`; delegated review unavailable, local review found no unresolved Critical or Important issue)
 - Task 5: pending
 - Task 6: pending
 - Task 7: pending
