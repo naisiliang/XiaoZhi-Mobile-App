@@ -24,4 +24,7 @@ data class ConversationSession(
 
 interface ConversationSessionRepository {
     fun save(session: ConversationSession)
+
+    /** Readable snapshot used by process-death recovery and history rendering. */
+    fun loadAll(): List<ConversationSession>
 }

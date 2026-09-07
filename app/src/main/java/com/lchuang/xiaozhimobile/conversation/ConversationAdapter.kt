@@ -287,6 +287,8 @@ class ConversationRepository(context: Context) : ConversationSessionRepository {
         writer.save(session)
     }
 
+    override fun loadAll(): List<ConversationSession> = loadHistory()
+
     fun loadCurrent(): ConversationSession? = loadSessions("status = ?", arrayOf("active")).firstOrNull()
 
     fun loadHistory(): List<ConversationSession> = loadSessions(null, null)

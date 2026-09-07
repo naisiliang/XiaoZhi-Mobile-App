@@ -108,6 +108,8 @@ class ConversationSessionManagerTest {
         override fun save(session: ConversationSession) {
             saved += session
         }
+
+        override fun loadAll(): List<ConversationSession> = saved.toList()
     }
 
     private class PersistedConversationSessionRepository : ConversationSessionRepository {
@@ -116,6 +118,8 @@ class ConversationSessionManagerTest {
         override fun save(session: ConversationSession) {
             sessions[session.id] = session
         }
+
+        override fun loadAll(): List<ConversationSession> = sessions.values.toList()
 
         fun seed(session: ConversationSession) {
             sessions[session.id] = session

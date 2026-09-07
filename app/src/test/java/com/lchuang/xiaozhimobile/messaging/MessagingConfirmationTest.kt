@@ -106,6 +106,22 @@ class MessagingConfirmationTest {
         assertNull(cancelCoordinator.confirm(cancelCard.tokenId, cancelFixture.chatContext, "晚上好").sendRequest)
     }
 
+    @Test
+    fun processRestartClearsPendingMessageAndConfirmationWithoutCreatingARequest() {
+        val clock = MutableClock(1_000L)
+        val fixture = Fixture(clock)
+        val coordinator = coordinator(clock, fixture.store)
+        val card = prepare(coordinator, fixture).confirmationCard!!
+
+        coordinator.invalidateOnProcessRestart()
+
+        assertEquals(MessagingState.IDLE, coordinator.state)
+        val result = coordinator.confirm(card.tokenId, fixture.chatContext, "晚上好")
+        assertEquals("MESSAGE_CONFIRMATION_NOT_EXPECTED", result.errorCode)
+        assertNull(result.pendingMessage)
+        assertNull(result.sendRequest)
+    }
+
     private fun prepare(
         coordinator: MessagingCoordinator,
         fixture: Fixture,

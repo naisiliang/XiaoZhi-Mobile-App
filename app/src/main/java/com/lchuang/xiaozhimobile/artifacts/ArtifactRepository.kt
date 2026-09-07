@@ -138,6 +138,22 @@ class ArtifactRepository private constructor(
 
     fun list(): List<Artifact> = metadataStore.listArtifacts()
 
+    /** Returns completed artifacts only when their private bytes still match their metadata. */
+    fun recoverCompletedArtifacts(): List<Artifact> = list()
+        .filter { artifact -> artifact.status == ArtifactStatus.COMPLETED }
+        .filter(::hasTruthfulContent)
+
+    fun listInterruptedArtifacts(): List<Artifact> = list()
+        .filter { artifact -> artifact.status == ArtifactStatus.INTERRUPTED }
+
+    /** Converts persisted staged work into an explicit, user-resumable interruption. */
+    fun markStagedArtifactsInterrupted(): List<Artifact> {
+        list()
+            .filter { artifact -> artifact.status == ArtifactStatus.STAGED }
+            .forEach { artifact -> metadataStore.updateStatus(artifact.artifactId, ArtifactStatus.INTERRUPTED) }
+        return listInterruptedArtifacts()
+    }
+
     fun versions(artifactId: String): List<ArtifactVersion> = metadataStore.listVersions(artifactId)
 
     fun remove(artifactId: String): Boolean {
@@ -147,6 +163,14 @@ class ArtifactRepository private constructor(
     }
 
     fun close() = metadataStore.close()
+
+    private fun hasTruthfulContent(artifact: Artifact): Boolean = runCatching {
+        val file = File(artifact.privatePath).canonicalFile
+        workspace.isPrivate(file) &&
+            file.isFile &&
+            file.length() == artifact.size &&
+            ArtifactDigest.sha256(file).equals(artifact.sha256, ignoreCase = true)
+    }.getOrDefault(false)
 
     private fun copyBounded(input: InputStream, output: FileOutputStream, maxBytes: Long) {
         require(maxBytes > 0L) { "maxBytes must be positive" }
@@ -176,6 +200,7 @@ private interface ArtifactMetadataStore {
     fun remove(artifactId: String): Boolean
     fun findVersion(artifactId: String, version: Int): ArtifactVersion?
     fun listVersions(artifactId: String): List<ArtifactVersion>
+    fun updateStatus(artifactId: String, status: ArtifactStatus): Boolean
     fun close()
 }
 
@@ -205,6 +230,12 @@ private class InMemoryArtifactMetadataStore : ArtifactMetadataStore {
     override fun listVersions(artifactId: String): List<ArtifactVersion> = versions.values
         .filter { it.artifactId == artifactId }
         .sortedBy { it.version }
+
+    override fun updateStatus(artifactId: String, status: ArtifactStatus): Boolean {
+        val current = artifacts[artifactId] ?: return false
+        artifacts[artifactId] = current.copy(status = status)
+        return true
+    }
 
     override fun close() = Unit
 }
@@ -316,6 +347,16 @@ private class SqliteArtifactMetadataStore(context: Context) : ArtifactMetadataSt
             "version ASC",
         )
         return cursor.use { result -> buildList { while (result.moveToNext()) add(readVersion(result)) } }
+    }
+
+    override fun updateStatus(artifactId: String, status: ArtifactStatus): Boolean {
+        val values = ContentValues().apply { put("status", status.name) }
+        return database.writableDatabase.update(
+            "artifacts",
+            values,
+            "artifact_id = ?",
+            arrayOf(artifactId),
+        ) > 0
     }
 
     override fun close() = database.close()

@@ -78,5 +78,7 @@ class ConversationSessionEventSourceTest {
         override fun save(session: ConversationSession) {
             saved += session
         }
+
+        override fun loadAll(): List<ConversationSession> = saved.toList()
     }
 }

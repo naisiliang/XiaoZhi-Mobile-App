@@ -124,6 +124,17 @@ class MessagingCoordinator(
     val stateHistory: List<MessagingState>
         get() = transitions.toList()
 
+    /**
+     * Drop every process-bound message request after a process restart. The
+     * old confirmation token and send handoff must never be reusable.
+     */
+    fun invalidateOnProcessRestart() {
+        clearRequestState()
+        if (currentState != MessagingState.IDLE) {
+            transition(MessagingState.IDLE)
+        }
+    }
+
     /** Begin contact resolution and return either a selection or an open-chat proposal. */
     fun start(
         request: MessagingRequest,
