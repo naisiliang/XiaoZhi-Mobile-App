@@ -48,9 +48,11 @@ sealed interface MusicAdapterResolution {
             ) {
                 "Music clarification candidates must share one screen context"
             }
-            if (reason == MusicClarificationReason.MULTIPLE_RESULTS) {
+            if (reason == MusicClarificationReason.MULTIPLE_RESULTS ||
+                reason == MusicClarificationReason.AMBIGUOUS_TARGET
+            ) {
                 require(candidates.size > 1) {
-                    "Multiple-result clarification requires multiple candidates"
+                    "Ambiguous music target clarification requires multiple candidates"
                 }
             }
         }
