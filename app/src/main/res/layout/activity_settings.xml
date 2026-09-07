@@ -132,6 +132,33 @@
             android:tag="声音"
             layout="@layout/view_settings_section" />
 
+        <TextView
+            android:id="@+id/default_music_label"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="默认音乐 App"
+            android:textColor="#687386"
+            android:textSize="13sp" />
+
+        <Spinner
+            android:id="@+id/default_music_app"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:spinnerMode="dropdown" />
+
+        <Button
+            android:id="@+id/scan_music_apps"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="扫描音乐 App" />
+
+        <TextView
+            android:id="@+id/music_app_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textColor="#687386"
+            android:textSize="13sp" />
+
         <EditText
             android:id="@+id/tts_voice_name"
             android:layout_width="match_parent"

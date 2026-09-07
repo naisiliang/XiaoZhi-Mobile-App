@@ -27,6 +27,7 @@ import com.lchuang.xiaozhimobile.runtime.WakeRuntimeStatusStore
 import com.lchuang.xiaozhimobile.runtime.WakeRuntimeStatusStoreProvider
 import com.lchuang.xiaozhimobile.runtime.WakeServiceController
 import com.lchuang.xiaozhimobile.accessibility.XiaoZhiAccessibilityService
+import com.lchuang.xiaozhimobile.media.MusicApp
 import java.util.Locale
 import java.util.concurrent.Executors
 
@@ -51,6 +52,8 @@ class SettingsActivity : Activity() {
     private lateinit var ttsVoiceStatus: TextView
     private lateinit var ttsSpeechRate: EditText
     private lateinit var ttsPitch: EditText
+    private lateinit var defaultMusicApp: Spinner
+    private lateinit var musicAppStatus: TextView
     private lateinit var defaultMapApp: Spinner
     private lateinit var locationStatus: TextView
     private lateinit var appAliases: EditText
@@ -73,6 +76,8 @@ class SettingsActivity : Activity() {
     private var ttsEngine: TextToSpeech? = null
     private var ttsVoiceManager: TtsVoiceManager? = null
     private var ttsVoiceOptions: List<TtsVoiceManager.VoiceOption> = emptyList()
+    private var musicOptions: List<MusicApp> = emptyList()
+    private var musicOptionsLoaded = false
 
     private val runtimeObserver: (WakeRuntimeStatus) -> Unit = { status ->
         runOnUiThread {
@@ -139,6 +144,8 @@ class SettingsActivity : Activity() {
         ttsVoiceStatus = findViewById(R.id.tts_voice_status)
         ttsSpeechRate = findViewById(R.id.tts_speech_rate)
         ttsPitch = findViewById(R.id.tts_pitch)
+        defaultMusicApp = findViewById(R.id.default_music_app)
+        musicAppStatus = findViewById(R.id.music_app_status)
         defaultMapApp = findViewById(R.id.default_map_app)
         locationStatus = findViewById(R.id.location_status)
         appAliases = findViewById(R.id.app_aliases)
@@ -174,6 +181,7 @@ class SettingsActivity : Activity() {
     }
 
     private fun configureSpinners() {
+        defaultMusicApp.adapter = spinnerAdapter(listOf("自动选择"))
         defaultMapApp.adapter = spinnerAdapter(listOf("自动选择", "高德地图", "百度地图", "系统默认"))
         apiMode.adapter = spinnerAdapter(listOf("自动检测", "Chat Completions", "Responses"))
         ttsVoice.adapter = spinnerAdapter(listOf("正在加载可用声音…"))
@@ -186,6 +194,7 @@ class SettingsActivity : Activity() {
         findViewById<Button>(R.id.apply_wake_settings).setOnClickListener { applyWakeSettings() }
         findViewById<Button>(R.id.scan_tts_voices).setOnClickListener { scanTtsVoices() }
         findViewById<Button>(R.id.preview_tts).setOnClickListener { previewTts() }
+        findViewById<Button>(R.id.scan_music_apps).setOnClickListener { scanMusicApps() }
         findViewById<Button>(R.id.scan_apps).setOnClickListener { scanApps() }
         findViewById<Button>(R.id.test_app).setOnClickListener { testAppMatch() }
         findViewById<Button>(R.id.request_location_permission).setOnClickListener { requestLocationPermission() }
@@ -232,6 +241,7 @@ class SettingsActivity : Activity() {
         defaultMapApp.setSelection(settings.defaultMapApp.ordinal)
         appAliases.setText(settings.appAliases)
         renderRuntimeStatus(runtimeStatusStore.current)
+        scanMusicApps()
     }
 
     private fun saveSettings() {
@@ -271,6 +281,12 @@ class SettingsActivity : Activity() {
         settings.systemPrompt = systemPrompt.text.toString()
         settings.ttsSpeechRate = ttsSpeechRate.text.toString().toFloatOrNull() ?: 1.0f
         settings.ttsPitch = ttsPitch.text.toString().toFloatOrNull() ?: 1.0f
+        if (musicOptionsLoaded) {
+            settings.defaultMusicApp = musicOptions
+                .getOrNull(defaultMusicApp.selectedItemPosition - 1)
+                ?.packageName
+                .orEmpty()
+        }
         settings.defaultMapApp = MapAppPreference.entries.getOrElse(defaultMapApp.selectedItemPosition) { MapAppPreference.AUTO }
         settings.appAliases = appAliases.text.toString()
         WakeServiceController.setBackgroundWakeEnabled(this, backgroundWakeEnabled.isChecked)
@@ -321,6 +337,32 @@ class SettingsActivity : Activity() {
         val selected = ttsVoiceOptions.indexOfFirst { it.name == settings.ttsVoiceName }
         if (selected >= 0) ttsVoice.setSelection(selected)
         ttsVoiceStatus.text = "已发现 ${ttsVoiceOptions.size} 个可用声音；带“网络”的声音需要网络。"
+    }
+
+    private fun scanMusicApps() {
+        musicAppStatus.text = "正在扫描已安装音乐 App…"
+        backgroundExecutor.execute {
+            val options = runCatching {
+                appRegistry.discover(force = true)
+                    .mapNotNull { app -> MusicApp.fromInstalled(app.packageName, app.label) }
+            }.getOrElse { emptyList() }
+            runOnUiThread {
+                musicOptions = options
+                musicOptionsLoaded = true
+                defaultMusicApp.adapter = spinnerAdapter(
+                    listOf("自动选择") + options.map(MusicApp::displayName),
+                )
+                val selected = options.indexOfFirst {
+                    it.packageName.equals(settings.defaultMusicApp, ignoreCase = true)
+                }
+                defaultMusicApp.setSelection(if (selected >= 0) selected + 1 else 0)
+                musicAppStatus.text = if (options.isEmpty()) {
+                    "未发现可识别音乐 App；播放时将使用当前媒体会话或安全询问。"
+                } else {
+                    "已发现 ${options.size} 个音乐 App；默认值仅保存包名。"
+                }
+            }
+        }
     }
 
     private fun applyTtsSettings() {

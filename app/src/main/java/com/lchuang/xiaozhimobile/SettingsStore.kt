@@ -25,6 +25,10 @@ class SettingsStore(context: Context) {
         get() = enumValueOrDefault(prefs.getString("default_map_app", null), MapAppPreference.AUTO)
         set(value) = prefs.edit().putString("default_map_app", value.name).apply()
 
+    var defaultMusicApp: String
+        get() = prefs.getString("default_music_app", "")?.trim().orEmpty()
+        set(value) = prefs.edit().putString("default_music_app", value.trim()).apply()
+
     var ttsVoiceName: String
         get() = prefs.getString("tts_voice_name", "") ?: ""
         set(value) = prefs.edit().putString("tts_voice_name", value.trim()).apply()
