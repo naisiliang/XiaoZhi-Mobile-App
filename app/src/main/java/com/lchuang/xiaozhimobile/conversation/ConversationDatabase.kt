@@ -12,15 +12,18 @@ class ConversationDatabase(context: Context) : SQLiteOpenHelper(
 ) {
     override fun onCreate(db: SQLiteDatabase) {
         CREATE_TABLE_STATEMENTS.forEach { db.execSQL(it) }
+        UPGRADE_TO_VERSION_2_STATEMENTS.forEach { db.execSQL(it) }
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        // Version 1 is the initial private conversation schema.
+        if (oldVersion < 2 && newVersion >= 2) {
+            UPGRADE_TO_VERSION_2_STATEMENTS.forEach { db.execSQL(it) }
+        }
     }
 
     companion object {
         const val DB_NAME = "xiaozhi_conversations.db"
-        const val VERSION = 1
+        const val VERSION = 2
 
         private const val CREATE_SESSIONS = """
             CREATE TABLE conversation_sessions (
@@ -47,5 +50,13 @@ class ConversationDatabase(context: Context) : SQLiteOpenHelper(
 
         @JvmField
         val CREATE_TABLE_STATEMENTS = arrayOf(CREATE_SESSIONS, CREATE_MESSAGES)
+
+        @JvmField
+        val UPGRADE_TO_VERSION_2_STATEMENTS = arrayOf(
+            "CREATE INDEX IF NOT EXISTS conversation_sessions_started_at_idx " +
+                "ON conversation_sessions (started_at DESC, id ASC)",
+            "CREATE INDEX IF NOT EXISTS conversation_messages_session_timestamp_idx " +
+                "ON conversation_messages (session_id, timestamp ASC, id ASC)",
+        )
     }
 }

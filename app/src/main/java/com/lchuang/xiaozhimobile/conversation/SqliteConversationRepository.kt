@@ -47,6 +47,27 @@ class SqliteConversationRepository(
     }
 
     override fun loadAll(): List<ConversationSession> {
+        return loadSessions()
+    }
+
+    /** Loads a bounded session page for history UIs without changing the recovery loadAll contract. */
+    fun loadHistoryPage(
+        limit: Int = ConversationHistoryPagination.DEFAULT_PAGE_SIZE,
+        offset: Int = 0,
+    ): ConversationHistoryPage {
+        ConversationHistoryPagination.validate(offset, limit)
+        return ConversationHistoryPagination.page(
+            rows = loadSessions(queryLimit = limit + 1, queryOffset = offset),
+            offset = offset,
+            limit = limit,
+        )
+    }
+
+    private fun loadSessions(queryLimit: Int? = null, queryOffset: Int = 0): List<ConversationSession> {
+        if (queryLimit != null) {
+            require(queryLimit >= 1) { "query limit must be positive" }
+            require(queryOffset >= 0) { "query offset must not be negative" }
+        }
         val sessions = mutableListOf<ConversationSession>()
         database.readableDatabase.query(
             "conversation_sessions",
@@ -56,6 +77,7 @@ class SqliteConversationRepository(
             null,
             null,
             "started_at DESC, id ASC",
+            queryLimit?.let { "$it OFFSET $queryOffset" },
         ).use { cursor ->
             while (cursor.moveToNext()) {
                 val id = cursor.getString(cursor.getColumnIndexOrThrow("id"))

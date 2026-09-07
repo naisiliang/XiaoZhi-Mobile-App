@@ -293,12 +293,36 @@ class ConversationRepository(context: Context) : ConversationSessionRepository {
 
     fun loadHistory(): List<ConversationSession> = loadSessions(null, null)
 
+    /** Loads a bounded session page; the extra row is used only to calculate [ConversationHistoryPage.hasMore]. */
+    fun loadHistoryPage(
+        limit: Int = ConversationHistoryPagination.DEFAULT_PAGE_SIZE,
+        offset: Int = 0,
+    ): ConversationHistoryPage {
+        ConversationHistoryPagination.validate(offset, limit)
+        val rows = loadSessions(
+            selection = null,
+            selectionArgs = null,
+            queryLimit = limit + 1,
+            queryOffset = offset,
+        )
+        return ConversationHistoryPagination.page(rows, offset, limit)
+    }
+
     fun close() {
         writer.close()
         database.close()
     }
 
-    private fun loadSessions(selection: String?, selectionArgs: Array<String>?): List<ConversationSession> {
+    private fun loadSessions(
+        selection: String?,
+        selectionArgs: Array<String>?,
+        queryLimit: Int? = null,
+        queryOffset: Int = 0,
+    ): List<ConversationSession> {
+        if (queryLimit != null) {
+            require(queryLimit >= 1) { "query limit must be positive" }
+            require(queryOffset >= 0) { "query offset must not be negative" }
+        }
         val db = database.readableDatabase
         val sessions = mutableListOf<ConversationSession>()
         db.query(
@@ -308,7 +332,8 @@ class ConversationRepository(context: Context) : ConversationSessionRepository {
             selectionArgs,
             null,
             null,
-            "started_at DESC",
+            "started_at DESC, id ASC",
+            queryLimit?.let { "$it OFFSET $queryOffset" },
         ).use { cursor ->
             while (cursor.moveToNext()) {
                 sessions += ConversationSession(

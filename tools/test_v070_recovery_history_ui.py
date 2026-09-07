@@ -57,11 +57,12 @@ def main():
     configure_insets = method_body(history, "configureInsets")
     for marker in (
         "setContentView(R.layout.activity_conversation_history)",
-        "repository.loadHistory()",
         "historyList.adapter",
         "HistoryAdapter",
     ):
         require(marker in history or marker in on_create, f"history runtime wiring is missing: {marker}")
+    require("repository.loadHistoryPage()" in on_create, "history must load a bounded page")
+    require("repository.loadHistory()" not in on_create, "history must not load an unbounded session list")
     for marker in (
         "WindowCompat.setDecorFitsSystemWindows(window, false)",
         "ViewCompat.setOnApplyWindowInsetsListener",

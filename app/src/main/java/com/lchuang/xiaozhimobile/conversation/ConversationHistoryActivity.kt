@@ -29,7 +29,7 @@ class ConversationHistoryActivity : Activity() {
         historyList = findViewById(R.id.history_list)
         configureInsets()
 
-        val sessions = repository.loadHistory()
+        val sessions = repository.loadHistoryPage().sessions
         historyList.layoutManager = LinearLayoutManager(this)
         historyList.adapter = HistoryAdapter(sessions)
     }
@@ -52,6 +52,7 @@ class ConversationHistoryActivity : Activity() {
     }
 
     override fun onDestroy() {
+        if (::repository.isInitialized) repository.close()
         super.onDestroy()
     }
 
