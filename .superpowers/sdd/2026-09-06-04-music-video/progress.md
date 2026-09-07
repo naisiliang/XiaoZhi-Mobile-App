@@ -3,7 +3,7 @@
 ## Task status
 
 - Task 1: complete (`dec5749`; delegated review unavailable, local review found no unresolved Critical or Important issue)
-- Task 2: pending
+- Task 2: complete (`e8d31c6`; delegated review unavailable, local review found no unresolved Critical or Important issue)
 - Task 3: pending
 - Task 4: pending
 - Task 5: pending
