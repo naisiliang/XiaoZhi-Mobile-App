@@ -20,10 +20,11 @@
   contracts, all final-gate stages, unit tests, Debug assembly, and exact RC
   APK validation passed; delegated review timed out, but fresh local
   spec/quality/security review found no unresolved Critical or Important issue)
-- Task 8: implementation, fresh review, full final gate, full Gradle build, APK
-  validation, and emulator runtime smoke complete (`c2ceaf8`, `660b308`,
-  `task-8-report.md`); normal recovery-branch push and exact-ref GitHub
-  workflow handoff remain pending
+- Task 8: complete through fresh review, FIX04 harness correction, full final
+  gate, full Gradle build, normal recovery-branch push, exact-ref GitHub run
+  `34213273783`, artifact round-trip validation, and exact-artifact emulator
+  smoke (`c2ceaf8`, `660b308`, `7b15012`, `task-8-report.md`); real spoken
+  custom-wake/P0 voice acceptance remains `DEVICE_GATE_PENDING`
 
 The recovery branch remains isolated from `main` and
 `feature/v0.7.0-smart-agent`. Level-1 KWS sources remain frozen against

@@ -6,6 +6,7 @@
 - Recovery worktree: `E:\app_apk\XiaoZhi-Mobile-App\.worktrees\XiaoZhi-v0.7.0-golden-first-full`.
 - Golden non-regression reference: `324dd5a53d404490bc4a32ed1f9ce8c45671ed24`.
 - Reviewed implementation HEAD: `660b3086db2eda4d6c457f1a7795b5fd4052eb73`.
+- Exact reviewed/build ref after the test-harness fix: `7b15012ff1179f42f68755b9c6bfa31e96a524ef`.
 - `main` and `feature/v0.7.0-smart-agent` were not checked out for editing and were
   not reset, force-checked-out, deleted, or force-pushed.
 - The Level-1 frozen KWS files have no diff from the Golden reference:
@@ -26,6 +27,10 @@
   restart scheduling, non-blocking worker interruption with deferred native
   cleanup, stop-only capture teardown, and fail-closed accessibility role
   filtering while preserving distinct semantic roles.
+- The first remote exact-ref run (`34212035812`) exposed a pre-existing CI
+  harness omission: the FIX04 PhoneController Kotlin harnesses did not compile
+  `MusicIntent.kt` and `MediaSessionFallback.kt`. The minimal test-only fix was
+  committed as `7b15012` and passed the complete local FIX04 gate.
 - Focused contracts and unit tests passed after the GREEN changes:
   `test_v070_task8_lifecycle_hardening_contract.py`,
   `test_v070_task8_accessibility_hardening_contract.py`,
@@ -55,6 +60,17 @@
   `tools/validate_v070_apk.py` passed package, version, ZIP integrity,
   Accessibility declaration, `classes.dex`, arm64 Sherpa JNI, and all 9
   required KWS/Paraformer model entries.
+- The exact-ref GitHub Actions run `34213273783` (run number `22`) completed
+  successfully with `reviewed_ref=7b15012ff1179f42f68755b9c6bfa31e96a524ef`.
+  Its artifacts were: RC APK `10051008894`, APK integrity `10051019990`,
+  APK verification `10051026242`, RC verification `10051026657`, and the
+  Alpha1 APK `10051013417`. The downloaded RC artifact contained the exact
+  APK below; the CI verification report and the local validator agree on its
+  size and SHA-256.
+- Downloaded GitHub RC APK:
+  `C:\Users\ASUS\Downloads\xiaozhi-v070-task8c-evidence-20260908\github-rc-artifact-10051008894\XiaoZhi-Mobile-v0.7.0-rc-debug.apk`
+  is `101831818` bytes with SHA-256
+  `53a15e70191585c003097dc96b7702a897bceab4d28f748c18894b8eb4c72420`.
 
 ## Android runtime evidence
 
@@ -79,6 +95,9 @@
 
 ## Remote handoff
 
-- The normal push and exact-ref GitHub workflow dispatch are the remaining
-  handoff actions for this report. They must target this recovery branch and
-  an exact 40-character reviewed ref; no merge to `main` is authorized.
+- Normal push completed for `recovery/v0.7.0-golden-first-full`, and the exact
+  40-character workflow dispatch and artifact round-trip completed successfully
+  for reviewed ref `7b15012ff1179f42f68755b9c6bfa31e96a524ef`.
+- The post-CI report/progress update is documentation-only; the reviewed
+  product source remains exactly the successful `7b15012` ref. No merge to
+  `main` is authorized.
