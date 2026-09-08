@@ -20,7 +20,10 @@
   contracts, all final-gate stages, unit tests, Debug assembly, and exact RC
   APK validation passed; delegated review timed out, but fresh local
   spec/quality/security review found no unresolved Critical or Important issue)
-- Task 8: pending
+- Task 8: implementation, fresh review, full final gate, full Gradle build, APK
+  validation, and emulator runtime smoke complete (`c2ceaf8`, `660b308`,
+  `task-8-report.md`); normal recovery-branch push and exact-ref GitHub
+  workflow handoff remain pending
 
 The recovery branch remains isolated from `main` and
 `feature/v0.7.0-smart-agent`. Level-1 KWS sources remain frozen against
