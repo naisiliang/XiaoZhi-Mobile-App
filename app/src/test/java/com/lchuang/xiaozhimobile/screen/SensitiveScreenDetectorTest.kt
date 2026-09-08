@@ -141,6 +141,21 @@ class SensitiveScreenDetectorTest {
     }
 
     @Test
+    fun `implementation class copied into role remains opaque and sensitive`() {
+        val result = detector.detect(
+            packageName = "com.example.opaque",
+            root = ScreenNode(
+                id = "root",
+                role = "com.example.CustomView",
+                className = "com.example.CustomView",
+            ),
+        )
+
+        assertTrue(result.isSensitive)
+        assertEquals(SensitiveScreenCategory.UNKNOWN_HIGH_RISK, result.category)
+    }
+
+    @Test
     fun `navigation wording is not mistaken for money transfer`() {
         val result = detector.detect(
             packageName = "com.autonavi.minimap",

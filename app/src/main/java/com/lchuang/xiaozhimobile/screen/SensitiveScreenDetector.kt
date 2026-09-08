@@ -61,9 +61,15 @@ class SensitiveScreenDetector {
             // className is implementation metadata, not a semantic label. In
             // particular, an opaque third-party class must never make a screen
             // look understood merely because it contains a dotted name.
-            listOf(node.text, node.contentDescription, node.role)
+            listOf(node.text, node.contentDescription)
                 .filterNotNull()
                 .mapTo(labels) { normalize(it) }
+            node.role?.let { role ->
+                val normalized = normalize(role)
+                if (normalized.isNotBlank() && !isImplementationAccessibilityLabel(normalized)) {
+                    labels += normalized
+                }
+            }
             node.children.forEach(::visit)
         }
 
@@ -75,6 +81,10 @@ class SensitiveScreenDetector {
         label.startsWith("android.") ||
             label.startsWith("androidx.") ||
             label in GENERIC_ACCESSIBILITY_LABELS
+
+    /** Roles copied from AccessibilityNodeInfo class names are metadata, not screen semantics. */
+    private fun isImplementationAccessibilityLabel(label: String): Boolean =
+        label.contains('.') || isGenericAccessibilityLabel(label)
 
     private fun findLabelCategory(labels: List<String>): SensitiveScreenCategory? {
         for ((category, markers) in LABEL_MARKERS) {

@@ -36,6 +36,7 @@ import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.sqrt
 
 class WakeService : Service(), TextToSpeech.OnInitListener {
@@ -63,6 +64,8 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         private const val COMMAND_MAX_READ_ERROR_MS = 1000L
         private const val COMMAND_MAX_ZERO_READ_MS = 1000L
         private const val PRE_ROLL_FRAMES = 8 // 400 ms
+        private const val RUNTIME_WORKER_JOIN_TIMEOUT_MS = 1500L
+        private const val RUNTIME_WORKER_CLEANUP_POLL_MS = 250L
         private val knownOneCharacterCommands = setOf("停")
     }
 
@@ -71,6 +74,8 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
     private val runtimeLifecycleLock = Any()
     /** Startup/settings workers must be retired before native KWS objects are released. */
     private val lifecycleWorkerThreads = Collections.synchronizedSet(linkedSetOf<Thread>())
+    private val audioRecordLock = Any()
+    private val nativeRuntimeReleased = AtomicBoolean(false)
     private val assistantRuntimeReady = AtomicBoolean(false)
     private val pendingTextRequests = PendingTextRequestQueue()
     private val textDispatchScheduled = AtomicBoolean(false)
@@ -141,47 +146,85 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
     private var spotter: KeywordSpotter? = null
     private var stream: OnlineStream? = null
     private var offlineRecognizer: OfflineRecognizer? = null
-    private var audioRecord: AudioRecord? = null
+    @Volatile private var audioRecord: AudioRecord? = null
+    @Volatile private var audioRecordOwner: Thread? = null
     @Volatile private var kwsThread: Thread? = null
     @Volatile private var commandThread: Thread? = null
+    private val kwsCaptureGeneration = AtomicLong(0L)
     private var wakeLock: PowerManager.WakeLock? = null
 
-    private fun launchLifecycleWorker(name: String, block: () -> Unit) {
+    private fun launchLifecycleWorker(name: String, block: () -> Unit): Thread? {
         val worker = Thread({
             try {
                 block()
             } finally {
-                synchronized(runtimeLifecycleLock) {
+                synchronized(lifecycleWorkerThreads) {
                     lifecycleWorkerThreads.remove(Thread.currentThread())
                 }
             }
         }, name)
-        synchronized(runtimeLifecycleLock) {
-            if (serviceDestroyed.get()) return
+        synchronized(lifecycleWorkerThreads) {
+            if (serviceDestroyed.get()) return null
             lifecycleWorkerThreads += worker
             worker.start()
         }
+        return worker
     }
 
-    private fun awaitThreadExit(thread: Thread?) {
-        if (thread == null || thread === Thread.currentThread()) return
+    private fun awaitThreadExit(thread: Thread?, timeoutMs: Long): Boolean {
+        if (thread == null || thread === Thread.currentThread()) return true
+        val deadline = SystemClock.elapsedRealtime() + timeoutMs.coerceAtLeast(0L)
         var interrupted = false
         while (thread.isAlive) {
+            val remaining = deadline - SystemClock.elapsedRealtime()
+            if (remaining <= 0L) break
             try {
-                thread.join()
+                thread.join(minOf(remaining, RUNTIME_WORKER_CLEANUP_POLL_MS))
             } catch (_: InterruptedException) {
-                // Teardown must still wait for the worker before releasing native resources.
                 interrupted = true
             }
         }
         if (interrupted) Thread.currentThread().interrupt()
+        return !thread.isAlive
     }
 
-    private fun stopAndJoinRuntimeWorkers() {
+    private fun runtimeWorkerSnapshot(): List<Thread> {
         val lifecycleWorkers = synchronized(lifecycleWorkerThreads) { lifecycleWorkerThreads.toList() }
-        val workers = (lifecycleWorkers + listOfNotNull(kwsThread, commandThread)).distinct()
+        return (lifecycleWorkers + listOfNotNull(kwsThread, commandThread)).distinct()
+    }
+
+    private fun stopAndJoinRuntimeWorkers(): Boolean {
+        val workers = runtimeWorkerSnapshot()
         workers.forEach { it.interrupt() }
-        workers.forEach(::awaitThreadExit)
+        var allStopped = true
+        workers.forEach {
+            if (!awaitThreadExit(it, RUNTIME_WORKER_JOIN_TIMEOUT_MS)) allStopped = false
+        }
+        return allStopped
+    }
+
+    private fun releaseNativeRuntime() {
+        if (!nativeRuntimeReleased.compareAndSet(false, true)) return
+        try { stream?.release() } catch (_: Throwable) {}
+        try { spotter?.release() } catch (_: Throwable) {}
+        try { offlineRecognizer?.release() } catch (_: Throwable) {}
+        stream = null
+        spotter = null
+        offlineRecognizer = null
+    }
+
+    private fun scheduleNativeRuntimeCleanup() {
+        Thread({
+            while (true) {
+                val activeWorkers = runtimeWorkerSnapshot().filter(Thread::isAlive)
+                if (activeWorkers.isEmpty()) break
+                activeWorkers.forEach { awaitThreadExit(it, RUNTIME_WORKER_CLEANUP_POLL_MS) }
+            }
+            releaseNativeRuntime()
+        }, "xiaozhi-native-cleanup").apply {
+            isDaemon = true
+            start()
+        }
     }
 
     private fun scheduleKwsRestart(delayMs: Long) {
@@ -198,6 +241,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
     override fun onCreate() {
         super.onCreate()
         serviceDestroyed.set(false)
+        nativeRuntimeReleased.set(false)
         settings = SettingsStore(this)
         installedAppRegistry = InstalledAppRegistry(this)
         appLauncher = AppLauncher(this)
@@ -270,7 +314,10 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                         try {
                             val requested = settings.wakePhrase.trim().ifBlank { DEFAULT_WAKE_PHRASE }
                             stopKwsCapture()
-                            try { kwsThread?.join(500) } catch (_: Throwable) {}
+                            if (!awaitThreadExit(kwsThread, RUNTIME_WORKER_JOIN_TIMEOUT_MS)) {
+                                updateNotification("唤醒线程尚未退出，本次设置未应用")
+                                return@synchronized
+                            }
                             if (!running.get() || serviceDestroyed.get()) return@synchronized
                             val applied = if (requested == DEFAULT_WAKE_PHRASE) {
                                 wakePhraseManager.applyBundledPhrase(DEFAULT_WAKE_PHRASE)
@@ -495,17 +542,20 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                 }
                 return@synchronized
             }
+            val captureGeneration = kwsCaptureGeneration.incrementAndGet()
             kwsListening.set(true)
-            kwsThread = Thread({
+            kwsThread = launchLifecycleWorker("xiaozhi-kws") {
                 var wakeDetected = false
+                var record: AudioRecord? = null
                 try {
-                    val record = newAudioRecord()
-                    audioRecord = record
-                    if (record.state != AudioRecord.STATE_INITIALIZED) {
+                    val activeRecord = newAudioRecord()
+                    record = activeRecord
+                    adoptAudioRecord(activeRecord, Thread.currentThread())
+                    if (activeRecord.state != AudioRecord.STATE_INITIALIZED) {
                         throw IllegalStateException("AudioRecord 初始化失败")
                     }
-                    record.startRecording()
-                    if (record.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
+                    activeRecord.startRecording()
+                    if (activeRecord.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
                         throw IllegalStateException("AudioRecord 未进入录音状态")
                     }
                     WakeRuntimeStatusStoreProvider.instance().publish(
@@ -514,7 +564,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                     )
                     val shorts = ShortArray(1600) // 100 ms
                     while (running.get() && kwsListening.get()) {
-                        val n = record.read(shorts, 0, shorts.size)
+                        val n = activeRecord.read(shorts, 0, shorts.size)
                         if (n <= 0) continue
                         val samples = FloatArray(n)
                         for (i in 0 until n) samples[i] = shorts[i] / 32768.0f
@@ -547,25 +597,49 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                         updateNotification("唤醒监听异常：$detail")
                     }
                 } finally {
-                    releaseAudioRecord()
-                    if (running.get() && !serviceDestroyed.get() && wakeDetected) {
+                    releaseAudioRecord(Thread.currentThread(), record)
+                    if (running.get() && !serviceDestroyed.get() && wakeDetected &&
+                        captureGeneration == kwsCaptureGeneration.get()
+                    ) {
                         mainHandler.post { handleWakeDetected() }
                     }
                 }
-            }, "xiaozhi-kws")
-            kwsThread?.start()
+            }
+            if (kwsThread == null) kwsListening.set(false)
         }
     }
 
     private fun stopKwsCapture() {
         kwsListening.set(false)
-        try { audioRecord?.stop() } catch (_: Throwable) {}
-        releaseAudioRecord()
+        kwsCaptureGeneration.incrementAndGet()
+        val record = synchronized(audioRecordLock) { audioRecord }
+        try { record?.stop() } catch (_: Throwable) {}
+        if (record != null) releaseAudioRecord(expected = record)
     }
 
-    private fun releaseAudioRecord() {
-        try { audioRecord?.release() } catch (_: Throwable) {}
-        audioRecord = null
+    private fun adoptAudioRecord(record: AudioRecord, owner: Thread) {
+        val previous = synchronized(audioRecordLock) {
+            val old = audioRecord
+            audioRecord = record
+            audioRecordOwner = owner
+            old
+        }
+        if (previous != null && previous !== record) {
+            try { previous.stop() } catch (_: Throwable) {}
+            try { previous.release() } catch (_: Throwable) {}
+        }
+    }
+
+    private fun releaseAudioRecord(owner: Thread? = null, expected: AudioRecord? = null) {
+        val record = synchronized(audioRecordLock) {
+            if (owner != null && audioRecordOwner !== owner) return@synchronized null
+            if (expected != null && audioRecord !== expected) return@synchronized null
+            val current = audioRecord
+            audioRecord = null
+            audioRecordOwner = null
+            current
+        }
+        try { record?.release() } catch (_: Throwable) {}
     }
 
     private fun setConversationState(state: ConversationState, heard: String = "") {
@@ -629,7 +703,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         val generation = sessionGeneration
         commandRecognitionAttempts += 1
         commandListening.set(true)
-        commandThread = Thread({
+        commandThread = launchLifecycleWorker("xiaozhi-local-asr") {
             try {
                 val samples = captureCommandAudio {
                     mainHandler.post {
@@ -644,7 +718,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                         if (!isCurrentCommandSession(generation)) return@post
                         recoverRecognitionFailure(CommandFailureKind.NO_SPEECH)
                     }
-                    return@Thread
+                    return@launchLifecycleWorker
                 }
                 val recognizingReady = CountDownLatch(1)
                 val recognizingPosted = mainHandler.post {
@@ -660,7 +734,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                 recognizingReady.await()
                 val text = decodeLocalCommand(samples)
                 commandListening.set(false)
-                releaseAudioRecord()
+                releaseAudioRecord(Thread.currentThread())
                 mainHandler.post {
                     if (!isCurrentCommandSession(generation)) return@post
                     processAssistantInput(text, AssistantRequestSource.VOICE)
@@ -679,10 +753,9 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                 }
             } finally {
                 commandListening.set(false)
-                releaseAudioRecord()
+                releaseAudioRecord(Thread.currentThread())
             }
-        }, "xiaozhi-local-asr")
-        commandThread?.start()
+        }
     }
 
     private fun captureCommandAudio(onRecordingStarted: () -> Unit): FloatArray {
@@ -694,8 +767,10 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         } catch (e: Throwable) {
             throw CommandAudioCaptureException(CommandAudioCaptureFailureKind.AUDIO_INIT, e)
         }
-        audioRecord = record
+        val owner = Thread.currentThread()
+        adoptAudioRecord(record, owner)
         if (record.state != AudioRecord.STATE_INITIALIZED) {
+            releaseAudioRecord(owner, record)
             throw CommandAudioCaptureException(CommandAudioCaptureFailureKind.AUDIO_INIT)
         }
         val enhancement = audioEnhancementManager.attach(record)
@@ -779,6 +854,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
             return FloatArray(outputSize) { i -> output[i] / 32768.0f }
         } finally {
             enhancement.close()
+            releaseAudioRecord(owner, record)
         }
     }
 
@@ -858,11 +934,16 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
-    private fun beginTextConversationIfNeeded() {
-        if (conversationActive || exitInProgress) return
-        synchronized(runtimeLifecycleLock) {
+    private fun beginTextConversationIfNeeded(): Boolean {
+        if (conversationActive) return true
+        if (exitInProgress) return false
+        val kwsStopped = synchronized(runtimeLifecycleLock) {
             stopKwsCapture()
-            try { kwsThread?.join(500) } catch (_: Throwable) {}
+            awaitThreadExit(kwsThread, RUNTIME_WORKER_JOIN_TIMEOUT_MS)
+        }
+        if (!kwsStopped) {
+            updateNotification("唤醒线程尚未退出，请稍后重试文字输入")
+            return false
         }
         sessionGeneration += 1
         conversationTurns = 0
@@ -874,12 +955,13 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         memory.startSession()
         session.start(settings.sessionTimeoutSeconds)
         conversationSessionManager.startWakeSession()
+        return true
     }
 
     private fun processAssistantInput(rawText: String, source: AssistantRequestSource) {
         val text = rawText.trim()
         if (text.isBlank()) return
-        if (source == AssistantRequestSource.TEXT) beginTextConversationIfNeeded()
+        if (source == AssistantRequestSource.TEXT && !beginTextConversationIfNeeded()) return
         if (!conversationActive || exitInProgress) return
 
         val normalized = VoiceCommandNormalizer.normalize(text)
@@ -1425,13 +1507,10 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         pendingKwsRestartRunnable = null
         exitInProgress = true
         stopKwsCapture()
-        stopAndJoinRuntimeWorkers()
+        val workersStopped = stopAndJoinRuntimeWorkers()
         overlay.release()
         tts?.stop(); tts?.shutdown(); tts = null
-        try { stream?.release() } catch (_: Throwable) {}
-        try { spotter?.release() } catch (_: Throwable) {}
-        try { offlineRecognizer?.release() } catch (_: Throwable) {}
-        stream = null; spotter = null; offlineRecognizer = null
+        if (workersStopped) releaseNativeRuntime() else scheduleNativeRuntimeCleanup()
         if (wakeLock?.isHeld == true) wakeLock?.release()
         super.onDestroy()
     }

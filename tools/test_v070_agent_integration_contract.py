@@ -35,8 +35,11 @@ for marker in (
 for marker in (
     "ARTIFACT_BUDGET_EXCEEDED",
     "maxArtifactSizeBytes",
+    "AgentToolExecutor",
+    "maxArtifactBytes",
     "artifact_size_bytes",
     "artifactBytes",
+    "execution.artifactBytes",
 ):
     require(marker in orchestrator, f"AgentOrchestrator missing artifact budget marker: {marker}")
 

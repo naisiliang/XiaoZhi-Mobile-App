@@ -1,5 +1,6 @@
 package com.lchuang.xiaozhimobile.extensions.agents
 
+import com.lchuang.xiaozhimobile.ToolExecutionResult
 import com.lchuang.xiaozhimobile.extensions.ExtensionPermission
 import com.lchuang.xiaozhimobile.safety.ToolInvocation
 import org.junit.Assert.assertEquals
@@ -190,6 +191,9 @@ class AgentRegistryTest {
                     maxExecutionTimeMs = 1000,
                     maxArtifactSizeBytes = 512,
                 ),
+                toolExecutor = AgentToolExecutor { _, _ ->
+                    ToolExecutionResult(true, "created", "ARTIFACT_CREATED", artifactBytes = 400L)
+                },
             ),
         )
     }
@@ -222,6 +226,120 @@ class AgentRegistryTest {
                 "make a file",
                 AgentBudget(maxDelegationDepth = 1, maxToolCalls = 2, maxExecutionTimeMs = 1000),
             ),
+        )
+    }
+
+    @Test
+    fun declaredArtifactSizeCannotBypassMeasuredOutputBudget() {
+        val definition = AgentDefinition(
+            id = "underreported.artifact",
+            version = "1.0.0",
+            name = "underreported",
+            allowedTools = setOf("file_create_text"),
+            permissions = setOf(ExtensionPermission.FILES),
+            maxDelegationDepth = 1,
+            maxToolCalls = 2,
+            maxExecutionTimeMs = 1000,
+            maxArtifactSizeBytes = 1024,
+            workflow = listOf(
+                AgentStep("file_create_text", mapOf("artifact_size_bytes" to "1")),
+            ),
+        )
+        val registry = AgentRegistry(emptyList(), setOf("file_create_text"))
+        assertTrue(registry.register(definition) is AgentRegistryResult.Registered)
+
+        val result = AgentOrchestrator(registry).run(
+            agentId = definition.id,
+            input = "make a file",
+            budget = AgentBudget(maxDelegationDepth = 1, maxToolCalls = 2, maxExecutionTimeMs = 1000),
+            toolExecutor = AgentToolExecutor { invocation, requestedMaxBytes ->
+                assertEquals(1024L, requestedMaxBytes)
+                assertFalse("artifact_size_bytes" in invocation.arguments)
+                assertFalse("artifactSizeBytes" in invocation.arguments)
+                ToolExecutionResult(
+                    success = true,
+                    spokenText = "created",
+                    debugCode = "ARTIFACT_CREATED",
+                    artifactBytes = 2048L,
+                )
+            },
+        )
+
+        assertEquals(
+            AgentRunResult.Denied(
+                AgentRunCode.ARTIFACT_BUDGET_EXCEEDED,
+                definition.id,
+                trace = listOf(definition.id),
+            ),
+            result,
+        )
+    }
+
+    @Test
+    fun measuredArtifactOutputIsChargedAndCompletesWithinBudget() {
+        val definition = AgentDefinition(
+            id = "measured.artifact",
+            version = "1.0.0",
+            name = "measured",
+            allowedTools = setOf("file_create_text"),
+            permissions = setOf(ExtensionPermission.FILES),
+            maxDelegationDepth = 1,
+            maxToolCalls = 2,
+            maxExecutionTimeMs = 1000,
+            maxArtifactSizeBytes = 1024,
+            workflow = listOf(
+                AgentStep("file_create_text", mapOf("artifact_size_bytes" to "1")),
+            ),
+        )
+        val registry = AgentRegistry(emptyList(), setOf("file_create_text"))
+        assertTrue(registry.register(definition) is AgentRegistryResult.Registered)
+
+        assertEquals(
+            AgentRunResult.Completed(
+                invocations = listOf(
+                    ToolInvocation("file_create_text", mapOf("artifact_size_bytes" to "1")),
+                ),
+                trace = listOf(definition.id),
+                toolCalls = 1,
+            ),
+            AgentOrchestrator(registry).run(
+                agentId = definition.id,
+                input = "make a file",
+                budget = AgentBudget(maxDelegationDepth = 1, maxToolCalls = 2, maxExecutionTimeMs = 1000),
+                toolExecutor = AgentToolExecutor { _, requestedMaxBytes ->
+                    assertEquals(1024L, requestedMaxBytes)
+                    ToolExecutionResult(true, "created", "ARTIFACT_CREATED", artifactBytes = 400L)
+                },
+            ),
+        )
+    }
+
+    @Test
+    fun measuredArtifactOutputIsRequiredEvenWhenDeclarationIsPresent() {
+        val definition = AgentDefinition(
+            id = "unmeasured.artifact",
+            version = "1.0.0",
+            name = "unmeasured",
+            allowedTools = setOf("file_create_text"),
+            permissions = setOf(ExtensionPermission.FILES),
+            maxDelegationDepth = 1,
+            maxToolCalls = 2,
+            maxExecutionTimeMs = 1000,
+            maxArtifactSizeBytes = 1024,
+            workflow = listOf(
+                AgentStep("file_create_text", mapOf("artifact_size_bytes" to "1")),
+            ),
+        )
+        val registry = AgentRegistry(emptyList(), setOf("file_create_text"))
+        assertTrue(registry.register(definition) is AgentRegistryResult.Registered)
+
+        assertEquals(
+            AgentRunResult.Denied(
+                AgentRunCode.ARTIFACT_BUDGET_EXCEEDED,
+                definition.id,
+                trace = listOf(definition.id),
+            ),
+            AgentOrchestrator(registry).run(definition.id, "make a file"),
         )
     }
 

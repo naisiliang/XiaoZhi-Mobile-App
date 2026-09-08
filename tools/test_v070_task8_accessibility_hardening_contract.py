@@ -29,5 +29,9 @@ require(
     "UNKNOWN_HIGH_RISK" in DETECTOR and "isGenericAccessibilityLabel" in DETECTOR,
     "unknown opaque screens must fail closed after generic metadata is filtered",
 )
+require(
+    "isImplementationAccessibilityLabel" in DETECTOR and "label.contains('.')" in DETECTOR,
+    "implementation class names copied into role must not become semantic labels",
+)
 
 print("PASS: Task 8 accessibility sensitivity contract")

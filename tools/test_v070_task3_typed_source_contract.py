@@ -60,7 +60,10 @@ def main():
     require(
         text_session is not None
         and "stopKwsCapture()" in text_session
-        and "kwsThread?.join(500)" in text_session,
+        and (
+            "kwsThread?.join(500)" in text_session
+            or "awaitThreadExit(kwsThread" in text_session
+        ),
         "text input must stop the wake capture before entering the conversation pipeline",
     )
     require(asr is not None, "missing local ASR function")

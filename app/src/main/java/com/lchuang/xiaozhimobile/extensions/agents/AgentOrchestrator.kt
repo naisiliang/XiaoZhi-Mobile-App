@@ -3,6 +3,7 @@ package com.lchuang.xiaozhimobile.extensions.agents
 import com.lchuang.xiaozhimobile.safety.CentralSafetyPolicyEngine
 import com.lchuang.xiaozhimobile.safety.ToolDecision
 import com.lchuang.xiaozhimobile.safety.ToolInvocation
+import com.lchuang.xiaozhimobile.ToolExecutionResult
 import java.nio.charset.StandardCharsets
 import java.util.Locale
 import kotlin.math.min
@@ -33,12 +34,22 @@ enum class AgentRunCode {
     TOOL_NOT_ALLOWED,
     TOOL_BLOCKED,
     PERMISSION_NOT_DECLARED,
+    TOOL_EXECUTION_FAILED,
 }
 
 /**
- * Bounded declarative orchestration. It plans typed invocations only; the
- * existing app-owned dispatcher remains responsible for actual execution and
- * confirmation.
+ * App-owned execution boundary for agent tools. Artifact-producing tools must
+ * return a byte count measured from the generated private file; manifest
+ * arguments such as `artifact_size_bytes` are never trusted as measurements.
+ */
+fun interface AgentToolExecutor {
+    fun execute(invocation: ToolInvocation, maxArtifactBytes: Long): ToolExecutionResult
+}
+
+/**
+ * Bounded orchestration. Ordinary tools can still be planned as typed
+ * invocations; artifact-producing tools require the app-owned executor so the
+ * real generated output is measured before it is charged to the budget.
  */
 class AgentOrchestrator(
     private val registry: AgentRegistry,
@@ -50,6 +61,7 @@ class AgentOrchestrator(
         agentId: String,
         input: String,
         budget: AgentBudget = AgentBudget(),
+        toolExecutor: AgentToolExecutor? = null,
     ): AgentRunResult {
         if (input.toByteArray(StandardCharsets.UTF_8).size > MAX_INPUT_BYTES) {
             return AgentRunResult.Denied(AgentRunCode.INPUT_TOO_LARGE, agentId)
@@ -64,6 +76,7 @@ class AgentOrchestrator(
             activePath = emptyList(),
             depth = 0,
             parentDeadlineNanos = deadline,
+            toolExecutor = toolExecutor,
         )
     }
 
@@ -75,6 +88,7 @@ class AgentOrchestrator(
         activePath: List<String>,
         depth: Int,
         parentDeadlineNanos: Long,
+        toolExecutor: AgentToolExecutor?,
     ): AgentRunResult {
         if (agentId in activePath) {
             return AgentRunResult.Denied(AgentRunCode.DELEGATION_CYCLE, agentId, activePath)
@@ -111,13 +125,6 @@ class AgentOrchestrator(
             if (normalized !in definition.allowedTools.map { it.lowercase(Locale.ROOT) }.toSet()) {
                 return AgentRunResult.Denied(AgentRunCode.TOOL_NOT_ALLOWED, agentId, path)
             }
-            val artifactBytes = artifactBytesFor(normalized, step.arguments)
-                ?: return AgentRunResult.Denied(AgentRunCode.ARTIFACT_BUDGET_EXCEEDED, agentId, path)
-            if (artifactBytes > definition.maxArtifactSizeBytes ||
-                artifactBytes > budget.maxArtifactSizeBytes - state.artifactBytes
-            ) {
-                return AgentRunResult.Denied(AgentRunCode.ARTIFACT_BUDGET_EXCEEDED, agentId, path)
-            }
             val invocation = ToolInvocation(
                 name = step.tool,
                 arguments = step.arguments.mapValues { (_, value) -> value.replace("{input}", input) },
@@ -127,6 +134,34 @@ class AgentOrchestrator(
             }
             if (!definition.permissions.containsAll(AgentRegistry.requiredPermissionsFor(normalized))) {
                 return AgentRunResult.Denied(AgentRunCode.PERMISSION_NOT_DECLARED, agentId, path)
+            }
+            val artifactBytes = if (AgentRegistry.isArtifactProducingTool(normalized)) {
+                val remainingBudget = budget.maxArtifactSizeBytes - state.artifactBytes
+                val maximum = min(definition.maxArtifactSizeBytes, remainingBudget)
+                if (maximum <= 0L) {
+                    return AgentRunResult.Denied(AgentRunCode.ARTIFACT_BUDGET_EXCEEDED, agentId, path)
+                }
+                val executor = toolExecutor
+                    ?: return AgentRunResult.Denied(AgentRunCode.ARTIFACT_BUDGET_EXCEEDED, agentId, path)
+                val executorInvocation = invocation.copy(
+                    arguments = invocation.arguments.filterKeys { it !in DECLARED_ARTIFACT_SIZE_ARGUMENTS },
+                )
+                val execution = try {
+                    executor.execute(executorInvocation, maximum)
+                } catch (_: Throwable) {
+                    return AgentRunResult.Denied(AgentRunCode.TOOL_EXECUTION_FAILED, agentId, path)
+                }
+                if (!execution.success) {
+                    return AgentRunResult.Denied(AgentRunCode.TOOL_EXECUTION_FAILED, agentId, path)
+                }
+                val measuredBytes = execution.artifactBytes
+                    ?: return AgentRunResult.Denied(AgentRunCode.ARTIFACT_BUDGET_EXCEEDED, agentId, path)
+                if (measuredBytes < 0L || measuredBytes > maximum) {
+                    return AgentRunResult.Denied(AgentRunCode.ARTIFACT_BUDGET_EXCEEDED, agentId, path)
+                }
+                measuredBytes
+            } else {
+                0L
             }
             invocations += invocation
             state.toolCalls++
@@ -157,6 +192,7 @@ class AgentOrchestrator(
                 activePath = path,
                 depth = depth + 1,
                 parentDeadlineNanos = currentDeadline,
+                toolExecutor = toolExecutor,
             )
             when (child) {
                 is AgentRunResult.Denied -> return child
@@ -180,12 +216,9 @@ class AgentOrchestrator(
         return if (Long.MAX_VALUE - start < durationNanos) Long.MAX_VALUE else start + durationNanos
     }
 
-    private fun artifactBytesFor(tool: String, arguments: Map<String, String>): Long? {
-        val raw = arguments["artifact_size_bytes"] ?: arguments["artifactSizeBytes"]
-            ?: return if (AgentRegistry.isArtifactProducingTool(tool)) null else 0L
-        val value = raw.toLongOrNull() ?: return null
-        return value.takeIf { it >= 0L }
-    }
+    // `artifact_size_bytes` / `artifactSizeBytes` in a declarative manifest
+    // are advisory metadata only. The executor result above is the sole byte
+    // accounting source, so under-reporting the manifest cannot bypass limits.
 
     private data class ExecutionState(
         var toolCalls: Int = 0,
@@ -195,5 +228,6 @@ class AgentOrchestrator(
     companion object {
         private const val MAX_INPUT_BYTES = 8 * 1024
         private const val NANOS_PER_MILLISECOND = 1_000_000L
+        private val DECLARED_ARTIFACT_SIZE_ARGUMENTS = setOf("artifact_size_bytes", "artifactSizeBytes")
     }
 }

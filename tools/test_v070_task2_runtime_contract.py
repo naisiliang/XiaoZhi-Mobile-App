@@ -82,7 +82,7 @@ def main():
     startup_start = SERVICE.index('"xiaozhi-startup"')
     apply_region = SERVICE[apply_start:startup_start]
     require(
-        "stopKwsCapture()" in apply_region and "kwsThread?.join(500)" in apply_region,
+        "stopKwsCapture()" in apply_region and "awaitThreadExit(kwsThread" in apply_region,
         "wake-setting application must wait for the previous KWS thread to stop",
     )
 

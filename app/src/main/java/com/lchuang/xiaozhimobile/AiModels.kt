@@ -40,5 +40,7 @@ data class RawAiResponse(
 data class ToolExecutionResult(
     val success: Boolean,
     val spokenText: String,
-    val debugCode: String
+    val debugCode: String,
+    /** Trusted byte count measured by the app-owned artifact executor. */
+    val artifactBytes: Long? = null,
 )
