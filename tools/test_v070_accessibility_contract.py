@@ -146,8 +146,6 @@ def main():
         )
     for forbidden_field in (
         "viewIdResourceName",
-        "inputType",
-        "isPassword",
         "extras",
         "paneTitle",
         "tooltipText",
@@ -157,6 +155,19 @@ def main():
             f"snapshot captures data outside the Task 2 allowlist: {forbidden_field}",
             failures,
         )
+    require(
+        "sensitiveScreenSignals" in node_text
+        and "passwordFieldPresent" in builder_text
+        and "inputType" in builder_text
+        and "isPassword" in builder_text,
+        "snapshot must carry only non-secret password/input sensitivity metadata",
+        failures,
+    )
+    require(
+        "text = if (nodeHasPasswordField) null else nodeName(node.text)" in builder_text,
+        "password field text must not be retained in the transient snapshot",
+        failures,
+    )
 
     if "override fun toString" in node_text:
         node_to_string = node_text[node_text.index("override fun toString") :]
