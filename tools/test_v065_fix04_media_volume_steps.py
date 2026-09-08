@@ -8,6 +8,8 @@ import textwrap
 ROOT = Path(__file__).resolve().parents[1]
 CONTROLLER = ROOT / "app/src/main/java/com/lchuang/xiaozhimobile/MediaVolumeController.kt"
 PHONE = ROOT / "app/src/main/java/com/lchuang/xiaozhimobile/PhoneController.kt"
+MUSIC_INTENT = ROOT / "app/src/main/java/com/lchuang/xiaozhimobile/media/MusicIntent.kt"
+MEDIA_FALLBACK = ROOT / "app/src/main/java/com/lchuang/xiaozhimobile/media/MediaSessionFallback.kt"
 
 
 def assert_source_contract() -> None:
@@ -394,6 +396,8 @@ def compile_and_run_harness() -> None:
                 str(android_view),
                 str(app_stubs),
                 str(CONTROLLER),
+                str(MUSIC_INTENT),
+                str(MEDIA_FALLBACK),
                 str(PHONE),
                 str(harness),
                 "-include-runtime",
