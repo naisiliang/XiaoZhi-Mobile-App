@@ -138,6 +138,7 @@ class MainActivity : Activity() {
         assistantTitle = findViewById(R.id.assistant_title)
         status = findViewById(R.id.assistant_status)
         composer = findViewById(R.id.message_input)
+        composer.contentDescription = "语音指令识别（sherpa-onnx）"
         conversationList = findViewById(R.id.conversation_list)
         conversationAdapter = ConversationAdapter()
         conversationList.layoutManager = LinearLayoutManager(this)

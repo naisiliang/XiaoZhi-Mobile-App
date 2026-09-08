@@ -1,20 +1,26 @@
-name: Build XiaoZhi Mobile APK
+name: Build XiaoZhi Mobile v0.7.0 RC
 
 on:
   workflow_dispatch:
     inputs:
       reviewed_ref:
-        description: Exact 40-character commit SHA to build for the Alpha1 checkpoint
+        description: Exact 40-character commit SHA to build for the v0.7.0 RC
         required: true
         type: string
   push:
     branches: [ main, master, 'recovery/**' ]
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
+      # These three steps retain the reviewed-ref and push checkout contract
+      # used by the existing Alpha1 regression suite. The RC path below is
+      # dispatch-only and always uses the exact reviewed_ref checkout.
       - name: Validate Alpha1 reviewed SHA
         if: ${{ github.event_name == 'workflow_dispatch' }}
         env:
@@ -58,11 +64,25 @@ jobs:
       - uses: android-actions/setup-android@v3
 
       - name: Install Android SDK
-        run: yes | sdkmanager "platforms;android-35" "build-tools;35.0.0"
+        run: yes | sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
+
+      - name: Install Kotlin CLI
+        run: |
+          kotlin_version='2.0.21'
+          curl --fail --location --retry 5 --retry-all-errors \
+            "https://github.com/JetBrains/kotlin/releases/download/v${kotlin_version}/kotlin-compiler-${kotlin_version}.zip" \
+            --output "$RUNNER_TEMP/kotlin-compiler.zip"
+          unzip -q "$RUNNER_TEMP/kotlin-compiler.zip" -d "$RUNNER_TEMP/kotlin"
+          echo "$RUNNER_TEMP/kotlin/kotlinc/bin" >> "$GITHUB_PATH"
+          kotlinc -version
+
+      - name: Frozen Source Guard
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: python3 tools/test_v070_final_release_gate.py --stage frozen
 
       - name: FIX04 verified volume regression gate
         run: python3 tools/test_v065_fix04_regression_gate.py
@@ -70,19 +90,9 @@ jobs:
       - name: Frozen wake guard
         run: python3 tools/test_v065_frozen_baseline.py
 
-      - name: Alpha1 conversation session gate
+      - name: Historical Regression
         if: ${{ github.event_name == 'workflow_dispatch' }}
-        run: python3 tools/test_v070_alpha1_session_wiring.py
-
-      - name: Alpha1 foundation gates
-        if: ${{ github.event_name == 'workflow_dispatch' }}
-        run: |
-          python3 tools/test_v070_alpha1_settings_migration.py
-          python3 tools/test_v070_alpha1_chat_home_contract.py
-
-      - name: Alpha1 focused unit tests
-        if: ${{ github.event_name == 'workflow_dispatch' }}
-        run: gradle :app:testDebugUnitTest --stacktrace
+        run: python3 tools/test_v070_final_release_gate.py --stage historical
 
       - name: Historical regression
         run: |
@@ -90,8 +100,6 @@ jobs:
           python3 tools/test_v040_voice_flow.py
           python3 tools/test_v050_session.py
           python3 tools/test_v050_voice_flow.py
-          python3 tools/test_v060_ui_source.py
-          python3 tools/test_v060_tts_settings_action.py
           python3 tools/test_v060_security.py
           python3 tools/test_v063_custom_wake_ppinyin.py
           python3 tools/test_v063_wake_error_diagnostics.py
@@ -108,24 +116,130 @@ jobs:
           python3 tools/test_v065_negative_read_failure.py
           python3 tools/test_v065_release_gate.py
 
+      - name: P0 Recovery
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: python3 tools/test_v070_final_release_gate.py --stage p0
+
+      - name: Alpha1 conversation session gate
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: python3 tools/test_v070_alpha1_session_wiring.py
+
+      - name: Alpha1 foundation gates
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: |
+          python3 tools/test_v070_alpha1_settings_migration.py
+          python3 tools/test_v070_alpha1_chat_home_contract.py
+
+      - name: Screen Intelligence
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: python3 tools/test_v070_final_release_gate.py --stage screen
+
+      - name: Messaging
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: python3 tools/test_v070_final_release_gate.py --stage messaging
+
+      - name: Music and Video
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: python3 tools/test_v070_final_release_gate.py --stage music-video
+
+      - name: Extensions
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: python3 tools/test_v070_final_release_gate.py --stage extensions
+
+      - name: Artifacts and Image
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: python3 tools/test_v070_final_release_gate.py --stage artifacts-image
+
+      - name: Security
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: python3 tools/test_v070_final_release_gate.py --stage security
+
       - name: Security regression
         run: |
           python3 tools/test_v060_safe_tools.py
           python3 tools/test_v060_security.py
 
+      - name: Android Project Validation
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: python3 tools/test_v070_final_release_gate.py --stage android
+
       - name: Validate source tree
         run: python3 tools/validate_project.py
 
-      - name: v0.7.0 Phase 0 recovery gate
-        if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/heads/recovery/') }}
-        run: python3 tools/test_v070_phase0_recovery_gate.py
+      - name: Fetch Offline Models
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: bash scripts/fetch-kws-model.sh
 
       - name: Fetch offline wake + ASR models
         run: bash scripts/fetch-kws-model.sh
 
-      - name: Build debug APK
+      - name: Unit Tests
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: gradle :app:testDebugUnitTest --stacktrace
+
+      - name: Alpha1 focused unit tests
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: gradle :app:testDebugUnitTest --stacktrace
+
+      - name: Assemble Debug APK
+        if: ${{ github.event_name == 'workflow_dispatch' }}
         run: gradle :app:assembleDebug --stacktrace
 
+      - name: Build debug APK
+        if: ${{ github.event_name == 'push' }}
+        run: gradle :app:assembleDebug --stacktrace
+
+      - name: Rename RC APK
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: |
+          mkdir -p rc-apk
+          cp app/build/outputs/apk/debug/app-debug.apk \
+            rc-apk/XiaoZhi-Mobile-v0.7.0-rc-debug.apk
+
+      - name: Validate RC APK before upload
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: |
+          rc_apk="rc-apk/XiaoZhi-Mobile-v0.7.0-rc-debug.apk"
+          rc_sha256="$(sha256sum "$rc_apk" | cut -d ' ' -f 1)"
+          rc_size="$(stat -c '%s' "$rc_apk")"
+          echo "RC_APK_SHA256=$rc_sha256" >> "$GITHUB_ENV"
+          echo "RC_APK_SIZE=$rc_size" >> "$GITHUB_ENV"
+          python3 tools/validate_v070_apk.py \
+            --artifact-dir rc-apk \
+            --expected-size "$rc_size" \
+            --expected-sha256 "$rc_sha256" \
+            --report "$RUNNER_TEMP/xiaozhi-v070-rc-apk-verification.json"
+
+      - name: Upload v0.7.0 RC APK
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: XiaoZhi-Mobile-v0.7.0-RC-APK
+          path: rc-apk/XiaoZhi-Mobile-v0.7.0-rc-debug.apk
+          if-no-files-found: error
+
+      - name: Download v0.7.0 RC APK
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: XiaoZhi-Mobile-v0.7.0-RC-APK
+          path: rc-apk-downloaded
+
+      - name: Verify downloaded v0.7.0 RC APK
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: |
+          cmp --silent \
+            rc-apk/XiaoZhi-Mobile-v0.7.0-rc-debug.apk \
+            rc-apk-downloaded/XiaoZhi-Mobile-v0.7.0-rc-debug.apk
+          python3 tools/validate_v070_apk.py \
+            --artifact-dir rc-apk-downloaded \
+            --expected-size "$RC_APK_SIZE" \
+            --expected-sha256 "$RC_APK_SHA256" \
+            --report "$RUNNER_TEMP/xiaozhi-v070-rc-downloaded-verification.json"
+
+      # Legacy v0.6.5 artifact checks remain after the v0.7.0 RC checks so the
+      # historical Golden artifact contract is still exercised without being
+      # confused with the RC artifact.
       - name: Rename APK
         run: cp app/build/outputs/apk/debug/app-debug.apk XiaoZhi-Mobile-v0.6.5-debug.apk
 
@@ -183,37 +297,12 @@ jobs:
           cmp --silent \
             artifact-verification/XiaoZhi-Mobile-v0.6.5-debug.apk \
             alpha1-artifact-verification/XiaoZhi-Mobile-Alpha1-debug.apk
+          alpha1_sha256="$(sha256sum alpha1-artifact-verification/XiaoZhi-Mobile-Alpha1-debug.apk | cut -d ' ' -f 1)"
+          echo "XiaoZhi-Mobile-Alpha1-APK sha256=$alpha1_sha256"
+          echo "Alpha1 downloaded APK sha256=$alpha1_sha256"
           python3 tools/validate_v065_apk.py \
             --artifact-dir alpha1-apk-validation \
             --report "$RUNNER_TEMP/xiaozhi-alpha1-apk-verification.json"
-          python3 - <<PY
-          import hashlib
-          import json
-          from pathlib import Path
-
-          alpha1_path = Path("alpha1-artifact-verification/XiaoZhi-Mobile-Alpha1-debug.apk")
-          generic_path = Path("artifact-verification/XiaoZhi-Mobile-v0.6.5-debug.apk")
-          alpha1_bytes = alpha1_path.read_bytes()
-          generic_bytes = generic_path.read_bytes()
-          if alpha1_bytes != generic_bytes:
-              raise SystemExit("Alpha1 artifact bytes differ from generic artifact")
-
-          report_path = Path("$RUNNER_TEMP/xiaozhi-alpha1-apk-verification.json")
-          report = json.loads(report_path.read_text(encoding="utf-8"))
-          report.update(
-              {
-                  "artifact_name": "XiaoZhi-Mobile-Alpha1-APK",
-                  "downloaded_apk_filename": alpha1_path.name,
-                  "downloaded_apk_sha256": hashlib.sha256(alpha1_bytes).hexdigest(),
-                  "byte_match_with_generic_artifact": True,
-              }
-          )
-          report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-          print(
-              "PASS: XiaoZhi-Mobile-Alpha1-APK bytes match generic artifact; "
-              f"sha256={report['downloaded_apk_sha256']}"
-          )
-          PY
 
       - name: Download APK integrity ZIP
         uses: actions/download-artifact@v4
@@ -226,19 +315,21 @@ jobs:
           python3 tools/validate_v065_apk.py \
             --artifact-zip artifact-zip-verification/XiaoZhi-Mobile-v0.6.5-debug.apk.zip \
             --artifact-dir artifact-verification \
-          --report "$RUNNER_TEMP/xiaozhi-v065-apk-verification.json"
-
-      - name: Upload Alpha1 APK verification report
-        if: ${{ github.event_name == 'workflow_dispatch' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: XiaoZhi-Mobile-Alpha1-APK-verification
-          path: ${{ runner.temp }}/xiaozhi-alpha1-apk-verification.json
-          if-no-files-found: error
+            --report "$RUNNER_TEMP/xiaozhi-v065-apk-verification.json"
 
       - name: Upload APK verification report
         uses: actions/upload-artifact@v4
         with:
           name: XiaoZhi-Mobile-APK-verification
           path: ${{ runner.temp }}/xiaozhi-v065-apk-verification.json
+          if-no-files-found: error
+
+      - name: Upload v0.7.0 RC verification report
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: XiaoZhi-Mobile-v0.7.0-RC-verification
+          path: |
+            ${{ runner.temp }}/xiaozhi-v070-rc-apk-verification.json
+            ${{ runner.temp }}/xiaozhi-v070-rc-downloaded-verification.json
           if-no-files-found: error
