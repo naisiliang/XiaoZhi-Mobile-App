@@ -33,5 +33,9 @@ require(
     "isImplementationAccessibilityLabel" in DETECTOR and "label.contains('.')" in DETECTOR,
     "implementation class names copied into role must not become semantic labels",
 )
+require(
+    "node.className" in DETECTOR and "normalizedClassName(className) == label" in DETECTOR,
+    "unqualified implementation class names copied into role must also be filtered",
+)
 
 print("PASS: Task 8 accessibility sensitivity contract")

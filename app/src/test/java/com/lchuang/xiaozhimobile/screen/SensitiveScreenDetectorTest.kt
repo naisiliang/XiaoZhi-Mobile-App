@@ -156,6 +156,36 @@ class SensitiveScreenDetectorTest {
     }
 
     @Test
+    fun `unqualified implementation class copied into role remains opaque and sensitive`() {
+        val result = detector.detect(
+            packageName = "com.example.opaque",
+            root = ScreenNode(
+                id = "root",
+                role = "CustomWidget",
+                className = "CustomWidget",
+            ),
+        )
+
+        assertTrue(result.isSensitive)
+        assertEquals(SensitiveScreenCategory.UNKNOWN_HIGH_RISK, result.category)
+    }
+
+    @Test
+    fun `distinct semantic role remains available beside implementation class`() {
+        val result = detector.detect(
+            packageName = "com.example.wallet",
+            root = ScreenNode(
+                id = "root",
+                role = "payment_button",
+                className = "CustomWidget",
+            ),
+        )
+
+        assertTrue(result.isSensitive)
+        assertEquals(SensitiveScreenCategory.PAYMENT, result.category)
+    }
+
+    @Test
     fun `navigation wording is not mistaken for money transfer`() {
         val result = detector.detect(
             packageName = "com.autonavi.minimap",

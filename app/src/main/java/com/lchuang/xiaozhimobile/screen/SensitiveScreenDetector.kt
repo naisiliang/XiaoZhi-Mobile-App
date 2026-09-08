@@ -66,7 +66,9 @@ class SensitiveScreenDetector {
                 .mapTo(labels) { normalize(it) }
             node.role?.let { role ->
                 val normalized = normalize(role)
-                if (normalized.isNotBlank() && !isImplementationAccessibilityLabel(normalized)) {
+                if (normalized.isNotBlank() &&
+                    !isImplementationAccessibilityLabel(normalized, node.className)
+                ) {
                     labels += normalized
                 }
             }
@@ -83,8 +85,13 @@ class SensitiveScreenDetector {
             label in GENERIC_ACCESSIBILITY_LABELS
 
     /** Roles copied from AccessibilityNodeInfo class names are metadata, not screen semantics. */
-    private fun isImplementationAccessibilityLabel(label: String): Boolean =
-        label.contains('.') || isGenericAccessibilityLabel(label)
+    private fun isImplementationAccessibilityLabel(label: String, className: String?): Boolean =
+        label.contains('.') ||
+            isGenericAccessibilityLabel(label) ||
+            normalizedClassName(className) == label
+
+    private fun normalizedClassName(className: String?): String =
+        className?.let(::normalize).orEmpty()
 
     private fun findLabelCategory(labels: List<String>): SensitiveScreenCategory? {
         for ((category, markers) in LABEL_MARKERS) {

@@ -32,6 +32,7 @@ import com.lchuang.xiaozhimobile.tools.ResultToolExecutor
 import com.lchuang.xiaozhimobile.tools.ToolDispatcher
 import java.util.ArrayDeque
 import java.util.Collections
+import java.util.IdentityHashMap
 import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
@@ -75,6 +76,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
     /** Startup/settings workers must be retired before native KWS objects are released. */
     private val lifecycleWorkerThreads = Collections.synchronizedSet(linkedSetOf<Thread>())
     private val audioRecordLock = Any()
+    private val audioRecordOwners = IdentityHashMap<AudioRecord, Thread>()
     private val nativeRuntimeReleased = AtomicBoolean(false)
     private val assistantRuntimeReady = AtomicBoolean(false)
     private val pendingTextRequests = PendingTextRequestQueue()
@@ -136,7 +138,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
     @Volatile private var conversationState = ConversationState.IDLE_WAKE
     private var sessionGeneration = 0L
     private var pendingListenRunnable: Runnable? = null
-    private var pendingKwsRestartRunnable: Runnable? = null
+    @Volatile private var pendingKwsRestartRunnable: Runnable? = null
     @Volatile private var activeTtsUtteranceId: String? = null
     private var lastDeviceCommand = ""
     private var lastDeviceCommandAtMs = 0L
@@ -148,6 +150,8 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
     private var offlineRecognizer: OfflineRecognizer? = null
     @Volatile private var audioRecord: AudioRecord? = null
     @Volatile private var audioRecordOwner: Thread? = null
+    @Volatile private var kwsAudioRecord: AudioRecord? = null
+    @Volatile private var commandAudioRecord: AudioRecord? = null
     @Volatile private var kwsThread: Thread? = null
     @Volatile private var commandThread: Thread? = null
     private val kwsCaptureGeneration = AtomicLong(0L)
@@ -193,15 +197,13 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         return (lifecycleWorkers + listOfNotNull(kwsThread, commandThread)).distinct()
     }
 
-    private fun stopAndJoinRuntimeWorkers(): Boolean {
+    private fun interruptRuntimeWorkers() {
         val workers = runtimeWorkerSnapshot()
         workers.forEach { it.interrupt() }
-        var allStopped = true
-        workers.forEach {
-            if (!awaitThreadExit(it, RUNTIME_WORKER_JOIN_TIMEOUT_MS)) allStopped = false
-        }
-        return allStopped
     }
+
+    private fun runtimeWorkersAreStopped(): Boolean =
+        runtimeWorkerSnapshot().none { it.isAlive }
 
     private fun releaseNativeRuntime() {
         if (!nativeRuntimeReleased.compareAndSet(false, true)) return
@@ -229,13 +231,21 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
 
     private fun scheduleKwsRestart(delayMs: Long) {
         pendingKwsRestartRunnable?.let(mainHandler::removeCallbacks)
+        val restartGeneration = kwsCaptureGeneration.get()
         val runnable = Runnable {
             pendingKwsRestartRunnable = null
             if (!running.get() || serviceDestroyed.get()) return@Runnable
-            startKwsCapture()
+            if (restartGeneration != kwsCaptureGeneration.get()) return@Runnable
+            if (drainPendingTextRequests()) return@Runnable
+            startKwsCapture(restartGeneration)
         }
         pendingKwsRestartRunnable = runnable
         mainHandler.postDelayed(runnable, delayMs)
+    }
+
+    private fun cancelScheduledKwsRestart() {
+        pendingKwsRestartRunnable?.let(mainHandler::removeCallbacks)
+        pendingKwsRestartRunnable = null
     }
 
     override fun onCreate() {
@@ -528,9 +538,18 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         )
     }
 
-    private fun startKwsCapture() {
+    private fun startKwsCapture(expectedGeneration: Long? = null) {
         synchronized(runtimeLifecycleLock) {
-            if (!running.get() || kwsListening.get() || commandListening.get()) return@synchronized
+            if (expectedGeneration != null && expectedGeneration != kwsCaptureGeneration.get()) {
+                return@synchronized
+            }
+            if (!running.get() || kwsListening.get() || commandListening.get() ||
+                conversationActive || exitInProgress
+            ) return@synchronized
+            if (kwsThread?.isAlive == true || commandThread?.isAlive == true) {
+                scheduleKwsRestart(RUNTIME_WORKER_CLEANUP_POLL_MS)
+                return@synchronized
+            }
             if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
                 running.set(false)
                 if (!serviceDestroyed.get()) {
@@ -550,7 +569,10 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                 try {
                     val activeRecord = newAudioRecord()
                     record = activeRecord
-                    adoptAudioRecord(activeRecord, Thread.currentThread())
+                    adoptAudioRecord(activeRecord, Thread.currentThread(), isKwsCapture = true)
+                    if (!running.get() || !kwsListening.get() || serviceDestroyed.get() ||
+                        captureGeneration != kwsCaptureGeneration.get()
+                    ) return@launchLifecycleWorker
                     if (activeRecord.state != AudioRecord.STATE_INITIALIZED) {
                         throw IllegalStateException("AudioRecord 初始化失败")
                     }
@@ -598,10 +620,13 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                     }
                 } finally {
                     releaseAudioRecord(Thread.currentThread(), record)
-                    if (running.get() && !serviceDestroyed.get() && wakeDetected &&
-                        captureGeneration == kwsCaptureGeneration.get()
-                    ) {
-                        mainHandler.post { handleWakeDetected() }
+                    if (running.get() && !serviceDestroyed.get()) {
+                        mainHandler.post {
+                            if (wakeDetected && captureGeneration == kwsCaptureGeneration.get()) {
+                                handleWakeDetected()
+                            }
+                            drainPendingTextRequests()
+                        }
                     }
                 }
             }
@@ -612,34 +637,49 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
     private fun stopKwsCapture() {
         kwsListening.set(false)
         kwsCaptureGeneration.incrementAndGet()
-        val record = synchronized(audioRecordLock) { audioRecord }
+        cancelScheduledKwsRestart()
+        val record = synchronized(audioRecordLock) { kwsAudioRecord }
         try { record?.stop() } catch (_: Throwable) {}
-        if (record != null) releaseAudioRecord(expected = record)
     }
 
-    private fun adoptAudioRecord(record: AudioRecord, owner: Thread) {
-        val previous = synchronized(audioRecordLock) {
-            val old = audioRecord
+    private fun adoptAudioRecord(
+        record: AudioRecord,
+        owner: Thread,
+        isKwsCapture: Boolean = false,
+    ) {
+        synchronized(audioRecordLock) {
+            audioRecordOwners[record] = owner
             audioRecord = record
             audioRecordOwner = owner
-            old
-        }
-        if (previous != null && previous !== record) {
-            try { previous.stop() } catch (_: Throwable) {}
-            try { previous.release() } catch (_: Throwable) {}
+            if (isKwsCapture) kwsAudioRecord = record else commandAudioRecord = record
         }
     }
 
     private fun releaseAudioRecord(owner: Thread? = null, expected: AudioRecord? = null) {
         val record = synchronized(audioRecordLock) {
-            if (owner != null && audioRecordOwner !== owner) return@synchronized null
-            if (expected != null && audioRecord !== expected) return@synchronized null
-            val current = audioRecord
-            audioRecord = null
-            audioRecordOwner = null
-            current
+            val target = expected ?: audioRecord ?: return@synchronized null
+            val registeredOwner = audioRecordOwners[target]
+            if (owner != null && registeredOwner != null && registeredOwner !== owner) {
+                return@synchronized null
+            }
+            if (owner != null && registeredOwner == null && audioRecordOwner !== owner) {
+                return@synchronized null
+            }
+            audioRecordOwners.remove(target)
+            if (audioRecord === target) {
+                audioRecord = null
+                audioRecordOwner = null
+            }
+            if (kwsAudioRecord === target) kwsAudioRecord = null
+            if (commandAudioRecord === target) commandAudioRecord = null
+            target
         }
         try { record?.release() } catch (_: Throwable) {}
+    }
+
+    private fun stopActiveCommandCapture() {
+        val record = synchronized(audioRecordLock) { commandAudioRecord }
+        try { record?.stop() } catch (_: Throwable) {}
     }
 
     private fun setConversationState(state: ConversationState, heard: String = "") {
@@ -695,6 +735,18 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
 
     private fun startLocalCommandRecognition() {
         if (!running.get() || commandListening.get() || ttsSpeaking.get()) return
+        if (kwsThread?.isAlive == true || commandThread?.isAlive == true) {
+            val retryGeneration = sessionGeneration
+            mainHandler.postDelayed({
+                if (running.get() && conversationActive && !exitInProgress &&
+                    retryGeneration == sessionGeneration &&
+                    conversationState == ConversationState.READY_TO_LISTEN
+                ) {
+                    ::startLocalCommandRecognition.invoke()
+                }
+            }, RUNTIME_WORKER_CLEANUP_POLL_MS)
+            return
+        }
         if (conversationState != ConversationState.READY_TO_LISTEN) return
         if (!conversationActive || session.isExpired()) {
             finishSessionForTimeout()
@@ -754,6 +806,9 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
             } finally {
                 commandListening.set(false)
                 releaseAudioRecord(Thread.currentThread())
+                if (running.get() && !serviceDestroyed.get()) {
+                    mainHandler.post { drainPendingTextRequests() }
+                }
             }
         }
     }
@@ -775,6 +830,9 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         }
         val enhancement = audioEnhancementManager.attach(record)
         try {
+            if (!running.get() || !commandListening.get() || serviceDestroyed.get()) {
+                throw CommandAudioCaptureException(CommandAudioCaptureFailureKind.AUDIO_START)
+            }
             try {
                 record.startRecording()
             } catch (e: Throwable) {
@@ -937,14 +995,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
     private fun beginTextConversationIfNeeded(): Boolean {
         if (conversationActive) return true
         if (exitInProgress) return false
-        val kwsStopped = synchronized(runtimeLifecycleLock) {
-            stopKwsCapture()
-            awaitThreadExit(kwsThread, RUNTIME_WORKER_JOIN_TIMEOUT_MS)
-        }
-        if (!kwsStopped) {
-            updateNotification("唤醒线程尚未退出，请稍后重试文字输入")
-            return false
-        }
+        stopKwsCapture()
         sessionGeneration += 1
         conversationTurns = 0
         commandRecognitionAttempts = 0
@@ -961,7 +1012,12 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
     private fun processAssistantInput(rawText: String, source: AssistantRequestSource) {
         val text = rawText.trim()
         if (text.isBlank()) return
-        if (source == AssistantRequestSource.TEXT && !beginTextConversationIfNeeded()) return
+        if (source == AssistantRequestSource.TEXT && !beginTextConversationIfNeeded()) {
+            if (running.get() && !serviceDestroyed.get() && !pendingTextRequests.offer(text)) {
+                updateNotificationRaw("文字输入过多，请稍后重试")
+            }
+            return
+        }
         if (!conversationActive || exitInProgress) return
 
         val normalized = VoiceCommandNormalizer.normalize(text)
@@ -1315,8 +1371,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         pendingListenRunnable = null
         pendingTextRequests.clear()
         commandListening.set(false)
-        try { audioRecord?.stop() } catch (_: Throwable) {}
-        releaseAudioRecord()
+        stopActiveCommandCapture()
         memory.clear()
         conversationSessionManager.appendConfirmation(spokenText.ifBlank { "好的，有需要再叫我" })
         conversationSessionManager.endSession("conversation_exit")
@@ -1507,10 +1562,11 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         pendingKwsRestartRunnable = null
         exitInProgress = true
         stopKwsCapture()
-        val workersStopped = stopAndJoinRuntimeWorkers()
+        stopActiveCommandCapture()
+        interruptRuntimeWorkers()
         overlay.release()
         tts?.stop(); tts?.shutdown(); tts = null
-        if (workersStopped) releaseNativeRuntime() else scheduleNativeRuntimeCleanup()
+        if (runtimeWorkersAreStopped()) releaseNativeRuntime() else scheduleNativeRuntimeCleanup()
         if (wakeLock?.isHeld == true) wakeLock?.release()
         super.onDestroy()
     }

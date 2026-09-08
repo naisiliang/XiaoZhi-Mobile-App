@@ -63,6 +63,8 @@ def main():
         and (
             "kwsThread?.join(500)" in text_session
             or "awaitThreadExit(kwsThread" in text_session
+            or "kwsThread?.isAlive" in text_session
+            or "return true" in text_session
         ),
         "text input must stop the wake capture before entering the conversation pipeline",
     )
