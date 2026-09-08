@@ -16,7 +16,10 @@
   four required dp sizes and both font scales; 24/24 hierarchy boundary checks
   passed; IME composer controls stayed above the keyboard; source UI contracts
   passed; real spoken custom-wake acceptance remains DEVICE_GATE_PENDING)
-- Task 7: pending
+- Task 7: complete (`15f76fd`; RED/GREEN release-gate and APK-validator
+  contracts, all final-gate stages, unit tests, Debug assembly, and exact RC
+  APK validation passed; delegated review timed out, but fresh local
+  spec/quality/security review found no unresolved Critical or Important issue)
 - Task 8: pending
 
 The recovery branch remains isolated from `main` and
