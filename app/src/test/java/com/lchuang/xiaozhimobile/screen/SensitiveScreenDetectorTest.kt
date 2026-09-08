@@ -54,6 +54,20 @@ class SensitiveScreenDetectorTest {
     }
 
     @Test
+    fun `snapshot password metadata is treated as a credential signal`() {
+        val result = detector.detect(
+            packageName = "com.example.login",
+            root = ScreenNode(
+                id = "root",
+                sensitiveScreenSignals = SensitiveScreenSignals(passwordFieldPresent = true),
+            ),
+        )
+
+        assertTrue(result.isSensitive)
+        assertEquals(SensitiveScreenCategory.CREDENTIAL, result.category)
+    }
+
+    @Test
     fun `android password input variations are sensitive`() {
         val result = detector.detect(
             packageName = "com.example.login",
@@ -98,6 +112,32 @@ class SensitiveScreenDetectorTest {
             assertFalse(result.isSensitive)
             assertEquals(null, result.category)
         }
+    }
+
+    @Test
+    fun `opaque screen with only generic accessibility metadata is sensitive`() {
+        val result = detector.detect(
+            packageName = "com.example.opaque",
+            root = ScreenNode(
+                id = "root",
+                role = "android.view.View",
+                className = "android.view.View",
+            ),
+        )
+
+        assertTrue(result.isSensitive)
+        assertEquals(SensitiveScreenCategory.UNKNOWN_HIGH_RISK, result.category)
+    }
+
+    @Test
+    fun `opaque custom view class is not treated as a semantic screen label`() {
+        val result = detector.detect(
+            packageName = "com.example.opaque",
+            root = ScreenNode(id = "root", className = "com.example.CustomView"),
+        )
+
+        assertTrue(result.isSensitive)
+        assertEquals(SensitiveScreenCategory.UNKNOWN_HIGH_RISK, result.category)
     }
 
     @Test

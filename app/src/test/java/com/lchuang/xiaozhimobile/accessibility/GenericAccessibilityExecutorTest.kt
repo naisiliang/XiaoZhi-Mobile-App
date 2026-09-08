@@ -170,6 +170,28 @@ class GenericAccessibilityExecutorTest {
     }
 
     @Test
+    fun `opaque screen blocks accessibility action before node lookup`() {
+        val fixture = Fixture(
+            rootText = null,
+            rootRole = "android.view.View",
+            rootClassName = "android.view.View",
+            includeTargetChild = false,
+        )
+        val target = fixture.target()
+        val finder = RecordingNodeFinder(listOf(fixture.node(target)))
+        val driver = RecordingActionDriver()
+
+        val result = fixture.executor(finder, driver).execute(
+            UiActionProposal(UiActionType.CLICK, fixture.context, target),
+        )
+
+        assertFalse(result.success)
+        assertEquals("SAFETY_BLOCKED", result.debugCode)
+        assertEquals(0, finder.calls)
+        assertEquals(0, driver.calls)
+    }
+
+    @Test
     fun `semantic mismatch is not executed even when the id remains`() {
         val fixture = Fixture()
         val target = fixture.target()
@@ -189,6 +211,9 @@ class GenericAccessibilityExecutorTest {
     private class Fixture(
         rootText: String? = "普通列表",
         withVisibleBounds: Boolean = false,
+        rootRole: String? = null,
+        rootClassName: String? = null,
+        includeTargetChild: Boolean = true,
     ) {
         val store = ScreenContextStore(ttlMs = 5_000L, clockMs = { 1_000L })
         val context = store.publish(
@@ -196,15 +221,21 @@ class GenericAccessibilityExecutorTest {
             windowFingerprint = "com.example.app:1",
             root = ScreenNode(
                 id = "root",
+                role = rootRole,
                 text = rootText,
+                className = rootClassName,
                 visibleBounds = if (withVisibleBounds) ScreenBounds(10, 20, 110, 120) else null,
-                children = listOf(
-                    ScreenNode(
-                        id = "old-coordinate-target",
-                        text = "目标",
-                        visibleBounds = if (withVisibleBounds) ScreenBounds(10, 20, 110, 120) else null,
-                    ),
-                ),
+                children = if (includeTargetChild) {
+                    listOf(
+                        ScreenNode(
+                            id = "old-coordinate-target",
+                            text = "目标",
+                            visibleBounds = if (withVisibleBounds) ScreenBounds(10, 20, 110, 120) else null,
+                        ),
+                    )
+                } else {
+                    emptyList()
+                },
             ),
         )
 

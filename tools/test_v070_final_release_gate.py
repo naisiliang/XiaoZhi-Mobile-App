@@ -46,6 +46,7 @@ P0_RECOVERY = (
     "tools/test_v070_recovery_ui_contract.py",
     "tools/test_v070_recovery_history_ui.py",
     "tools/test_v070_task3_typed_source_contract.py",
+    "tools/test_v070_task8_lifecycle_hardening_contract.py",
 )
 
 SCREEN_INTELLIGENCE = (
@@ -96,6 +97,8 @@ SECURITY = (
     "tools/test_v060_security.py",
     "tools/test_v070_xzpack_validator_contract.py",
     "tools/test_v070_reviewer_runtime_findings.py",
+    "tools/test_v070_task8_accessibility_hardening_contract.py",
+    "tools/test_v070_task8_agent_budget_contract.py",
 )
 
 ANDROID_PROJECT_VALIDATION = (

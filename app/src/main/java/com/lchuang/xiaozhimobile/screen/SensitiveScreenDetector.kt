@@ -34,7 +34,12 @@ class SensitiveScreenDetector {
     ): SensitiveScreenDecision {
         if (root == null) return sensitive(SensitiveScreenCategory.UNKNOWN_HIGH_RISK)
 
-        if (signals.passwordFieldPresent || isPasswordInputType(signals.inputTypeFlags)) {
+        val effectiveSignals = SensitiveScreenSignals(
+            inputTypeFlags = signals.inputTypeFlags or root.sensitiveScreenSignals.inputTypeFlags,
+            passwordFieldPresent = signals.passwordFieldPresent ||
+                root.sensitiveScreenSignals.passwordFieldPresent,
+        )
+        if (effectiveSignals.passwordFieldPresent || isPasswordInputType(effectiveSignals.inputTypeFlags)) {
             return sensitive(SensitiveScreenCategory.CREDENTIAL)
         }
 
@@ -43,7 +48,7 @@ class SensitiveScreenDetector {
 
         findPackageCategory(packageName)?.let { return sensitive(it) }
 
-        if (packageName.isNullOrBlank() && labels.isEmpty()) {
+        if (labels.isEmpty()) {
             return sensitive(SensitiveScreenCategory.UNKNOWN_HIGH_RISK)
         }
         return SensitiveScreenDecision(isSensitive = false)
@@ -53,15 +58,23 @@ class SensitiveScreenDetector {
         val labels = mutableListOf<String>()
 
         fun visit(node: ScreenNode) {
-            listOf(node.text, node.contentDescription, node.role, node.className)
+            // className is implementation metadata, not a semantic label. In
+            // particular, an opaque third-party class must never make a screen
+            // look understood merely because it contains a dotted name.
+            listOf(node.text, node.contentDescription, node.role)
                 .filterNotNull()
                 .mapTo(labels) { normalize(it) }
             node.children.forEach(::visit)
         }
 
         visit(root)
-        return labels.filter(String::isNotBlank)
+        return labels.filter(String::isNotBlank).filterNot(::isGenericAccessibilityLabel)
     }
+
+    private fun isGenericAccessibilityLabel(label: String): Boolean =
+        label.startsWith("android.") ||
+            label.startsWith("androidx.") ||
+            label in GENERIC_ACCESSIBILITY_LABELS
 
     private fun findLabelCategory(labels: List<String>): SensitiveScreenCategory? {
         for ((category, markers) in LABEL_MARKERS) {
@@ -81,7 +94,7 @@ class SensitiveScreenDetector {
     private fun normalize(value: String): String =
         value.lowercase(Locale.ROOT).replace(WHITESPACE, " ").trim()
 
-    private fun isPasswordInputType(inputTypeFlags: Int): Boolean {
+    internal fun isPasswordInputType(inputTypeFlags: Int): Boolean {
         val variation = inputTypeFlags and INPUT_TYPE_VARIATION_MASK
         return variation in PASSWORD_VARIATIONS
     }
@@ -94,6 +107,11 @@ class SensitiveScreenDetector {
         // and numeric passwords. Kept as constants so this detector remains a
         // pure semantic policy and does not copy credential values.
         val PASSWORD_VARIATIONS = setOf(0x80, 0x90, 0xe0, 0x10)
+        val GENERIC_ACCESSIBILITY_LABELS = setOf(
+            "view", "viewgroup", "button", "textview", "edittext", "imageview",
+            "framelayout", "linearlayout", "relativelayout", "scrollview", "listview",
+            "recyclerview", "composeview", "window", "container", "root", "screen", "layout",
+        )
 
         val LABEL_MARKERS = listOf(
             SensitiveScreenCategory.PAYMENT to setOf(

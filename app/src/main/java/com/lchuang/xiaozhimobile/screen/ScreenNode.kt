@@ -18,6 +18,7 @@ class ScreenNode(
     val clickable: Boolean = false,
     val visibleBounds: ScreenBounds? = null,
     children: List<ScreenNode> = emptyList(),
+    val sensitiveScreenSignals: SensitiveScreenSignals = SensitiveScreenSignals(),
 ) {
     val children: List<ScreenNode> = Collections.unmodifiableList(children.toList())
 
@@ -34,6 +35,7 @@ class ScreenNode(
             className == other.className &&
             clickable == other.clickable &&
             visibleBounds == other.visibleBounds &&
+            sensitiveScreenSignals == other.sensitiveScreenSignals &&
             children == other.children
 
     override fun hashCode(): Int {
@@ -44,6 +46,7 @@ class ScreenNode(
         result = 31 * result + (className?.hashCode() ?: 0)
         result = 31 * result + clickable.hashCode()
         result = 31 * result + (visibleBounds?.hashCode() ?: 0)
+        result = 31 * result + sensitiveScreenSignals.hashCode()
         result = 31 * result + children.hashCode()
         return result
     }

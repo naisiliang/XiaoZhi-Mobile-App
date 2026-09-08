@@ -111,7 +111,7 @@ class AgentOrchestrator(
             if (normalized !in definition.allowedTools.map { it.lowercase(Locale.ROOT) }.toSet()) {
                 return AgentRunResult.Denied(AgentRunCode.TOOL_NOT_ALLOWED, agentId, path)
             }
-            val artifactBytes = artifactBytesFor(step.arguments)
+            val artifactBytes = artifactBytesFor(normalized, step.arguments)
                 ?: return AgentRunResult.Denied(AgentRunCode.ARTIFACT_BUDGET_EXCEEDED, agentId, path)
             if (artifactBytes > definition.maxArtifactSizeBytes ||
                 artifactBytes > budget.maxArtifactSizeBytes - state.artifactBytes
@@ -180,8 +180,9 @@ class AgentOrchestrator(
         return if (Long.MAX_VALUE - start < durationNanos) Long.MAX_VALUE else start + durationNanos
     }
 
-    private fun artifactBytesFor(arguments: Map<String, String>): Long? {
-        val raw = arguments["artifact_size_bytes"] ?: arguments["artifactSizeBytes"] ?: return 0L
+    private fun artifactBytesFor(tool: String, arguments: Map<String, String>): Long? {
+        val raw = arguments["artifact_size_bytes"] ?: arguments["artifactSizeBytes"]
+            ?: return if (AgentRegistry.isArtifactProducingTool(tool)) null else 0L
         val value = raw.toLongOrNull() ?: return null
         return value.takeIf { it >= 0L }
     }

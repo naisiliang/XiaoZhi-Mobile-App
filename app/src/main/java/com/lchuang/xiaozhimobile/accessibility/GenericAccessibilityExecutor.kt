@@ -59,6 +59,7 @@ class GenericAccessibilityExecutor(
         val sensitivity = sensitiveScreenDetector.detect(
             packageName = activeContext.packageName,
             root = activeContext.root,
+            signals = activeContext.root.sensitiveScreenSignals,
         )
         if (sensitivity.isSensitive) {
             return failure("SAFETY_BLOCKED", "当前界面涉及敏感操作，已停止执行")

@@ -146,6 +146,13 @@ class AgentRegistry(
             "file_restore", "file_save", "file_share", "artifact_open", "artifact_edit",
             "artifact_restore", "artifact_save", "artifact_share",
         )
+        private val ARTIFACT_PRODUCING_TOOLS = setOf(
+            "ppt_create", "ppt_add_asset", "ppt_save",
+            "image_generate", "image_edit", "image_regenerate", "image_save",
+            "file_create_text", "file_create_markdown", "file_create_csv", "file_create_zip",
+            "file_create_docx", "file_create_xlsx", "file_create_pdf", "file_edit",
+            "file_restore", "file_save", "artifact_edit", "artifact_restore", "artifact_save",
+        )
         private val RESEARCH_TOOLS = setOf(
             "research_search", "research_read", "research_summarize",
         )
@@ -259,5 +266,8 @@ class AgentRegistry(
                 }
             }
         }
+
+        fun isArtifactProducingTool(tool: String): Boolean =
+            tool.trim().lowercase(Locale.ROOT) in ARTIFACT_PRODUCING_TOOLS
     }
 }

@@ -4,8 +4,12 @@ import android.graphics.Rect
 import android.view.accessibility.AccessibilityNodeInfo
 import com.lchuang.xiaozhimobile.screen.ScreenBounds
 import com.lchuang.xiaozhimobile.screen.ScreenNode
+import com.lchuang.xiaozhimobile.screen.SensitiveScreenDetector
+import com.lchuang.xiaozhimobile.screen.SensitiveScreenSignals
 
 class AccessibilitySnapshotBuilder {
+    private val sensitiveScreenDetector = SensitiveScreenDetector()
+
     fun build(root: AccessibilityNodeInfo, windowFingerprint: String): ScreenNode? =
         buildNode(root, windowFingerprint, "0")
 
@@ -30,15 +34,23 @@ class AccessibilitySnapshotBuilder {
             }
         }
         val className = nodeName(node.className)
+        val inputTypeFlags = node.inputType
+        val nodeHasPasswordField = node.isPassword ||
+            sensitiveScreenDetector.isPasswordInputType(inputTypeFlags)
         return ScreenNode(
             id = "$windowFingerprint:$path",
             role = className,
-            text = nodeName(node.text),
+            text = if (nodeHasPasswordField) null else nodeName(node.text),
             contentDescription = nodeName(node.contentDescription),
             className = className,
             clickable = node.isClickable,
             visibleBounds = ScreenBounds(bounds.left, bounds.top, bounds.right, bounds.bottom),
             children = children,
+            sensitiveScreenSignals = SensitiveScreenSignals(
+                inputTypeFlags = inputTypeFlags,
+                passwordFieldPresent = nodeHasPasswordField ||
+                    children.any { it.sensitiveScreenSignals.passwordFieldPresent },
+            ),
         )
     }
 

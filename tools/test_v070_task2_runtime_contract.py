@@ -86,12 +86,13 @@ def main():
         "wake-setting application must wait for the previous KWS thread to stop",
     )
 
-    start_catch = re.search(
-        r"Thread\(\s*\{[\s\S]*?catch \(e: Throwable\) \{([\s\S]*?)\n\s*\}\s*\}\, \"xiaozhi-startup\"",
-        SERVICE,
+    startup_start = SERVICE.index('launchLifecycleWorker("xiaozhi-startup")')
+    startup_error_match = re.search(
+        r"catch \(e: Throwable\) \{([\s\S]*?)\n\s*\}\s*\n\s*\}\s*\n\s*\}\s*\n\s*return START_STICKY",
+        SERVICE[startup_start:],
     )
-    require(start_catch, "missing serialized startup thread")
-    startup_error = start_catch.group(1)
+    require(startup_error_match, "missing serialized startup worker")
+    startup_error = startup_error_match.group(1)
     require(
         "running.set(false)" in startup_error
         and startup_error.index("running.set(false)") < startup_error.index("WakeRuntimeStatus.ERROR"),

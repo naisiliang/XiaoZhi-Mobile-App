@@ -195,6 +195,37 @@ class AgentRegistryTest {
     }
 
     @Test
+    fun artifactProducingToolWithoutSizeMetadataIsDenied() {
+        val definition = AgentDefinition(
+            id = "missing.artifact.size",
+            version = "1.0.0",
+            name = "missing-size",
+            allowedTools = setOf("file_create_text"),
+            permissions = setOf(ExtensionPermission.FILES),
+            maxDelegationDepth = 1,
+            maxToolCalls = 2,
+            maxExecutionTimeMs = 1000,
+            maxArtifactSizeBytes = 1024,
+            workflow = listOf(AgentStep("file_create_text")),
+        )
+        val registry = AgentRegistry(emptyList(), setOf("file_create_text"))
+        assertTrue(registry.register(definition) is AgentRegistryResult.Registered)
+
+        assertEquals(
+            AgentRunResult.Denied(
+                AgentRunCode.ARTIFACT_BUDGET_EXCEEDED,
+                definition.id,
+                trace = listOf(definition.id),
+            ),
+            AgentOrchestrator(registry).run(
+                definition.id,
+                "make a file",
+                AgentBudget(maxDelegationDepth = 1, maxToolCalls = 2, maxExecutionTimeMs = 1000),
+            ),
+        )
+    }
+
+    @Test
     fun orchestratorBlocksDelegationPastMaximumDepth() {
         val leaf = agent("leaf.agent")
         val middle = agent("middle.agent", delegationTargets = listOf("leaf.agent"))

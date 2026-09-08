@@ -68,6 +68,8 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
     private val running = AtomicBoolean(false)
     private val serviceDestroyed = AtomicBoolean(false)
     private val runtimeLifecycleLock = Any()
+    /** Startup/settings workers must be retired before native KWS objects are released. */
+    private val lifecycleWorkerThreads = linkedSetOf<Thread>()
     private val assistantRuntimeReady = AtomicBoolean(false)
     private val pendingTextRequests = PendingTextRequestQueue()
     private val textDispatchScheduled = AtomicBoolean(false)
@@ -128,6 +130,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
     @Volatile private var conversationState = ConversationState.IDLE_WAKE
     private var sessionGeneration = 0L
     private var pendingListenRunnable: Runnable? = null
+    private var pendingKwsRestartRunnable: Runnable? = null
     @Volatile private var activeTtsUtteranceId: String? = null
     private var lastDeviceCommand = ""
     private var lastDeviceCommandAtMs = 0L
@@ -141,6 +144,56 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
     private var kwsThread: Thread? = null
     private var commandThread: Thread? = null
     private var wakeLock: PowerManager.WakeLock? = null
+
+    private fun launchLifecycleWorker(name: String, block: () -> Unit) {
+        val worker = Thread({
+            try {
+                block()
+            } finally {
+                synchronized(runtimeLifecycleLock) {
+                    lifecycleWorkerThreads.remove(Thread.currentThread())
+                }
+            }
+        }, name)
+        synchronized(runtimeLifecycleLock) {
+            if (serviceDestroyed.get()) return
+            lifecycleWorkerThreads += worker
+            worker.start()
+        }
+    }
+
+    private fun awaitThreadExit(thread: Thread?) {
+        if (thread == null || thread === Thread.currentThread()) return
+        var interrupted = false
+        while (thread.isAlive) {
+            try {
+                thread.join()
+            } catch (_: InterruptedException) {
+                // Teardown must still wait for the worker before releasing native resources.
+                interrupted = true
+            }
+        }
+        if (interrupted) Thread.currentThread().interrupt()
+    }
+
+    private fun stopAndJoinRuntimeWorkers() {
+        val workers = synchronized(runtimeLifecycleLock) {
+            (lifecycleWorkerThreads + listOfNotNull(kwsThread, commandThread)).toList().distinct()
+        }
+        workers.forEach { it.interrupt() }
+        workers.forEach(::awaitThreadExit)
+    }
+
+    private fun scheduleKwsRestart(delayMs: Long) {
+        pendingKwsRestartRunnable?.let(mainHandler::removeCallbacks)
+        val runnable = Runnable {
+            pendingKwsRestartRunnable = null
+            if (!running.get() || serviceDestroyed.get()) return@Runnable
+            startKwsCapture()
+        }
+        pendingKwsRestartRunnable = runnable
+        mainHandler.postDelayed(runnable, delayMs)
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -211,13 +264,14 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                 WakeRuntimeStatus.STARTING,
                 "applying wake settings",
             )
-            Thread({
+            launchLifecycleWorker("xiaozhi-wake-settings") {
                 synchronized(runtimeLifecycleLock) {
                     if (running.get() && !serviceDestroyed.get()) {
                         try {
                             val requested = settings.wakePhrase.trim().ifBlank { DEFAULT_WAKE_PHRASE }
                             stopKwsCapture()
                             try { kwsThread?.join(500) } catch (_: Throwable) {}
+                            if (!running.get() || serviceDestroyed.get()) return@synchronized
                             val applied = if (requested == DEFAULT_WAKE_PHRASE) {
                                 wakePhraseManager.applyBundledPhrase(DEFAULT_WAKE_PHRASE)
                             } else {
@@ -236,7 +290,9 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                                 "唤醒词应用失败：$reason · 继续监听“$active”"
                             }
                             updateNotification(applyMessage)
-                            mainHandler.postDelayed({ startKwsCapture() }, 250L)
+                            if (running.get() && !serviceDestroyed.get()) {
+                                scheduleKwsRestart(250L)
+                            }
                         } catch (e: Throwable) {
                             val shouldReport = running.get() && !serviceDestroyed.get()
                             running.set(false)
@@ -253,7 +309,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                         }
                     }
                 }
-            }, "xiaozhi-wake-settings").start()
+            }
             return START_STICKY
         }
 
@@ -264,14 +320,16 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                 "starting offline wake runtime",
             )
             if (wakeLock?.isHeld != true) wakeLock?.acquire()
-            Thread({
+            launchLifecycleWorker("xiaozhi-startup") {
                 synchronized(runtimeLifecycleLock) {
                     if (running.get() && !serviceDestroyed.get()) {
                         try {
                             updateNotification("正在加载离线唤醒模型（1/3）")
                             initKeywordSpotter()
+                            if (!running.get() || serviceDestroyed.get()) return@synchronized
                             updateNotification("正在加载离线语音识别模型（2/3）")
                             initOfflineAsr()
+                            if (!running.get() || serviceDestroyed.get()) return@synchronized
                             assistantRuntimeReady.set(true)
                             drainPendingTextRequests()
 
@@ -308,7 +366,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                         }
                     }
                 }
-            }, "xiaozhi-startup").start()
+            }
         }
         return START_STICKY
     }
@@ -490,7 +548,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
                     }
                 } finally {
                     releaseAudioRecord()
-                    if (running.get() && wakeDetected) {
+                    if (running.get() && !serviceDestroyed.get() && wakeDetected) {
                         mainHandler.post { handleWakeDetected() }
                     }
                 }
@@ -1221,7 +1279,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
             "restoring wake listener",
         )
         updateNotificationRaw("全离线语音已开启 · 说“${wakePhraseManager.activePhrase()}”")
-        mainHandler.postDelayed({ startKwsCapture() }, 500)
+        scheduleKwsRestart(500L)
     }
 
     private fun speakWithProgress(
@@ -1363,10 +1421,11 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
         session.stop()
         pendingListenRunnable?.let(mainHandler::removeCallbacks)
         pendingListenRunnable = null
+        pendingKwsRestartRunnable?.let(mainHandler::removeCallbacks)
+        pendingKwsRestartRunnable = null
         exitInProgress = true
         stopKwsCapture()
-        try { kwsThread?.join(500) } catch (_: Throwable) {}
-        try { commandThread?.join(500) } catch (_: Throwable) {}
+        stopAndJoinRuntimeWorkers()
         overlay.release()
         tts?.stop(); tts?.shutdown(); tts = null
         try { stream?.release() } catch (_: Throwable) {}
