@@ -15,6 +15,11 @@ require(
     "startup/settings workers must be retained for coordinated teardown",
 )
 require(
+    "Collections.synchronizedSet" in WAKE
+    and "synchronized(lifecycleWorkerThreads)" in WAKE,
+    "worker registry snapshots must not wait on the runtime work lock",
+)
+require(
     "launchLifecycleWorker(\"xiaozhi-wake-settings\"" in WAKE
     and "launchLifecycleWorker(\"xiaozhi-startup\"" in WAKE,
     "startup and wake-setting application must use the tracked worker launcher",

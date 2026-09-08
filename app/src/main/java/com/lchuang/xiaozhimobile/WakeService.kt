@@ -31,6 +31,7 @@ import com.lchuang.xiaozhimobile.safety.ToolInvocation
 import com.lchuang.xiaozhimobile.tools.ResultToolExecutor
 import com.lchuang.xiaozhimobile.tools.ToolDispatcher
 import java.util.ArrayDeque
+import java.util.Collections
 import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
@@ -69,7 +70,7 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
     private val serviceDestroyed = AtomicBoolean(false)
     private val runtimeLifecycleLock = Any()
     /** Startup/settings workers must be retired before native KWS objects are released. */
-    private val lifecycleWorkerThreads = linkedSetOf<Thread>()
+    private val lifecycleWorkerThreads = Collections.synchronizedSet(linkedSetOf<Thread>())
     private val assistantRuntimeReady = AtomicBoolean(false)
     private val pendingTextRequests = PendingTextRequestQueue()
     private val textDispatchScheduled = AtomicBoolean(false)
@@ -141,8 +142,8 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
     private var stream: OnlineStream? = null
     private var offlineRecognizer: OfflineRecognizer? = null
     private var audioRecord: AudioRecord? = null
-    private var kwsThread: Thread? = null
-    private var commandThread: Thread? = null
+    @Volatile private var kwsThread: Thread? = null
+    @Volatile private var commandThread: Thread? = null
     private var wakeLock: PowerManager.WakeLock? = null
 
     private fun launchLifecycleWorker(name: String, block: () -> Unit) {
@@ -177,9 +178,8 @@ class WakeService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun stopAndJoinRuntimeWorkers() {
-        val workers = synchronized(runtimeLifecycleLock) {
-            (lifecycleWorkerThreads + listOfNotNull(kwsThread, commandThread)).toList().distinct()
-        }
+        val lifecycleWorkers = synchronized(lifecycleWorkerThreads) { lifecycleWorkerThreads.toList() }
+        val workers = (lifecycleWorkers + listOfNotNull(kwsThread, commandThread)).distinct()
         workers.forEach { it.interrupt() }
         workers.forEach(::awaitThreadExit)
     }
